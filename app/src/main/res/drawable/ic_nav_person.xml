@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 底部导航「我的」：经典用户图标（圆头 + 半身），实心填充风格。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <group
+        android:scaleX="0.8800"
+        android:scaleY="0.8800"
+        android:translateX="61.440"
+        android:translateY="61.440">
+        <path
+            android:fillColor="#FF000000"
+            android:fillType="nonZero"
+            android:pathData="
+            M938.666667 910.222222
+            a56.888889 56.888889 0 0 1-56.888889 56.888889
+            H142.222222
+            a56.888889 56.888889 0 0 1-56.888889-56.888889
+            v-142.222222
+            a170.666667 170.666667 0 0 1 170.666667-170.666667
+            h512
+            a170.666667 170.666667 0 0 1 170.666667 170.666667
+            v142.222222
+            z
+            M512 512
+            a227.555556 227.555556 0 1 1 0-455.111111 227.555556 227.555556 0 0 1 0 455.111111
+            z" />
+    </group>
+</vector>

@@ -1,0 +1,46 @@
+# ===== Gradle / 构建产物 =====
+.gradle/
+build/
+app/build/
+app/release/
+app/debug/
+app/debugUnitTest/
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+.react-native/
+
+# ===== 本地环境配置（含本机 SDK 路径，绝不能上传）=====
+local.properties
+keystore.properties
+gradle.properties.local
+
+# ===== 签名文件（含私钥，绝不能上传）=====
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+
+# ===== IDE =====
+.idea/
+*.iml
+*.ipr
+*.iws
+.navigation/
+out/
+
+# ===== 系统与杂项 =====
+.DS_Store
+Thumbs.db
+*.log
+
+# ===== 打包产物 =====
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# ===== 第三方服务配置 =====
+google-services.json
