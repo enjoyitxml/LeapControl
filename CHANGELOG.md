@@ -30,4 +30,4 @@
 
 ### 其他
 - 删除内置车模剪影与四个暂缓模块（胎压、位置、空调信息、总里程）中的旧实现
-- 项目纳入 git 版本管理，推送至私有仓库 enjoyitxml/LeapBuddy
+- 项目纳入 git 版本管理，推送至私有仓库 enjoyitxml/LeapControl

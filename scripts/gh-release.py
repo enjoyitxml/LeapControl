@@ -17,7 +17,7 @@ import sys
 import urllib.error
 import urllib.request
 
-OWNER, REPO = "enjoyitxml", "LeapBuddy"
+OWNER, REPO = "enjoyitxml", "LeapControl"
 UPLOAD_HOST = "uploads.github.com"
 
 

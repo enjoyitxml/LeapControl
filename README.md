@@ -1,4 +1,4 @@
-# 零控（LeapBuddy）
+# 零控（LeapControl）
 
 零跑汽车第三方控车 Android App，包名 `com.leapbuddy.app`。自用性质，**私有仓库**。
 
@@ -25,7 +25,7 @@
 ## 常用命令
 
 ```bash
-cd LeapBuddy
+cd LeapControl
 
 # 构建调试包
 JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :app:assembleDebug --no-daemon -q
@@ -87,7 +87,7 @@ git switch main && git merge feat/tire-pressure
 ### 4. 发版（一条命令搞定）
 
 ```bash
-cd LeapBuddy
+cd LeapControl
 ./scripts/release.sh 0.1.1
 ```
 
@@ -95,7 +95,7 @@ cd LeapBuddy
 1. 检查工作区干净（有未提交改动会先提示你处理）
 2. 改 `app/build.gradle.kts` 的 `versionName` / `versionCode`
 3. 把自上一个标签以来的提交整理成条目，写进 `CHANGELOG.md`
-4. 构建 APK，另存为 `release/零控-v0.1.1-debug.apk`
+4. 构建 APK，另存为 `release/LeapControl-v0.1.1-debug.apk`（附件名用英文名，GitHub 会过滤文件名中的中文）
 5. 提交 + 打标签 `v0.1.1`
 6. 推送到 GitHub；若本机 git 协议被网络拦截，自动改用 API 通道同步
 7. 在 GitHub 上创建 Release 并把 APK 作为附件上传
@@ -117,7 +117,7 @@ GH_TOKEN=<你的令牌> python3 scripts/gh-sync.py
 ## 目录结构
 
 ```
-LeapBuddy/
+LeapControl/
 ├── app/                     源码主工程
 │   └── src/main/java/com/leapbuddy/app/
 │       ├── Models.kt            指令表（Commands）与预约计划

@@ -67,7 +67,8 @@ else
 fi
 
 mkdir -p release
-APK_DST="release/零控-v${VERSION}-debug.apk"
+# 附件名用英文名：GitHub 会过滤附件名里的中文，中文名上传后会变成一串残缺字符
+APK_DST="release/LeapControl-v${VERSION}-debug.apk"
 if [[ -f "$APK_SRC" ]]; then
   cp -f "$APK_SRC" "$APK_DST"
   cp -f "$APK_SRC" "../零控-debug.apk"
