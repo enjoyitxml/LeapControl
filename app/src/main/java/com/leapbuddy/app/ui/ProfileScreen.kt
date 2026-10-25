@@ -55,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leapbuddy.app.BuildConfig
 import com.leapbuddy.app.tiles.QuickTiles
 import kotlinx.coroutines.launch
 
@@ -222,7 +223,12 @@ fun ProfileScreen(
             }
 
             Spacer(Modifier.height(12.dp))
-            ProfileItem(Icons.Filled.Info, "关于", "零控 · 非官方自用客户端 v0.1.0") { }
+            // 版本号取自构建配置，避免与 build.gradle.kts 里的版本脱节
+            ProfileItem(
+                Icons.Filled.Info,
+                "关于",
+                "零控 · 非官方自用客户端 v${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）",
+            ) { }
 
             Spacer(Modifier.height(24.dp))
             Box(
