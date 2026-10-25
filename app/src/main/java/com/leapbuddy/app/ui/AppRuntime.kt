@@ -25,6 +25,7 @@ import com.leapbuddy.app.ShumeiSecurityManager
 import com.leapbuddy.app.TrunkState
 import com.leapbuddy.app.TrunkStateMapper
 import com.leapbuddy.app.Vehicle
+import com.leapbuddy.app.VehicleChargePlan
 import com.leapbuddy.app.VehicleLocationDomain
 import com.leapbuddy.app.VehicleOtaInfo
 import com.leapbuddy.app.VehicleStatusMapper
@@ -783,6 +784,34 @@ class AppRuntime(context: Context) {
             val resp = api.queryControlResult(result.msgID)
             val value = (resp.opt("result") ?: resp.opt("code"))?.toString()
             if (value == "0" || value == "200") return@withContext "${cmd.label}执行成功"
+        }
+        "指令已下发，请在车辆上确认执行结果"
+    }
+
+    /** 读取车端已保存的充电计划（commonConfig config.3）。 */
+    suspend fun loadChargePlan(): VehicleChargePlan? = withContext(Dispatchers.IO) {
+        runCatching { LeapmotorApi(session).getVehicleChargePlan() }.getOrNull()
+    }
+
+    /** 解锁充电枪物理锁止销（cmdid 192）。 */
+    suspend fun unlockCharger(): String = controlChargeGun("unlockCharger")
+
+    /** 开始充电（cmdid 193）。 */
+    suspend fun startCharging(): String = controlChargeGun("startCharging")
+
+    /** 停止充电（cmdid 193）。 */
+    suspend fun stopCharging(): String = controlChargeGun("stopCharging")
+
+    private suspend fun controlChargeGun(commandName: String): String = withContext(Dispatchers.IO) {
+        val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
+        val api = LeapmotorApi(session)
+        val cmd = Commands.build(commandName)
+        val result = withNetworkRetry { api.sendControl(cmd, pin) }
+        for (attempt in 0 until 4) {
+            Thread.sleep(ControlResultPollingPolicy.delayBeforeAttempt(attempt))
+            val resp = api.queryControlResult(result.msgID)
+            val value = (resp.opt("result") ?: resp.opt("code"))?.toString()
+            if (value == "0" || value == "200") return@withContext "${cmd.label}成功"
         }
         "指令已下发，请在车辆上确认执行结果"
     }
