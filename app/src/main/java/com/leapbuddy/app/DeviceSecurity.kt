@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 enum class DeviceSecurityFailure(val userMessage: String) {
     NOT_INITIALIZED("设备安全组件尚未初始化，请重新点击登录"),
-    UNSUPPORTED_ABI("当前设备缺少兼容的安全组件，请使用支持的 64 位设备"),
+    UNSUPPORTED_ABI("当前设备无法加载安全组件（x86 模拟器不支持），登录请在真实 ARM 手机上进行"),
     SDK_LOAD_FAILED("设备安全组件加载失败，请重启应用后重试"),
     SDK_INITIALIZATION_FAILED("设备安全组件初始化失败，请稍后重试"),
     ASSET_INTEGRITY_FAILED("设备安全组件文件校验失败，请重新安装应用"),
