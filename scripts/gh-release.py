@@ -22,7 +22,9 @@ UPLOAD_HOST = "uploads.github.com"
 
 
 def request(method: str, url: str, token: str, payload: dict | None = None,
-            data: bytes | None = None, headers: dict | None = None) -> dict:
+            data: bytes | None = None, headers: dict | None = None,
+            tolerate: tuple[int, ...] = ()) -> dict | None:
+    """发起 GitHub API 请求。tolerate 里的状态码视为正常，返回 None。"""
     hdrs = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
     if payload is not None:
         hdrs["Content-Type"] = "application/json"
@@ -35,16 +37,19 @@ def request(method: str, url: str, token: str, payload: dict | None = None,
             body = r.read()
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as e:
+        if e.code in tolerate:
+            return None
         raise SystemExit(f"❌ HTTP {e.code} {method} {url}\n   {e.read().decode()[:200]}")
 
 
 def ensure_release(tag: str, token: str, notes: str, draft: bool, prerelease: bool) -> dict:
     base = f"https://api.github.com/repos/{OWNER}/{REPO}/releases"
-    # 已存在则复用
-    existing = request("GET", f"{base}/tags/{tag}", token)
+    # 查不到（404）说明还没发过，正常往下创建
+    existing = request("GET", f"{base}/tags/{tag}", token, tolerate=(404,)) or {}
     if "id" in existing:
         print(f"Release {tag} 已存在（id={existing['id']}），复用")
         return existing
+    print(f"创建 Release {tag}")
     return request("POST", base, token, {
         "tag_name": tag,
         "name": tag,
