@@ -62,7 +62,15 @@ cd LeapControl
 说明：
 
 - 构建产物会照常复制一份到上层目录 `零控-debug.apk`，习惯不变
-- 模拟器用软件渲染（SwiftShader），Intel 机型上兼容性最好；首次开机约 1 分钟，之后有快照会快很多
+- 渲染走**本机 GPU**（AVD 里 `hw.gpu.mode=host`），比默认的软件渲染流畅得多；
+  传感器 / 音频 / GPS 也关掉了，少一批无用开销。若在本机 GPU 上出异常，加 `--software` 退回 CPU 渲染
+- 开机走快照快速启动：首次约 1 分钟，之后 10 秒内；`--cold` 强制干净开机
+- 觉得界面动画拖沓，可把动画缩放调低（立即生效，无需重启）：
+  ```bash
+  adb shell settings put global window_animation_scale 0.5
+  adb shell settings put global transition_animation_scale 0.5
+  adb shell settings put global animator_duration_scale 0.5
+  ```
 - 脚本会自动找 SDK（`ANDROID_HOME` → `local.properties`），换机器也能用；AVD 不存在时会自动创建（必要时自动下载系统镜像）
 - 想换设备型号改脚本里的 `AVD_NAME` / `DEVICE` 即可
 

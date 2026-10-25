@@ -17,6 +17,7 @@
 # 可用参数：
 #   --no-build   跳过构建，直接装已有的 APK
 #   --cold       冷启动（丢弃快照，每次都是干净的开机）
+#   --software   退回纯 CPU 软件渲染（本机 GPU 加速出问题时用，会明显变卡）
 # ============================================================
 set -euo pipefail
 
@@ -117,8 +118,11 @@ cmd_start() {
         return 0
     fi
     ensure_avd
-    local opts="-gpu swiftshader_indirect -no-audio -no-boot-anim -no-snapshot-save"
+    # 渲染交给 AVD 配置（hw.gpu.enabled=yes + hw.gpu.mode=host，走本机 GPU，比软件渲染流畅得多）。
+    # 万一某台机器上 host 模式出问题，用 --software 退回纯 CPU 渲染。
+    local opts="-no-audio -no-boot-anim"
     grep -q -- --cold <<< "$*" && opts="$opts -no-snapshot-load"
+    grep -q -- --software <<< "$*" && opts="$opts -gpu swiftshader_indirect"
     info "启动模拟器 $AVD_NAME"
     nohup "$SDK/emulator/emulator" -avd "$AVD_NAME" $opts >"$LOG" 2>&1 &
     disown 2>/dev/null || true
@@ -143,7 +147,7 @@ cmd_status() {
     local s; s="$(pick_serial)"
     if [ -n "$s" ]; then
         local kind="模拟器"; [[ "$s" != emulator-* ]] && kind="真机"
-        ok "$kind $s：$(adb -s "$s" shell getprop ro.product.model 2>/dev/null) / Android $(adb -s "$s" shell getprop ro.build.version.release 2>/dev/null) / $(adb -s "$s" shell getprop ro.product.cpu.abi 2>/dev/null)"
+        ok "${kind} ${s}：$(adb -s "$s" shell getprop ro.product.model 2>/dev/null) / Android $(adb -s "$s" shell getprop ro.build.version.release 2>/dev/null) / $(adb -s "$s" shell getprop ro.product.cpu.abi 2>/dev/null)"
     else
         warn "没有可用设备（模拟器未启动，也没插真机）"
         return 0
@@ -242,6 +246,6 @@ case "$SUB" in
         ok "全部完成，去看设备屏幕吧"
         ;;
     *)
-        sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         ;;
 esac

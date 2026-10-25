@@ -181,6 +181,14 @@ fun HomeScreen(
         var batteryPreheat by remember { mutableStateOf(false) }
         var chargeSaving by remember { mutableStateOf(false) }
         var chargeResult by remember { mutableStateOf<String?>(null) }
+        // 二级页面：座椅舒适 / 车载冰箱 / 完整空调
+        var showSeatComfort by remember { mutableStateOf(false) }
+        var showFridge by remember { mutableStateOf(false) }
+        var showClimate by remember { mutableStateOf(false) }
+        // 冰箱指令在 PIN 验证完成后重放
+        var pendingFridgeCommand by remember {
+            mutableStateOf<com.leapbuddy.app.FridgeControlCommand?>(null)
+        }
         val season = SeasonThemes.byId(seasonId)
 
         LaunchedEffect(Unit) { vehicles = runCatching { runtime.vehicles() }.getOrDefault(emptyList()) }
@@ -306,8 +314,48 @@ fun HomeScreen(
             }
         }
 
-        // 充电中心二级页：覆盖首页内容
-        if (showChargingCenter) {
+        /** 车载冰箱：构造指令下发（cmdid 500），未设控车密码时弹 PIN 输入框。 */
+        fun runFridgeCommand(command: com.leapbuddy.app.FridgeControlCommand) {
+            scope.launch {
+                controlling = "fridge"
+                actionMessage = null
+                try {
+                    actionMessage = runtime.controlFridge(command)
+                    refresh(force = true)
+                } catch (e: NeedPinException) {
+                    pendingFridgeCommand = command
+                    showPinDialog = true
+                } catch (e: Exception) {
+                    actionMessage = friendlyError(e)
+                }
+                controlling = null
+            }
+        }
+
+        // 二级页：座椅舒适 / 车载冰箱 / 完整空调 / 充电中心（覆盖首页内容）
+        if (showSeatComfort) {
+            SeatComfortScreen(
+                onBack = { showSeatComfort = false },
+                status = status,
+                busy = controlling != null,
+                onCommand = { runControl(it) },
+            )
+        } else if (showFridge) {
+            FridgeScreen(
+                onBack = { showFridge = false },
+                status = status,
+                busy = controlling != null,
+                onControlFridge = { runFridgeCommand(it) },
+            )
+        } else if (showClimate) {
+            ClimateScreen(
+                onBack = { showClimate = false },
+                status = status,
+                busy = controlling != null,
+                onCommand = { runControl(it) },
+                onTempChange = { runAcTemperature(it) },
+            )
+        } else if (showChargingCenter) {
             ChargingCenterScreen(
                 status = status,
                 healthyCharge = healthyCharge,
@@ -584,7 +632,11 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 AcTile(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable { showClimate = true },
                     status = currentStatus,
                     busy = controlling == "acTemp",
                     onToggleAc = { runControl(if (currentStatus?.acOn == true) "acOff" else "acOn") },
@@ -594,6 +646,24 @@ fun HomeScreen(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     status = currentStatus,
                     runtime = runtime,
+                )
+            }
+
+            // ---- 座椅舒适 + 车载冰箱 ----
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SeatComfortTile(
+                    modifier = Modifier.weight(1f),
+                    status = currentStatus,
+                    onClick = { showSeatComfort = true },
+                )
+                FridgeTile(
+                    modifier = Modifier.weight(1f),
+                    status = currentStatus,
+                    onClick = { showFridge = true },
                 )
             }
 
@@ -711,11 +781,17 @@ fun HomeScreen(
                                     showPinDialog = false
                                     // 空调调温与常规控车都会触发密码输入，这里按来源重放
                                     val temp = pendingAcTemp
-                                    if (temp != null) {
-                                        pendingAcTemp = null
-                                        runAcTemperature(temp)
-                                    } else {
-                                        pendingCommand?.let { runControl(it) }
+                                    val fridge = pendingFridgeCommand
+                                    when {
+                                        temp != null -> {
+                                            pendingAcTemp = null
+                                            runAcTemperature(temp)
+                                        }
+                                        fridge != null -> {
+                                            pendingFridgeCommand = null
+                                            runFridgeCommand(fridge)
+                                        }
+                                        else -> pendingCommand?.let { runControl(it) }
                                     }
                                 } else {
                                     actionMessage = "控车密码校验失败"

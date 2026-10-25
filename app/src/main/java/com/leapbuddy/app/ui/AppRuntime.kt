@@ -12,7 +12,12 @@ import com.leapbuddy.app.ApiException
 import com.leapbuddy.app.Commands
 import com.leapbuddy.app.ControlCommand
 import com.leapbuddy.app.ControlResultPollingPolicy
+import com.leapbuddy.app.FridgeControlCommand
+import com.leapbuddy.app.FridgeMode
+import com.leapbuddy.app.FridgeStyle
 import com.leapbuddy.app.LeapmotorApi
+import com.leapbuddy.app.ScheduledAcPlan
+import com.leapbuddy.app.ScheduledAcState
 import com.leapbuddy.app.ObfuscatedSecrets
 import com.leapbuddy.app.Session
 import com.leapbuddy.app.SessionStore
@@ -21,6 +26,7 @@ import com.leapbuddy.app.TrunkState
 import com.leapbuddy.app.TrunkStateMapper
 import com.leapbuddy.app.Vehicle
 import com.leapbuddy.app.VehicleLocationDomain
+import com.leapbuddy.app.VehicleOtaInfo
 import com.leapbuddy.app.VehicleStatusMapper
 import com.leapbuddy.app.WidgetStatusMapper
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +44,22 @@ data class TireInfo(
     val pressure: String?,
     val temperature: String?,
     val warning: Boolean,
+)
+
+/** 四个座位的档位（主驾/副驾/左后/右后），信号缺失为 null。 */
+data class SeatLevels(
+    val driver: Int? = null,
+    val passenger: Int? = null,
+    val leftRear: Int? = null,
+    val rightRear: Int? = null,
+)
+
+/** 车载冰箱状态快照。 */
+data class FridgeSnapshot(
+    val enabled: Boolean? = null,
+    val mode: FridgeMode? = null,
+    val style: FridgeStyle? = null,
+    val temp: Int? = null,
 )
 
 /** 首页展示的车辆状态快照。 */
@@ -72,6 +94,26 @@ data class CarStatus(
     val chargeVoltage: String? = null, // 电压，如 "368 V"
     val chargeCurrent: String? = null, // 电流，如 "18.5 A"
     val batteryTemp: String? = null, // 电池温度，如 "28 °C"
+    /** 天窗是否开启（1718 sunroofOpening），与遮阳帘（1724）分开。 */
+    val sunroofOpen: Boolean? = null,
+    /** 前备箱是否开启（仅部分车型支持，信号缺失为 null）。 */
+    val frunkOpen: Boolean? = null,
+    /** 哨兵模式是否开启。 */
+    val sentryOn: Boolean? = null,
+    /** 是否正在充电。 */
+    val charging: Boolean? = null,
+    /** 充电枪是否连接。 */
+    val chargeCableConnected: Boolean? = null,
+    /** 座椅加热档位 0-3。 */
+    val seatHeating: SeatLevels? = null,
+    /** 座椅通风档位 0-3。 */
+    val seatVentilation: SeatLevels? = null,
+    /** 方向盘加热：0 关 / 1 弱 / 2 强。 */
+    val steeringWheelHeating: Int? = null,
+    /** 后视镜加热是否开启。 */
+    val rearviewMirrorHeating: Boolean? = null,
+    /** 车载冰箱状态。 */
+    val fridge: FridgeSnapshot? = null,
 )
 
 /**
@@ -325,6 +367,26 @@ class AppRuntime(context: Context) {
             chargeVoltage = formatValue(pick(st, "chargeVoltage", "voltage", "bmsVoltage"), "V"),
             chargeCurrent = formatValue(pick(st, "chargeCurrent", "current", "bmsCurrent"), "A"),
             batteryTemp = formatValue(pick(st, "batteryTemp", "batteryTemperature", "packTemp", "batTemp"), "°C"),
+            sunroofOpen = parseSunroofOpen(st),
+            frunkOpen = parseFrunkOpen(st),
+            sentryOn = parseSentryOn(st),
+            charging = parseCharging(st),
+            chargeCableConnected = parseChargeCableConnected(st),
+            seatHeating = SeatLevels(
+                driver = seatLevel(st, "driverSeatHeating", "2100"),
+                passenger = seatLevel(st, "passengerSeatHeating", "2101"),
+                leftRear = seatLevel(st, "leftRearSeatHeating", "2118"),
+                rightRear = seatLevel(st, "rightRearSeatHeating", "2119"),
+            ),
+            seatVentilation = SeatLevels(
+                driver = seatLevel(st, "driverSeatVentilation", "1879"),
+                passenger = seatLevel(st, "passengerSeatVentilation", "3727"),
+                leftRear = seatLevel(st, "leftRearSeatVentilation", "1880"),
+                rightRear = seatLevel(st, "rightRearSeatVentilation", "3728"),
+            ),
+            steeringWheelHeating = seatLevel(st, "steeringWheelHeating", "1816")?.coerceIn(0, 2),
+            rearviewMirrorHeating = parseOnOff(pick(st, "rearviewMirrorHeating", "49")),
+            fridge = parseFridge(st),
         )
     }
 
@@ -379,6 +441,71 @@ class AppRuntime(context: Context) {
             sunroof != null -> sunroof > 0.0
             else -> null
         }
+    }
+
+    /** 天窗开启状态：1718 sunroofOpening（0-10，部分车型为 0-100）。 */
+    private fun parseSunroofOpen(st: JSONObject): Boolean? =
+        percentValue(st, "sunroofOpening", "1718")?.let { it > 0.0 }
+
+    /** 前备箱开启状态：bbcmFrontDoorStatus / frunkStatus。 */
+    private fun parseFrunkOpen(st: JSONObject): Boolean? {
+        val raw = pick(st, "bbcmFrontDoorStatus", "frunkStatus", "frontDoorStatus", "1280")
+        return when (raw?.toString()?.trim()?.lowercase()) {
+            "1", "true", "open", "opened" -> true
+            "0", "false", "closed", "close" -> false
+            else -> null
+        }
+    }
+
+    /** 哨兵模式开启状态。 */
+    private fun parseSentryOn(st: JSONObject): Boolean? =
+        parseOnOff(pick(st, "sentryMode", "sentryStatus", "sentrySwitch", "sentry"))
+
+    /** 是否正在充电。 */
+    private fun parseCharging(st: JSONObject): Boolean? {
+        val raw = pick(st, "chargingStatus", "chargeStatus", "chargingState", "chargeState")
+        return when (raw?.toString()?.trim()?.lowercase()) {
+            "1", "2", "true", "charging", "charge" -> true
+            "0", "false", "idle", "not_charging", "stop" -> false
+            else -> null
+        }
+    }
+
+    /** 充电枪是否连接（枪插着但没在充也算已连接）。 */
+    private fun parseChargeCableConnected(st: JSONObject): Boolean? {
+        val raw = pick(st, "chargeGunStatus", "gunStatus", "chargeCableStatus", "chargeConnectorStatus")
+        return when (raw?.toString()?.trim()?.lowercase()) {
+            "1", "2", "true", "connected" -> true
+            "0", "false", "disconnected" -> false
+            else -> null
+        }
+    }
+
+    /** 座椅/方向盘等档位：依次尝试字段名与信号号，取 0-3。 */
+    private fun seatLevel(st: JSONObject, vararg keys: String): Int? =
+        keys.firstNotNullOfOrNull { st.opt(it) }
+            ?.toString()?.trim()
+            ?.toDoubleOrNull()?.toInt()
+            ?.coerceIn(0, 3)
+
+    /** 车载冰箱：开关、模式、风格、目标温度。 */
+    private fun parseFridge(st: JSONObject): FridgeSnapshot? {
+        val enabledRaw = pick(st, "fridgeStatus", "fridgeEnable", "fridgeSwitch", "fridgeOn")
+        val tempRaw = pick(st, "fridgeTemp", "fridgeSetTemp", "fridgeTargetTemp")
+        val modeRaw = pick(st, "fridgeMode")
+        val styleRaw = pick(st, "fridgeStyle")
+        val enabled = when (enabledRaw?.toString()?.trim()?.lowercase()) {
+            "1", "true", "on" -> true
+            "0", "false", "off" -> false
+            else -> null
+        }
+        if (enabled == null && tempRaw == null && modeRaw == null && styleRaw == null) return null
+        return FridgeSnapshot(
+            enabled = enabled,
+            mode = FridgeMode.fromSignal(modeRaw?.toString()?.trim()?.toIntOrNull()),
+            style = FridgeStyle.fromSignal(styleRaw?.toString()?.trim()?.toIntOrNull()),
+            temp = tempRaw?.toString()?.trim()?.toDoubleOrNull()?.toInt(),
+        )
     }
 
     /** 行车状态：优先取文本字段，否则用速度推算（>0 行驶中，==0 已驻车）。 */
@@ -607,6 +734,10 @@ class AppRuntime(context: Context) {
         chargeLimit: Int,
         reserveCharge: Boolean,
         batteryPreheat: Boolean,
+        scheduledStart: String = "23:00",
+        scheduledEnd: String = "07:00",
+        scheduledTargetSoc: Int = 80,
+        preheatStart: String = "23:00",
     ): String = withContext(Dispatchers.IO) {
         val api = LeapmotorApi(session)
         val pin = sessionStore.loadOpPassword().orEmpty()
@@ -620,9 +751,9 @@ class AppRuntime(context: Context) {
         runCatching {
             api.setScheduledCharging(
                 enabled = reserveCharge,
-                startTime = "23:00",
-                endTime = "07:00",
-                targetSoc = 80,
+                startTime = scheduledStart,
+                endTime = scheduledEnd,
+                targetSoc = scheduledTargetSoc.coerceIn(50, 100),
                 opPassword = pin,
             )
             results += if (reserveCharge) "预约充电已开启" else "预约充电已关闭"
@@ -631,12 +762,47 @@ class AppRuntime(context: Context) {
         runCatching {
             api.setScheduledBatteryPreheat(
                 enabled = batteryPreheat,
-                startTime = "23:00",
+                startTime = preheatStart,
                 opPassword = pin,
             )
             results += if (batteryPreheat) "预约电池预热已开启" else "预约电池预热已关闭"
         }.onFailure { results += "预约电池预热失败" }
         results.joinToString("；")
+    }
+
+    // ---------------- 舒适配置 / 定时空调 / OTA ----------------
+
+    /** 车载冰箱控制（cmdid 500）。 */
+    suspend fun controlFridge(command: FridgeControlCommand): String = withContext(Dispatchers.IO) {
+        val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
+        val api = LeapmotorApi(session)
+        val cmd = Commands.buildFridgeControl(command)
+        val result = withNetworkRetry { api.sendControl(cmd, pin) }
+        for (attempt in 0 until 4) {
+            Thread.sleep(ControlResultPollingPolicy.delayBeforeAttempt(attempt))
+            val resp = api.queryControlResult(result.msgID)
+            val value = (resp.opt("result") ?: resp.opt("code"))?.toString()
+            if (value == "0" || value == "200") return@withContext "${cmd.label}执行成功"
+        }
+        "指令已下发，请在车辆上确认执行结果"
+    }
+
+    /** 读取车端已保存的定时空调计划。 */
+    suspend fun loadScheduledAc(): ScheduledAcState? = withContext(Dispatchers.IO) {
+        runCatching { LeapmotorApi(session).getScheduledAirConditioning() }.getOrNull()
+    }
+
+    /** 下发定时空调计划（plan.enabled = false 表示取消）。 */
+    suspend fun applyScheduledAc(plan: ScheduledAcPlan): String = withContext(Dispatchers.IO) {
+        val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
+        LeapmotorApi(session).setScheduledAirConditioning(plan, pin)
+        if (plan.enabled) "定时空调已设置（每天 ${plan.startTime}）" else "定时空调已取消"
+    }
+
+    /** 车辆 OTA 升级信息。 */
+    suspend fun loadOtaInfo(): VehicleOtaInfo? = withContext(Dispatchers.IO) {
+        val vin = session.selectedVin?.takeIf { it.isNotBlank() } ?: return@withContext null
+        runCatching { LeapmotorApi(session).getVehicleOtaInfo(vin) }.getOrNull()
     }
 
     val hasPin: Boolean get() = sessionStore.loadOpPassword() != null
