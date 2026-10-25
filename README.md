@@ -38,6 +38,36 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ---
 
+## 在本机模拟器里测试
+
+本机已配好 Android 模拟器（AVD 名 `LeapControl_Test`，Pixel 7 / Android 15 / x86_64），所有操作收在一条命令里：
+
+```bash
+cd LeapControl
+
+# 一键全流程：构建 → 启动模拟器 → 安装 → 打开 App
+./scripts/emu.sh
+
+# 其它常用子命令
+./scripts/emu.sh start          # 只启动模拟器并等它就绪
+./scripts/emu.sh stop           # 关闭模拟器
+./scripts/emu.sh status         # 看模拟器 / App 状态
+./scripts/emu.sh shot           # 截图到项目根（零控-月日-时分秒.png）
+./scripts/emu.sh log            # 看 App 实时日志（Ctrl+C 退出）
+./scripts/emu.sh install xx.apk # 单独安装某个 APK
+./scripts/emu.sh --no-build     # 跳过构建，直接装现有 APK
+./scripts/emu.sh --cold         # 冷启动（丢弃快照，干净开机）
+```
+
+说明：
+
+- 构建产物会照常复制一份到上层目录 `零控-debug.apk`，习惯不变
+- 模拟器用软件渲染（SwiftShader），Intel 机型上兼容性最好；首次开机约 1 分钟，之后有快照会快很多
+- 脚本会自动找 SDK（`ANDROID_HOME` → `local.properties`），换机器也能用；AVD 不存在时会自动创建（必要时自动下载系统镜像）
+- 想换设备型号改脚本里的 `AVD_NAME` / `DEVICE` 即可
+
+---
+
 ## 版本管理规范
 
 ### 1. 版本号：语义化版本 X.Y.Z
@@ -126,6 +156,7 @@ LeapControl/
 │       └── ui/                  Compose 界面层
 ├── gradle/
 ├── scripts/                 发版与同步工具
+│   ├── emu.sh               模拟器一键运行（构建/安装/启动/截图/日志）
 │   ├── release.sh           一键发版
 │   ├── gh-sync.py           API 通道增量同步
 │   └── gh-release.py        创建 Release 并上传 APK
