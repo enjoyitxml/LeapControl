@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图标背景：深色竖向渐变 + 底部径向光晕（还原 SVG 视觉效果） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:centerColor="#1D1D1F"
+                android:centerY="0.45"
+                android:endColor="#060607"
+                android:startColor="#212122"
+                android:type="linear" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval">
+            <gradient
+                android:centerX="0.5"
+                android:centerY="0.70"
+                android:endColor="#00FFFFFF"
+                android:gradientRadius="32%"
+                android:centerColor="#0EFFFFFF"
+                android:startColor="#33FFFFFF"
+                android:type="radial" />
+        </shape>
+    </item>
+</layer-list>
