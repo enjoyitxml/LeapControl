@@ -9,6 +9,10 @@
 #   ./scripts/emu.sh shot       截一张当前屏幕到项目根
 #   ./scripts/emu.sh log        看 App 的实时日志（Ctrl+C 退出）
 #   ./scripts/emu.sh install xx.apk   单独安装某个 APK
+#   ./scripts/emu.sh devices    列出所有已连接的设备
+#
+# 插着开了 USB 调试的手机时，自动优先用真机（模拟器会被跳过）；
+# 不插手机则自动启动模拟器。
 #
 # 可用参数：
 #   --no-build   跳过构建，直接装已有的 APK
@@ -49,6 +53,15 @@ warn() { printf '\033[33m! %s\033[0m\n' "$*"; }
 die()  { printf '\033[31m✗ %s\033[0m\n' "$*"; exit 1; }
 
 serial() { adb devices | awk '$2=="device" && $1 ~ /^emulator-/ {print $1; exit}'; }
+
+# 目标设备：真机（USB / 无线）优先，没有真机才退回模拟器
+pick_serial() {
+    local all s
+    all="$(adb devices | awk '$2=="device" {print $1}')"
+    s="$(awk '!/^emulator-/ {print; exit}' <<< "$all")"
+    [ -n "$s" ] || s="$(awk '/^emulator-/ {print; exit}' <<< "$all")"
+    printf '%s' "$s"
+}
 
 # ---------- 模拟器 ----------
 ensure_avd() {
@@ -93,6 +106,12 @@ wait_ready() {
 }
 
 cmd_start() {
+    # 已经插着真机就没必要起模拟器
+    local real; real="$(adb devices | awk '$2=="device" && $1 !~ /^emulator-/ {print $1; exit}')"
+    if [ -n "$real" ]; then
+        ok "检测到真机 $real，直接用它"
+        return 0
+    fi
     if emulator_up; then
         ok "模拟器已经在跑：$(serial)"
         return 0
@@ -120,14 +139,17 @@ cmd_stop() {
 }
 
 cmd_status() {
-    local s; s="$(serial)"
+    adb devices | grep -q unauthorized && warn "手机上还没授权，请在手机上点「允许 USB 调试」"
+    local s; s="$(pick_serial)"
     if [ -n "$s" ]; then
-        ok "模拟器：$s  $(adb -s "$s" shell getprop ro.build.version.release 2>/dev/null) / $(adb -s "$s" shell getprop ro.product.model 2>/dev/null)"
+        local kind="模拟器"; [[ "$s" != emulator-* ]] && kind="真机"
+        ok "$kind $s：$(adb -s "$s" shell getprop ro.product.model 2>/dev/null) / Android $(adb -s "$s" shell getprop ro.build.version.release 2>/dev/null) / $(adb -s "$s" shell getprop ro.product.cpu.abi 2>/dev/null)"
     else
-        warn "模拟器未启动"
+        warn "没有可用设备（模拟器未启动，也没插真机）"
+        return 0
     fi
-    if adb shell pidof "$PKG" >/dev/null 2>&1 || adb shell ps -A 2>/dev/null | grep -q "$PKG"; then
-        ok "App 正在前台：$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -o 'com.leapbuddy.app/[.A-Za-z]*' | head -1)"
+    if adb -s "$s" shell ps -A 2>/dev/null | grep -q "$PKG"; then
+        ok "App 正在运行：$(adb -s "$s" shell dumpsys activity activities 2>/dev/null | grep -m1 -o "$PKG/[.A-Za-z]*")"
     else
         warn "App 未运行"
     fi
@@ -145,20 +167,29 @@ cmd_build() {
 
 cmd_install() {
     local apk="${1:-}"
+    # 优先用刚构建出来的产物，其次 release 目录里最新的，最后才是外层副本
+    [ -n "$apk" ] || [ ! -f "$APK" ] || apk="$APK"
     [ -n "$apk" ] || apk="$(ls -t "$PROJECT_DIR"/release/*.apk 2>/dev/null | head -1)"
-    [ -n "$apk" ] || apk="$APK"
-    if [ ! -f "$apk" ]; then
-        [ -f "$COPY_APK" ] || die "没有可安装的 APK"
-        apk="$COPY_APK"
-    fi
-    info "安装 $(basename "$apk")"
-    adb install -r "$apk" | sed 's/^/   /' || die "安装失败"
-    ok "安装完成"
+    [ -n "$apk" ] && [ -f "$apk" ] || apk="$COPY_APK"
+    [ -f "$apk" ] || die "没有可安装的 APK"
+    local s; s="$(pick_serial)"
+    [ -n "$s" ] || die "没有可用设备：先 ./scripts/emu.sh start，或插上开好 USB 调试的手机"
+    info "安装 $(basename "$apk") → $s"
+    local out=""
+    for i in 1 2 3; do
+        out="$(adb -s "$s" install -r "$apk" 2>&1)"
+        grep -q "^Success$" <<< "$out" && { ok "安装完成"; return 0; }
+        # 设备刚开机时 StorageManager 还没就绪，会抛 NPE，等一下重试即可
+        [ $i -lt 3 ] && { warn "第 $i 次未成功，3 秒后重试"; sleep 3; }
+    done
+    printf '%s\n' "$out" | head -5 | sed 's/^/   /'
+    die "安装失败"
 }
 
 cmd_launch() {
     info "启动零控"
-    local s; s="$(serial)"
+    local s; s="$(pick_serial)"
+    [ -n "$s" ] || die "没有可用设备"
     adb -s "$s" shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1 \
         || adb -s "$s" shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
     sleep 3
@@ -170,16 +201,23 @@ cmd_launch() {
 }
 
 cmd_shot() {
+    local s; s="$(pick_serial)"
+    [ -n "$s" ] || die "没有可用设备"
     local name="零控-$(date +%m%d-%H%M%S).png"
-    adb exec-out screencap -p > "$OUTER_DIR/$name"
+    adb -s "$s" exec-out screencap -p > "$OUTER_DIR/$name"
     ok "截图 → $name"
 }
 
 cmd_log() {
-    local s; s="$(serial)"
-    [ -n "$s" ] || die "模拟器未启动"
+    local s; s="$(pick_serial)"
+    [ -n "$s" ] || die "没有可用设备"
     info "实时日志（Ctrl+C 退出）"
     adb -s "$s" logcat -v brief --pid "$(adb -s "$s" shell ps -A | awk -v p="$PKG" '$0 ~ p {print $2; exit}')"
+}
+
+cmd_devices() {
+    echo "连接到的设备："
+    adb devices -l | awk 'NR>1 && NF {print "   "$0}'
 }
 
 # ---------- 入口 ----------
@@ -195,14 +233,15 @@ case "$SUB" in
     shot)    cmd_shot ;;
     log)     cmd_log ;;
     install) cmd_install "${ARGS[0]:-}" ;;
+    devices) cmd_devices ;;
     ""|run)
         grep -q -- --no-build <<< "${ARGS[*]}" || cmd_build
         cmd_start
         cmd_install
         cmd_launch
-        ok "全部完成，去模拟器窗口里看吧"
+        ok "全部完成，去看设备屏幕吧"
         ;;
     *)
-        sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         ;;
 esac

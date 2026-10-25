@@ -66,6 +66,31 @@ cd LeapControl
 - 脚本会自动找 SDK（`ANDROID_HOME` → `local.properties`），换机器也能用；AVD 不存在时会自动创建（必要时自动下载系统镜像）
 - 想换设备型号改脚本里的 `AVD_NAME` / `DEVICE` 即可
 
+### 已知限制：x86 模拟器上登不了账号
+
+登录依赖零跑内置的数美设备安全组件（`libsmsdk.so`），该库**只发布了 arm64-v8a 版本**。
+x86 / x86_64 的 PC 模拟器只能靠二进制翻译去执行它，而它内部有动态生成的代码，
+翻译执行时必然触发 `SIGSEGV` —— native 崩溃在 Java 层捕获不到，表现为**点登录就闪退**。
+
+现在代码里已加了架构判断（`ShumeiSecurityManager`）：非 ARM 设备直接跳过该组件，
+不会再闪退，点登录会给出明确提示「当前设备无法加载安全组件（x86 模拟器不支持），
+登录请在真实 ARM 手机上进行」。**模拟器适合看 UI 和调试界面，登录与控车请在真机上测。**
+
+### 真机调试
+
+手机开好「USB 调试」后用 USB 连上电脑（或在同一 WiFi 下用「无线调试」），脚本会自动优先用真机：
+
+```bash
+./scripts/emu.sh devices     # 确认手机被 adb 认到（状态 device，不是 unauthorized）
+./scripts/emu.sh             # 直接装到手机上并打开
+```
+
+想在电脑上直接操作手机屏幕，装个投屏工具最舒服：
+
+```bash
+brew install scrcpy          # 装好后插着手机运行 scrcpy 即可
+```
+
 ---
 
 ## 版本管理规范

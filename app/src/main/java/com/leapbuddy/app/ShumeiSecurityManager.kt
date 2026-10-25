@@ -1,6 +1,7 @@
 package com.leapbuddy.app
 
 import android.content.Context
+import android.os.Build
 import android.os.Process
 import android.util.Log
 import dalvik.system.DexClassLoader
@@ -24,10 +25,30 @@ object ShumeiSecurityManager {
     @Volatile
     private var initializationFailure = DeviceSecurityFailure.NOT_INITIALIZED
 
+    /**
+     * 安全组件只发布了 arm64-v8a 版本。x86 / x86_64 设备（PC 上的模拟器）只能靠
+     * 二进制翻译去跑它，而它内部有动态生成的代码，翻译执行时必然触发 SIGSEGV，
+     * 且 native 崩溃在 Java 层无法捕获，会直接闪退。所以这类设备一律不加载。
+     */
+    private val isSupportedArchitecture: Boolean
+        get() {
+            val primaryAbi = Build.SUPPORTED_ABIS.firstOrNull().orEmpty()
+            return primaryAbi == "arm64-v8a" || primaryAbi.startsWith("armeabi")
+        }
+
     /** 初始化数美 SDK。 */
     @Synchronized
     fun initialize(context: Context): Boolean {
         if (smClass != null) return true
+        if (!isSupportedArchitecture) {
+            initializationFailure = DeviceSecurityFailure.UNSUPPORTED_ABI
+            Log.w(
+                TAG,
+                "非 ARM 设备（${Build.SUPPORTED_ABIS.firstOrNull()}），跳过设备安全组件；" +
+                    "该设备上的登录会被服务端拒绝，属预期行为"
+            )
+            return false
+        }
         return try {
             val appCtx = context.applicationContext
             // Native libraries stay bound to their class loader across initialization retries.
