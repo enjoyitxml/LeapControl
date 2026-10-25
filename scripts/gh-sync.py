@@ -137,7 +137,11 @@ def main() -> int:
         print(f"    - {p}")
 
     if not (added or changed or removed):
-        print("✅ 已是最新，无需同步")
+        print("✅ 文件已是最新，无需同步")
+        # 文件没变但也可能只是要移动标签
+        if args.tag:
+            remote_head = api("GET", f"/git/ref/heads/{BRANCH}", token=token)["object"]["sha"]
+            push_tag(args.tag, remote_head, root, token)
         return 0
     if args.dry_run:
         print("（dry-run，未提交）")
@@ -188,16 +192,22 @@ def main() -> int:
     print(f"✅ {BRANCH} 已更新到 {commit['sha'][:8]}")
 
     if args.tag:
-        tag_sha = sh("git", "rev-parse", args.tag, cwd=root).strip()
-        api(
-            "POST",
-            "/git/refs",
-            {"ref": f"refs/tags/{args.tag}", "sha": commit["sha"]},
-            token=token,
-        )
-        print(f"✅ 标签 {args.tag} 已推送（本地对象 {tag_sha[:8]} → 远端提交 {commit['sha'][:8]}）")
+        push_tag(args.tag, commit["sha"], root, token)
 
     return 0
+
+
+def push_tag(tag: str, target_sha: str, root: str, token: str) -> None:
+    """推送标签；已存在则强制移动到新的提交（对应本地 git tag -f）。"""
+    ref = f"refs/tags/{tag}"
+    try:
+        api("POST", "/git/refs", {"ref": ref, "sha": target_sha}, token=token)
+        print(f"✅ 标签 {tag} 已创建 → {target_sha[:8]}")
+    except GitError as e:
+        if "already exists" not in str(e):
+            raise
+        api("PATCH", f"/git/refs/tags/{tag}", {"sha": target_sha, "force": True}, token=token)
+        print(f"✅ 标签 {tag} 已移动到 {target_sha[:8]}")
 
 
 if __name__ == "__main__":
