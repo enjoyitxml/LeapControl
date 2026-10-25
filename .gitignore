@@ -44,3 +44,10 @@ Thumbs.db
 
 # ===== 第三方服务配置 =====
 google-services.json
+
+# ===== Python 缓存 =====
+__pycache__/
+*.pyc
+
+# ===== 发版产物 =====
+release/
