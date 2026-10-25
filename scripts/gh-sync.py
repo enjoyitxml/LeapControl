@@ -29,7 +29,7 @@ import sys
 import urllib.error
 import urllib.request
 
-OWNER, REPO = "enjoyitxml", "LeapBuddy"
+OWNER, REPO = "enjoyitxml", "LeapControl"
 API = f"https://api.github.com/repos/{OWNER}/{REPO}"
 BRANCH = "main"
 
