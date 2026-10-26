@@ -289,10 +289,8 @@ object VehicleHealthDiagnostics {
         if (openDoors.isNotEmpty()) {
             items += HealthCheckItem(
                 title = "车门未关好",
-                detail = "${openDoors.joinToString("、")}未关严，行车前请确认关闭",
+                detail = "${openDoors.joinToString("、")}未关严，需回到车旁手动关闭；车辆通常不支持远程关门",
                 level = HealthLevel.CRITICAL,
-                fixCommand = "lock",
-                fixLabel = "远程上锁并重关",
             )
         } else if (doors?.hasAnySignal == true) {
             items += HealthCheckItem(
