@@ -1,6 +1,6 @@
 # 零控（LeapControl）
 
-零跑汽车第三方控车 Android App，包名 `com.leapbuddy.app`。自用性质，**私有仓库**。
+零跑汽车第三方控车 Android App，包名 `com.leapcontrol.app`。自用性质，**私有仓库**。
 
 ## 功能概览
 
@@ -216,7 +216,7 @@ GH_TOKEN=<你的令牌> python3 scripts/gh-sync.py
 ```
 LeapControl/
 ├── app/                     源码主工程
-│   └── src/main/java/com/leapbuddy/app/
+│   └── src/main/java/com/leapcontrol/app/
 │       ├── Models.kt            指令表（Commands）与预约计划
 │       ├── LeapmotorApi.kt      官方接口实现
 │       ├── SessionStore.kt      本地偏好与会话（部分走 Keystore 加密）

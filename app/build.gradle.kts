@@ -5,16 +5,16 @@ plugins {
 }
 
 android {
-    namespace = "com.leapbuddy.app"
+    namespace = "com.leapcontrol.app"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "com.leapbuddy.app"
+        applicationId = "com.leapcontrol.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 100
-        versionName = "0.1.0"
+        versionCode = 200
+        versionName = "0.2.0"
         resourceConfigurations += setOf("zh", "zh-rCN")
         buildConfigField("String", "AMAP_WEB_KEY_ENCRYPTED", "\"\"")
         buildConfigField("String", "PGYER_API_KEY_ENCRYPTED", "\"\"")

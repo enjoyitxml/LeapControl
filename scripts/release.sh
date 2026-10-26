@@ -40,7 +40,7 @@ if [[ -n "${CURRENT_NAME:-}" ]]; then
   IFS='.' read -r OLD_MA OLD_MI OLD_PA <<< "$CURRENT_NAME"
   OLD_CODE=$(( OLD_MA * 10000 + OLD_MI * 100 + OLD_PA ))
   if [[ "$VERSION_CODE" -le "$OLD_CODE" ]]; then
-    echo "❌ 新版本 $VERSION（code $VERSION_CODE）必须大于当前 $CURRENT_NAME（code $OLD_CODE）"
+    echo "❌ 新版本 ${VERSION}（code ${VERSION_CODE}）必须大于当前 ${CURRENT_NAME}（code ${OLD_CODE}）"
     exit 1
   fi
 fi
@@ -72,7 +72,7 @@ APK_DST="release/LeapControl-v${VERSION}-debug.apk"
 if [[ -f "$APK_SRC" ]]; then
   cp -f "$APK_SRC" "$APK_DST"
   cp -f "$APK_SRC" "../零控-debug.apk"
-  echo "==> APK：$APK_DST（$(du -h "$APK_DST" | cut -f1)）"
+  echo "==> APK：${APK_DST}（$(du -h "$APK_DST" | cut -f1)）"
 else
   echo "⚠️  没有找到 APK：$APK_SRC"
 fi
@@ -131,9 +131,22 @@ entry = f"## [{version}] - {date}\n\n{body}\n"
 
 path = "CHANGELOG.md"
 content = open(path, encoding="utf-8").read()
+PLACEHOLDER = "（开发中的改动先放这里，发版时脚本会把它们归入新版本号下）"
 anchor = "## [未发布]"
+
+
+def rebuild(_m):
+    """把 [未发布] 小节整体替换成「干净的未发布占位 + 本次版本条目」。
+
+    原来只是简单在 anchor 后追加条目，导致上一次手写在 [未发布] 里的内容
+    会残留在版本条目之后（看起来像属于上一个旧版本）。这里整体重写该小节。
+    """
+    return f"{anchor}\n\n{PLACEHOLDER}\n\n{entry.rstrip()}\n"
+
+
 if anchor in content:
-    content = content.replace(anchor, anchor + "\n\n" + entry.rstrip() + "\n", 1)
+    content, n = re.subn(
+        r"## \[未发布\]\n.*?(?=\n## \[|\Z)", rebuild, content, count=1, flags=re.S)
 else:
     # 没有未发布小节就直接插到第一条版本记录前
     first = re.search(r"^## \[", content, re.M)
