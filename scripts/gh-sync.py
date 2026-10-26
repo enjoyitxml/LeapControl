@@ -163,15 +163,20 @@ def main() -> int:
     for path in removed:
         tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": None})
 
-    # 3. 未变化的文件也要带上，否则会被当成删除
-    for path, (mode, sha) in local.items():
-        if path not in added and path not in changed:
-            tree_entries.append({"path": path, "mode": mode, "type": "blob", "sha": sha})
-
+    # 3. 未变化的文件不必重复上传：把远端的 tree 作为 base_tree 即可保留它们
     print("创建 tree…")
-    new_tree = api("POST", "/git/trees", {"tree": tree_entries}, token=token)["sha"]
+    # ⚠️ 关键点：只要 tree 里出现 sha:null（删除），就必须带 base_tree，
+    #    否则 GitHub 返回 422 GitRPC::BadObjectState。
+    parent_commit = api("GET", f"/git/ref/heads/{BRANCH}", token=token)["object"]["sha"]
+    parent_tree = api("GET", f"/git/commits/{parent_commit}", token=token)["tree"]["sha"]
+    new_tree = api(
+        "POST",
+        "/git/trees",
+        {"base_tree": parent_tree, "tree": tree_entries},
+        token=token,
+    )["sha"]
 
-    parent = api("GET", f"/git/ref/heads/{BRANCH}", token=token)["object"]["sha"]
+    parent = parent_commit
     message = collect_message(root, head)
     print("创建 commit…")
     commit = api(
