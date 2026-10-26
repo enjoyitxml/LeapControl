@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import com.leapbuddy.app.FridgeControlCommand
 import com.leapbuddy.app.FridgeMode
 import com.leapbuddy.app.FridgeStyle
+import com.leapbuddy.app.VehicleCapabilities
 
 /** 二级页面顶栏：返回 + 标题。 */
 @Composable
@@ -149,6 +150,8 @@ fun SeatComfortScreen(
     status: CarStatus?,
     busy: Boolean,
     onCommand: (String) -> Unit,
+    /** 车辆实际具备的座椅/方向盘/后视镜配置；未识别到时整页按「不支持」处理，避免给出空面板。 */
+    caps: VehicleCapabilities = VehicleCapabilities.EMPTY,
 ) {
     val C = LocalAppColors.current
     Column(
@@ -166,60 +169,86 @@ fun SeatComfortScreen(
         )
         Spacer(Modifier.height(12.dp))
 
-        SectionCard("座椅加热") {
-            val heat = status?.seatHeating
-            LevelRow("主驾", heat?.driver, listOf("关", "1档", "2档", "3档"), busy, "driverSeatHeating_", onCommand)
-            LevelRow("副驾", heat?.passenger, listOf("关", "1档", "2档", "3档"), busy, "passengerSeatHeating_", onCommand)
-            LevelRow("左后", heat?.leftRear, listOf("关", "1档", "2档", "3档"), busy, "leftRearSeatHeating_", onCommand)
-            LevelRow("右后", heat?.rightRear, listOf("关", "1档", "2档", "3档"), busy, "rightRearSeatHeating_", onCommand)
+        val heat = status?.seatHeating
+        val heatLevels = listOf("关", "1档", "2档", "3档")
+        // 只渲染车上真有的座位：二排没加热就只给前排两行
+        if (caps.seatHeating.hasFront) {
+            SectionCard("座椅加热") {
+                if (caps.seatHeating.driver) {
+                    LevelRow("主驾", heat?.driver, heatLevels, busy, "driverSeatHeating_", onCommand)
+                }
+                if (caps.seatHeating.passenger) {
+                    LevelRow("副驾", heat?.passenger, heatLevels, busy, "passengerSeatHeating_", onCommand)
+                }
+                if (caps.seatHeating.leftRear) {
+                    LevelRow("左后", heat?.leftRear, heatLevels, busy, "leftRearSeatHeating_", onCommand)
+                }
+                if (caps.seatHeating.rightRear) {
+                    LevelRow("右后", heat?.rightRear, heatLevels, busy, "rightRearSeatHeating_", onCommand)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
         }
 
-        Spacer(Modifier.height(12.dp))
-        SectionCard("座椅通风") {
-            val vent = status?.seatVentilation
-            LevelRow("主驾", vent?.driver, listOf("关", "1档", "2档", "3档"), busy, "driverSeatVentilation_", onCommand)
-            LevelRow("副驾", vent?.passenger, listOf("关", "1档", "2档", "3档"), busy, "passengerSeatVentilation_", onCommand)
-            LevelRow("左后", vent?.leftRear, listOf("关", "1档", "2档", "3档"), busy, "leftRearSeatVentilation_", onCommand)
-            LevelRow("右后", vent?.rightRear, listOf("关", "1档", "2档", "3档"), busy, "rightRearSeatVentilation_", onCommand)
+        val vent = status?.seatVentilation
+        if (caps.seatVentilation.hasFront) {
+            SectionCard("座椅通风") {
+                if (caps.seatVentilation.driver) {
+                    LevelRow("主驾", vent?.driver, heatLevels, busy, "driverSeatVentilation_", onCommand)
+                }
+                if (caps.seatVentilation.passenger) {
+                    LevelRow("副驾", vent?.passenger, heatLevels, busy, "passengerSeatVentilation_", onCommand)
+                }
+                if (caps.seatVentilation.leftRear) {
+                    LevelRow("左后", vent?.leftRear, heatLevels, busy, "leftRearSeatVentilation_", onCommand)
+                }
+                if (caps.seatVentilation.rightRear) {
+                    LevelRow("右后", vent?.rightRear, heatLevels, busy, "rightRearSeatVentilation_", onCommand)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
         }
 
-        Spacer(Modifier.height(12.dp))
-        SectionCard("方向盘加热") {
-            LevelRow(
-                "方向盘",
-                status?.steeringWheelHeating,
-                listOf("关", "弱", "强"),
-                busy,
-                "steeringWheelHeating_",
-                onCommand,
-            )
+        if (caps.steeringWheelHeating) {
+            SectionCard("方向盘加热") {
+                LevelRow(
+                    "方向盘",
+                    status?.steeringWheelHeating,
+                    listOf("关", "弱", "强"),
+                    busy,
+                    "steeringWheelHeating_",
+                    onCommand,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
         }
 
-        Spacer(Modifier.height(12.dp))
-        SectionCard("后视镜加热") {
-            val on = status?.rearviewMirrorHeating
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                listOf(true to "开启", false to "关闭").forEach { (value, text) ->
-                    val selected = on == value
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(38.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (selected) C.chipBgActive else C.chipBg)
-                            .clickable(enabled = !busy) {
-                                onCommand(if (value) "rearviewMirrorHeating_on" else "rearviewMirrorHeating_off")
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = text,
-                            color = if (selected) C.accent else C.textSecondary,
-                            fontSize = 13.sp,
-                        )
+        if (caps.mirrorHeating) {
+            SectionCard("后视镜加热") {
+                val on = status?.rearviewMirrorHeating
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    listOf(true to "开启", false to "关闭").forEach { (value, text) ->
+                        val selected = on == value
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (selected) C.chipBgActive else C.chipBg)
+                                .clickable(enabled = !busy) {
+                                    onCommand(if (value) "rearviewMirrorHeating_on" else "rearviewMirrorHeating_off")
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = text,
+                                color = if (selected) C.accent else C.textSecondary,
+                                fontSize = 13.sp,
+                            )
+                        }
                     }
                 }
             }

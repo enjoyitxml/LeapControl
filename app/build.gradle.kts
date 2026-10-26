@@ -72,5 +72,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.9.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // 仅用于 JVM 单测：Android 内置的 org.json 在本地单测里不存在，需要显式提供 jar
+    testImplementation("org.json:json:20240303")
+    testImplementation("junit:junit:4.13.2")
 }
