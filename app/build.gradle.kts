@@ -5,12 +5,12 @@ plugins {
 }
 
 android {
-    namespace = "com.leapbuddy.app"
+    namespace = "com.leapcontrol.app"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "com.leapbuddy.app"
+        applicationId = "com.leapcontrol.app"
         minSdk = 26
         targetSdk = 35
         versionCode = 100
