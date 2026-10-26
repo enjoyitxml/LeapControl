@@ -55,6 +55,32 @@ data class SeatLevels(
     val rightRear: Int? = null,
 )
 
+/**
+ * 四门与前舱盖是否未关好（true = 未关好，null = 无该路信号）。
+ * 注意官方命名：rbcmDriverDoorStatus 是右前门，不是后门。
+ */
+data class DoorStates(
+    val driver: Boolean? = null,
+    val passenger: Boolean? = null,
+    val leftRear: Boolean? = null,
+    val rightRear: Boolean? = null,
+    val hood: Boolean? = null,
+) {
+    /** 是否至少收到过一路信号；全部为 null 时表示这台车不上报门状态。 */
+    val hasAnySignal: Boolean
+        get() = driver != null || passenger != null || leftRear != null || rightRear != null || hood != null
+
+    /** 未关好的部位名称列表。 */
+    val openLabels: List<String>
+        get() = buildList {
+            if (driver == true) add("左前门")
+            if (passenger == true) add("右前门")
+            if (leftRear == true) add("左后门")
+            if (rightRear == true) add("右后门")
+            if (hood == true) add("前舱盖")
+        }
+}
+
 /** 车载冰箱状态快照。 */
 data class FridgeSnapshot(
     val enabled: Boolean? = null,
@@ -101,6 +127,8 @@ data class CarStatus(
     val frunkOpen: Boolean? = null,
     /** 哨兵模式是否开启。 */
     val sentryOn: Boolean? = null,
+    /** 四门与前舱盖是否未关好（信号缺失为 null）。 */
+    val doors: DoorStates? = null,
     /** 是否正在充电。 */
     val charging: Boolean? = null,
     /** 充电枪是否连接。 */
@@ -371,6 +399,7 @@ class AppRuntime(context: Context) {
             sunroofOpen = parseSunroofOpen(st),
             frunkOpen = parseFrunkOpen(st),
             sentryOn = parseSentryOn(st),
+            doors = parseDoors(st),
             charging = parseCharging(st),
             chargeCableConnected = parseChargeCableConnected(st),
             seatHeating = SeatLevels(
@@ -450,12 +479,29 @@ class AppRuntime(context: Context) {
 
     /** 前备箱开启状态：bbcmFrontDoorStatus / frunkStatus。 */
     private fun parseFrunkOpen(st: JSONObject): Boolean? {
-        val raw = pick(st, "bbcmFrontDoorStatus", "frunkStatus", "frontDoorStatus", "1280")
+        // 注意：1280 是 rbcmRightRearDoorStatus（右后门），不能拿来当前备箱信号
+        val raw = pick(st, "bbcmFrontDoorStatus", "frunkStatus", "frontDoorStatus", "frontTrunkStatus")
         return when (raw?.toString()?.trim()?.lowercase()) {
             "1", "true", "open", "opened" -> true
             "0", "false", "closed", "close" -> false
             else -> null
         }
+    }
+
+    /**
+     * 四门与前舱盖状态：true 表示未关好。
+     * 信号命名沿用官方上报：rbcmDriverDoorStatus 即右前门（注意不是后门）。
+     * 全部信号都缺失时返回 null，让体检界面显示「未知」而不是假装全部关好。
+     */
+    private fun parseDoors(st: JSONObject): DoorStates? {
+        val states = DoorStates(
+            driver = parseOnOff(pick(st, "lbcmDriverDoorStatus", "1277")),
+            passenger = parseOnOff(pick(st, "rbcmDriverDoorStatus", "1278")),
+            leftRear = parseOnOff(pick(st, "lbcmLeftRearDoorStatus", "1279")),
+            rightRear = parseOnOff(pick(st, "rbcmRightRearDoorStatus", "1280")),
+            hood = parseOnOff(pick(st, "hoodStatus", "fbcmHoodStatus", "1282", "1276")),
+        )
+        return states.takeIf { it.hasAnySignal }
     }
 
     /** 哨兵模式开启状态。 */
@@ -832,6 +878,30 @@ class AppRuntime(context: Context) {
     suspend fun loadOtaInfo(): VehicleOtaInfo? = withContext(Dispatchers.IO) {
         val vin = session.selectedVin?.takeIf { it.isNotBlank() } ?: return@withContext null
         runCatching { LeapmotorApi(session).getVehicleOtaInfo(vin) }.getOrNull()
+    }
+
+    /** 下载 OTA 固件包（cmdid 390）。 */
+    suspend fun downloadOta(taskId: String): String = runFotaCommand("fotaDownload:$taskId")
+
+    /** 安装已下载的固件包（cmdid 391，安装期间车辆不可使用）。 */
+    suspend fun installOta(taskId: String): String = runFotaCommand("fotaInstall:$taskId")
+
+    /** 预约安装固件包（cmdid 392），scheduleTime 形如 "23:00"。 */
+    suspend fun scheduleOta(taskId: String, scheduleTime: String): String =
+        runFotaCommand("fotaSchedule:$taskId:$scheduleTime")
+
+    private suspend fun runFotaCommand(commandName: String): String = withContext(Dispatchers.IO) {
+        val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
+        val api = LeapmotorApi(session)
+        val cmd = Commands.build(commandName)
+        val result = withNetworkRetry { api.sendControl(cmd, pin) }
+        for (attempt in 0 until 4) {
+            Thread.sleep(ControlResultPollingPolicy.delayBeforeAttempt(attempt))
+            val resp = api.queryControlResult(result.msgID)
+            val value = (resp.opt("result") ?: resp.opt("code"))?.toString()
+            if (value == "0" || value == "200") return@withContext "${cmd.label}成功"
+        }
+        "指令已下发，请在车辆上确认执行结果"
     }
 
     val hasPin: Boolean get() = sessionStore.loadOpPassword() != null

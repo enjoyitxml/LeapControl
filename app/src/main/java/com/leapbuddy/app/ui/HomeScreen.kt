@@ -195,6 +195,21 @@ fun HomeScreen(
         var showSeatComfort by remember { mutableStateOf(false) }
         var showFridge by remember { mutableStateOf(false) }
         var showClimate by remember { mutableStateOf(false) }
+        // 定时空调 / 车辆体检 / 系统升级
+        var showScheduledAc by remember { mutableStateOf(false) }
+        var showVehicleHealth by remember { mutableStateOf(false) }
+        var showOta by remember { mutableStateOf(false) }
+        var acPlan by remember { mutableStateOf(com.leapbuddy.app.ScheduledAcPlan()) }
+        var acPlanLoading by remember { mutableStateOf(false) }
+        var acPlanLoadFailed by remember { mutableStateOf(false) }
+        var acPlanSaving by remember { mutableStateOf(false) }
+        var acPlanResult by remember { mutableStateOf<String?>(null) }
+        var otaInfo by remember { mutableStateOf<com.leapbuddy.app.VehicleOtaInfo?>(null) }
+        var otaLoading by remember { mutableStateOf(false) }
+        var otaBusy by remember { mutableStateOf<String?>(null) }
+        var otaResult by remember { mutableStateOf<String?>(null) }
+        var pendingHealthFix by remember { mutableStateOf<String?>(null) }
+        var pendingOtaAction by remember { mutableStateOf<Pair<String, String>?>(null) }
         // 冰箱指令在 PIN 验证完成后重放
         var pendingFridgeCommand by remember {
             mutableStateOf<com.leapbuddy.app.FridgeControlCommand?>(null)
@@ -342,6 +357,89 @@ fun HomeScreen(
             }
         }
 
+        /** 定时空调：进入页面时拉回车端计划回填；失败时保留默认草稿让用户手动下发。 */
+        LaunchedEffect(showScheduledAc) {
+            if (!showScheduledAc) return@LaunchedEffect
+            acPlanLoading = true
+            acPlanLoadFailed = false
+            acPlanResult = null
+            val state = runCatching { runtime.loadScheduledAc() }.getOrNull()
+            if (state != null) acPlan = state.plan.copy(enabled = state.hasSchedule)
+            else acPlanLoadFailed = true
+            acPlanLoading = false
+        }
+
+        /** 系统升级：进入页面时查询车辆固件版本。 */
+        LaunchedEffect(showOta) {
+            if (!showOta) return@LaunchedEffect
+            otaLoading = true
+            otaResult = null
+            otaInfo = runCatching { runtime.loadOtaInfo() }.getOrNull()
+            otaLoading = false
+        }
+
+        /** 定时空调保存 / 取消下发。 */
+        fun saveScheduledAc(plan: com.leapbuddy.app.ScheduledAcPlan) {
+            scope.launch {
+                acPlanSaving = true
+                acPlanResult = runCatching { runtime.applyScheduledAc(plan) }
+                    .fold(onSuccess = { it }, onFailure = { friendlyError(it) })
+                if (plan.enabled) acPlan = plan
+                acPlanSaving = false
+                refresh(force = true)
+            }
+        }
+
+        /** 体检项一键修复：复用已有控车通道（可能需要控车密码）。 */
+        fun runHealthFix(commandName: String) {
+            scope.launch {
+                controlling = commandName
+                actionMessage = null
+                try {
+                    actionMessage = runtime.control(commandName)
+                    refresh(force = true)
+                } catch (e: NeedPinException) {
+                    pendingHealthFix = commandName
+                    showPinDialog = true
+                } catch (e: Exception) {
+                    actionMessage = friendlyError(e)
+                }
+                controlling = null
+            }
+        }
+
+        /** OTA 动作：download / install / schedule。 */
+        fun runOtaAction(action: String, arg: String) {
+            scope.launch {
+                otaBusy = action
+                otaResult = null
+                try {
+                    val taskId = otaInfo?.taskId.orEmpty()
+                    otaResult = when (action) {
+                        "download" -> runtime.downloadOta(taskId)
+                        "install" -> runtime.installOta(taskId)
+                        else -> runtime.scheduleOta(taskId, arg)
+                    }
+                    delay(2_000)
+                    otaInfo = runCatching { runtime.loadOtaInfo() }.getOrNull()
+                } catch (e: NeedPinException) {
+                    pendingOtaAction = action to arg
+                    showPinDialog = true
+                } catch (e: Exception) {
+                    otaResult = friendlyError(e)
+                }
+                otaBusy = null
+            }
+        }
+
+        // 首页入口处的副标题：体检摘要与升级状态（避免为此多请求接口）
+        val healthReport = remember(status) { VehicleHealthDiagnostics.evaluate(status) }
+        val healthSummary = healthReport.summary +
+            (healthReport.issues.takeIf { it.isNotEmpty() }?.let { "（${it.size} 项待处理）" } ?: "")
+        val otaSubtitle = otaInfo?.let {
+            if (it.hasNewVersion && it.newVersion.isNotBlank()) "有新版本 ${it.newVersion}" else "当前已是最新版本"
+        } ?: "点击查看固件版本"
+
         /** 充电枪操作：解锁充电枪 / 开始充电 / 停止充电（需控车密码）。 */
         fun runChargeGun(action: String) {
             scope.launch {
@@ -432,6 +530,52 @@ fun HomeScreen(
                 saving = chargeSaving,
                 saveResult = chargeResult,
                 onBack = { showChargingCenter = false },
+            )
+        } else if (showScheduledAc) {
+            ScheduledAcScreen(
+                plan = acPlan,
+                onPlanChange = { acPlan = it },
+                loading = acPlanLoading,
+                loadingFailed = acPlanLoadFailed,
+                onReload = {
+                    acPlanLoading = true
+                    acPlanLoadFailed = false
+                    scope.launch {
+                        val state = runCatching { runtime.loadScheduledAc() }.getOrNull()
+                        if (state != null) acPlan = state.plan.copy(enabled = state.hasSchedule)
+                        else acPlanLoadFailed = true
+                        acPlanLoading = false
+                    }
+                },
+                saving = acPlanSaving,
+                result = acPlanResult,
+                onSave = { saveScheduledAc(acPlan) },
+                onCancel = { saveScheduledAc(acPlan.copy(enabled = false)) },
+                onBack = { showScheduledAc = false },
+            )
+        } else if (showVehicleHealth) {
+            VehicleHealthScreen(
+                status = status,
+                busy = controlling,
+                onFix = { runHealthFix(it) },
+                onRefresh = { refresh(force = true) },
+                onBack = { showVehicleHealth = false },
+            )
+        } else if (showOta) {
+            OtaScreen(
+                info = otaInfo,
+                loading = otaLoading,
+                busy = otaBusy,
+                result = otaResult,
+                onAction = { action, arg -> runOtaAction(action, arg) },
+                onReload = {
+                    otaLoading = true
+                    scope.launch {
+                        otaInfo = runCatching { runtime.loadOtaInfo() }.getOrNull()
+                        otaLoading = false
+                    }
+                },
+                onBack = { showOta = false },
             )
         } else androidx.compose.material3.pulltorefresh.PullToRefreshBox(
             isRefreshing = refreshing,
@@ -729,6 +873,25 @@ fun HomeScreen(
                 )
             }
 
+            // ---- 定时空调 + 车辆体检 + 系统升级 ----
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                ScheduledAcTile(modifier = Modifier.weight(1f), onClick = { showScheduledAc = true })
+                VehicleHealthTile(
+                    modifier = Modifier.weight(1f),
+                    subtitle = healthSummary,
+                    onClick = { showVehicleHealth = true },
+                )
+                OtaTile(
+                    modifier = Modifier.weight(1f),
+                    subtitle = otaSubtitle,
+                    onClick = { showOta = true },
+                )
+            }
+
             Spacer(Modifier.height(20.dp))
             // ---- 底部反馈信息 ----
             (refreshError ?: actionMessage)?.let { msg ->
@@ -845,6 +1008,8 @@ fun HomeScreen(
                                     val temp = pendingAcTemp
                                     val fridge = pendingFridgeCommand
                                     val gun = pendingChargeGun
+                                    val fix = pendingHealthFix
+                                    val otaAction = pendingOtaAction
                                     when {
                                         temp != null -> {
                                             pendingAcTemp = null
@@ -857,6 +1022,15 @@ fun HomeScreen(
                                         gun != null -> {
                                             pendingChargeGun = null
                                             runChargeGun(gun)
+                                        }
+                                        fix != null -> {
+                                            pendingHealthFix = null
+                                            runHealthFix(fix)
+                                        }
+                                        otaAction != null -> {
+                                            val (action, arg) = otaAction
+                                            pendingOtaAction = null
+                                            runOtaAction(action, arg)
                                         }
                                         else -> pendingCommand?.let { runControl(it) }
                                     }
