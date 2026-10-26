@@ -7,6 +7,9 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Luggage
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Roofing
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SensorDoor
 import androidx.compose.material.icons.filled.Window
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -34,6 +37,9 @@ object ControlActions {
         ControlAction("horn", "鸣笛寻车", Icons.Filled.NotificationsActive),
         ControlAction("batteryPreheat", "电池预热", Icons.Filled.LocalFireDepartment),
         ControlAction("sunshade", "遮阳帘", Icons.Filled.Curtains, toggle = true),
+        ControlAction("sunroof", "天窗", Icons.Filled.Roofing, toggle = true),
+        ControlAction("frunk", "前备箱", Icons.Filled.SensorDoor, toggle = true),
+        ControlAction("sentry", "哨兵", Icons.Filled.Security, toggle = true),
     )
 
     val defaultLayout: List<String> = all.map { it.id }
@@ -45,6 +51,9 @@ object ControlActions {
         "trunk" -> status?.trunkOpen
         "window" -> status?.windowOpen
         "sunshade" -> status?.sunshadeOpen
+        "sunroof" -> status?.sunroofOpen
+        "frunk" -> status?.frunkOpen
+        "sentry" -> status?.sentryOn
         else -> null
     }
 
@@ -57,6 +66,9 @@ object ControlActions {
         "trunk" -> if (status?.trunkOpen == true) "trunkClose" else "trunkOpen"
         "window" -> if (status?.windowOpen == true) "windowClose" else "windowOpen"
         "sunshade" -> if (status?.sunshadeOpen == true) "sunshadeClose" else "sunshadeOpen"
+        "sunroof" -> if (status?.sunroofOpen == true) "sunroofClose" else "sunroofOpen"
+        "frunk" -> if (status?.frunkOpen == true) "frunkClose" else "frunkOpen"
+        "sentry" -> if (status?.sentryOn == true) "sentryOff" else "sentryOn"
         else -> id
     }
 
