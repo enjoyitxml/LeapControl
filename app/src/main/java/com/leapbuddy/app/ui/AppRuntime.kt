@@ -193,7 +193,7 @@ class AppRuntime(context: Context) {
         setCarArtworkMode(if (enabled) "auto" else "off")
     }
 
-    // ---------------- 位置与目的地（高德 Web 服务） ----------------
+    // ---------------- 目的地搜索（高德 Web 服务） ----------------
 
     /** 高德 Web 服务 Key：优先用户自定义，其次内置（内置为空时地址解析不可用）。 */
     fun amapKey(): String =
@@ -202,28 +202,9 @@ class AppRuntime(context: Context) {
 
     fun setAmapKey(key: String) {
         sessionStore.saveCustomAmapWebKey(key.trim().ifEmpty { null })
-        addressCache.clear()
     }
 
     fun hasAmapKey(): Boolean = amapKey().isNotBlank()
-
-    private val addressCache = java.util.Collections.synchronizedMap(HashMap<String, String>())
-
-    /** 经纬度 → 中文地址（最近兴趣点 + 标准地址）。无 Key 或失败返回 null。 */
-    suspend fun resolveAddress(latitude: Double, longitude: Double): String? = withContext(Dispatchers.IO) {
-        val key = amapKey()
-        if (key.isBlank()) return@withContext null
-        val cacheKey = String.format(Locale.US, "%.4f,%.4f", latitude, longitude)
-        addressCache[cacheKey]?.let { return@withContext it }
-        val addr = runCatching { AmapWebApi.reverseGeocode(key, latitude, longitude) }.getOrNull()
-            ?: return@withContext null
-        val text = listOfNotNull(
-            addr.poiName.takeIf { it.isNotBlank() },
-            addr.formatted.takeIf { it.isNotBlank() },
-        ).distinct().joinToString(" · ").ifBlank { null }
-        if (text != null) addressCache[cacheKey] = text
-        text
-    }
 
     /** 搜索目的地 POI。无 Key 时返回空列表。 */
     suspend fun searchDestination(keyword: String): List<AmapPoi> = withContext(Dispatchers.IO) {

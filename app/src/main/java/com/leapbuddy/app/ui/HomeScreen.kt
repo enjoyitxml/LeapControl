@@ -7,7 +7,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -121,8 +120,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.darkColorScheme
 import androidx.core.view.WindowCompat
-import com.leapbuddy.app.AmapPoi
-import com.leapbuddy.app.MapIntents
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -831,29 +828,18 @@ fun HomeScreen(
             Spacer(Modifier.height(12.dp))
             ScrollHintBar(state = listState, itemCount = cells.size, visibleCount = 4)
 
-            // ---- 快捷控车下方：空调 + 位置 两个半宽模块 ----
+            // ---- 快捷控车下方：空调模块（整行） ----
             Spacer(Modifier.height(14.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                AcTile(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(20.dp))
-                        .clickable { showClimate = true },
-                    status = currentStatus,
-                    busy = controlling == "acTemp",
-                    onToggleAc = { runControl(if (currentStatus?.acOn == true) "acOff" else "acOn") },
-                    onTempChange = { runAcTemperature(it) },
-                )
-                LocationTile(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    status = currentStatus,
-                    runtime = runtime,
-                )
-            }
+            AcTile(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .clickable { showClimate = true },
+                status = currentStatus,
+                busy = controlling == "acTemp",
+                onToggleAc = { runControl(if (currentStatus?.acOn == true) "acOff" else "acOn") },
+                onTempChange = { runAcTemperature(it) },
+            )
 
             // ---- 座椅舒适 + 车载冰箱 ----
             Spacer(Modifier.height(12.dp))
@@ -1356,316 +1342,6 @@ private fun AcTile(
             modifier = Modifier.fillMaxWidth(),
         )
     }
-}
-
-/** 位置模块：右上绿色定位图标，中间点击打开地图，底部显示行车状态。 */
-@Composable
-private fun LocationTile(
-    modifier: Modifier = Modifier,
-    status: CarStatus?,
-    runtime: AppRuntime,
-) {
-    val C = LocalAppColors.current
-    val context = LocalContext.current
-    val lat = status?.latitude
-    val lng = status?.longitude
-    var address by remember(lat, lng) { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(lat, lng) {
-        if (lat == null || lng == null) return@LaunchedEffect
-        address = runCatching { runtime.resolveAddress(lat, lng) }.getOrNull()
-    }
-
-    ModuleTile(
-        modifier = modifier,
-        title = "位置",
-        cornerIcon = {
-            Surface(shape = CircleShape, color = C.iconBg, modifier = Modifier.fillMaxSize()) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.LocationOn,
-                        contentDescription = null,
-                        tint = Color(0xFF2FCC71),
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-        },
-    ) {
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = when {
-                address != null -> address!!
-                lat == null || lng == null -> "暂无位置数据"
-                else -> "点击打开地图"
-            },
-            color = C.textPrimary,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(6.dp))
-                .clickable(lat != null && lng != null) {
-                    MapIntents.showPoint(context, lat!!, lng!!, address ?: "我的车")
-                }
-                .padding(vertical = 4.dp),
-        )
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = status?.drivingStatus ?: "--",
-            color = C.textSecondary,
-            fontSize = 12.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
-
-/** 位置模块：当前地址（逆地理）+ 点击打开地图 + 搜索目的地发送车机 */
-@Composable
-private fun LocationModule(
-    status: CarStatus,
-    runtime: AppRuntime,
-    onMessage: (String) -> Unit,
-) {
-    val context = LocalContext.current
-    val lat = status.latitude
-    val lng = status.longitude
-    var address by remember(lat, lng) { mutableStateOf<String?>(null) }
-    var resolving by remember(lat, lng) { mutableStateOf(lat != null && lng != null) }
-    var showPicker by remember { mutableStateOf(false) }
-
-    LaunchedEffect(lat, lng) {
-        if (lat == null || lng == null) return@LaunchedEffect
-        resolving = true
-        address = runCatching { runtime.resolveAddress(lat, lng) }.getOrNull()
-        resolving = false
-    }
-
-    ModuleCard("车辆位置") {
-        if (lat == null || lng == null) {
-            Text("暂无位置数据", color = LocalAppColors.current.textSecondary, fontSize = 13.sp)
-        } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        MapIntents.showPoint(context, lat, lng, address ?: "我的车")
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = when {
-                            address != null -> address!!
-                            resolving -> "正在解析位置…"
-                            !runtime.hasAmapKey() -> "未配置高德 Key，仅显示坐标"
-                            else -> "位置解析失败"
-                        },
-                        color = LocalAppColors.current.textPrimary,
-                        fontSize = 14.sp,
-                        maxLines = 2,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "纬度 %.5f · 经度 %.5f".format(lat, lng),
-                        color = LocalAppColors.current.textSecondary,
-                        fontSize = 11.sp,
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                Icon(
-                    Icons.Filled.ChevronRight,
-                    null,
-                    tint = LocalAppColors.current.textSecondary,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Spacer(Modifier.height(14.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = { MapIntents.showPoint(context, lat, lng, address ?: "我的车") },
-                    modifier = Modifier.weight(1f),
-                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                        contentColor = LocalAppColors.current.accent,
-                    ),
-                ) {
-                    Text("打开地图", fontSize = 12.sp)
-                }
-                Spacer(Modifier.width(12.dp))
-                Button(
-                    onClick = { showPicker = true },
-                    modifier = Modifier.weight(1f),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = LocalAppColors.current.accent,
-                        contentColor = Color(0xFFFFFFFF),
-                    ),
-                ) {
-                    Text("发送目的地", fontSize = 12.sp)
-                }
-            }
-        }
-    }
-
-    if (showPicker) {
-        DestinationPickerDialog(
-            runtime = runtime,
-            onDismiss = { showPicker = false },
-            onResult = { msg -> onMessage(msg) },
-        )
-    }
-}
-
-/** 目的地搜索弹窗：搜到 POI 后可发送到车机或直接导航。 */
-@Composable
-private fun DestinationPickerDialog(
-    runtime: AppRuntime,
-    onDismiss: () -> Unit,
-    onResult: (String) -> Unit,
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var keyword by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<AmapPoi>>(emptyList()) }
-    var searching by remember { mutableStateOf(false) }
-    var searched by remember { mutableStateOf(false) }
-    var selected by remember { mutableStateOf<AmapPoi?>(null) }
-
-    fun search(text: String) {
-        if (text.isBlank()) {
-            results = emptyList()
-            searched = false
-            return
-        }
-        scope.launch {
-            searching = true
-            searched = true
-            results = runCatching { runtime.searchDestination(text) }.getOrDefault(emptyList())
-            searching = false
-        }
-    }
-
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = LocalAppColors.current.cardBg,
-        title = {
-            Text("搜索目的地", color = LocalAppColors.current.textPrimary, fontSize = 16.sp)
-        },
-        text = {
-            Column {
-                if (!runtime.hasAmapKey()) {
-                    Text(
-                        "未配置高德 Web Key，无法搜索。请在「我的 → 高德 Web Key」中填写。",
-                        color = Color(0xFFFF6B6B),
-                        fontSize = 12.sp,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                }
-                OutlinedTextField(
-                    value = keyword,
-                    onValueChange = { keyword = it; selected = null },
-                    placeholder = { Text("输入地点名称", color = LocalAppColors.current.textSecondary, fontSize = 13.sp) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { search(keyword) }),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = LocalAppColors.current.textPrimary,
-                        unfocusedTextColor = LocalAppColors.current.textPrimary,
-                        cursorColor = LocalAppColors.current.accent,
-                        focusedBorderColor = LocalAppColors.current.accent,
-                        unfocusedBorderColor = LocalAppColors.current.barTrack,
-                    ),
-                )
-                Spacer(Modifier.height(12.dp))
-                Box(modifier = Modifier.height(210.dp)) {
-                    when {
-                        searching -> Text("搜索中…", color = LocalAppColors.current.textSecondary, fontSize = 12.sp)
-                        results.isEmpty() && searched -> Text(
-                            "没有找到相关地点",
-                            color = LocalAppColors.current.textSecondary,
-                            fontSize = 12.sp,
-                        )
-                        else -> androidx.compose.foundation.lazy.LazyColumn {
-                            items(results) { poi ->
-                                val picked = selected?.id == poi.id
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(
-                                            if (picked) LocalAppColors.current.chipBgActive else Color.Transparent,
-                                            RoundedCornerShape(10.dp),
-                                        )
-                                        .clickable { selected = poi }
-                                        .padding(horizontal = 10.dp, vertical = 9.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(poi.name, color = LocalAppColors.current.textPrimary, fontSize = 13.sp, maxLines = 1)
-                                        if (poi.address.isNotBlank()) {
-                                            Text(
-                                                poi.address,
-                                                color = LocalAppColors.current.textSecondary,
-                                                fontSize = 11.sp,
-                                                maxLines = 1,
-                                            )
-                                        }
-                                    }
-                                    if (picked) {
-                                        Icon(
-                                            Icons.Filled.Check,
-                                            null,
-                                            tint = LocalAppColors.current.accent,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = selected != null,
-                onClick = {
-                    val poi = selected ?: return@TextButton
-                    val usedAmap = MapIntents.sendToCar(context, poi.latitude, poi.longitude, poi.name)
-                    onResult(
-                        if (usedAmap) "已在高德中规划「${poi.name}」，手机与车机高德同账号即可同步"
-                        else "未安装高德地图，已用网页版打开「${poi.name}」"
-                    )
-                    onDismiss()
-                },
-            ) {
-                Text(
-                    "发送到车机",
-                    color = if (selected != null) LocalAppColors.current.accent else LocalAppColors.current.textSecondary,
-                )
-            }
-        },
-        dismissButton = {
-            Row {
-                TextButton(
-                    enabled = selected != null,
-                    onClick = {
-                        val poi = selected ?: return@TextButton
-                        MapIntents.navigate(context, poi.latitude, poi.longitude, poi.name)
-                        onDismiss()
-                    },
-                ) {
-                    Text(
-                        "导航",
-                        color = if (selected != null) LocalAppColors.current.textPrimary else LocalAppColors.current.textSecondary,
-                    )
-                }
-                TextButton(onClick = onDismiss) { Text("取消", color = LocalAppColors.current.textSecondary) }
-            }
-        },
-    )
 }
 
 /** 空调模块：开关状态、设定温度、风量、循环 */

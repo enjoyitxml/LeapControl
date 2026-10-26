@@ -28,30 +28,6 @@ object MapIntents {
         false
     }
 
-    /** 以某坐标为中心做关键词周边搜索（如"充电站"）。优先高德，回退网页版。 */
-    fun aroundSearch(context: Context, lat: Double, lng: Double, keyword: String): Boolean {
-        val amap = Uri.parse(
-            "androidamap://poilist?sourceApplication=$APP_NAME&keywords=${enc(keyword)}&lat=${f(lat)}&lon=${f(lng)}&dev=0"
-        )
-        if (start(context, amap)) return true
-        val web = Uri.parse(
-            "https://uri.amap.com/search?keyword=${enc(keyword)}&center=${f(lng)},${f(lat)}&src=$APP_NAME&callnative=0"
-        )
-        return start(context, web)
-    }
-
-    /** 在地图上显示一个点（车辆位置）。优先高德，回退系统地图。返回是否用了高德。 */
-    fun showPoint(context: Context, lat: Double, lng: Double, label: String): Boolean {
-        val amap = Uri.parse(
-            "androidamap://viewMap?sourceApplication=$APP_NAME&poiname=${enc(label)}&lat=${f(lat)}&lon=${f(lng)}&dev=0"
-        )
-        if (start(context, amap)) return true
-        val web = Uri.parse("https://uri.amap.com/marker?position=${f(lng)},${f(lat)}&name=${enc(label)}")
-        if (start(context, web)) return false
-        start(context, Uri.parse("geo:${f(lat)},${f(lng)}?q=${f(lat)},${f(lng)}(${enc(label)})"))
-        return false
-    }
-
     /** 直接导航到目的地。优先高德导航，回退系统地图。 */
     fun navigate(context: Context, lat: Double, lng: Double, name: String): Boolean {
         val amap = Uri.parse(

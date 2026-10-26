@@ -147,7 +147,7 @@ fun ProfileScreen(
             ProfileItem(
                 Icons.Filled.LocationOn,
                 "高德 Web Key",
-                if (runtime.hasAmapKey()) "已配置，可解析地址与搜索目的地" else "未配置，位置只显示经纬度",
+                if (runtime.hasAmapKey()) "已配置，可搜索目的地" else "未配置，无法搜索目的地",
             ) { showAmapKey = true }
             Spacer(Modifier.height(12.dp))
 
