@@ -40,7 +40,7 @@ if [[ -n "${CURRENT_NAME:-}" ]]; then
   IFS='.' read -r OLD_MA OLD_MI OLD_PA <<< "$CURRENT_NAME"
   OLD_CODE=$(( OLD_MA * 10000 + OLD_MI * 100 + OLD_PA ))
   if [[ "$VERSION_CODE" -le "$OLD_CODE" ]]; then
-    echo "❌ 新版本 $VERSION（code $VERSION_CODE）必须大于当前 $CURRENT_NAME（code $OLD_CODE）"
+    echo "❌ 新版本 ${VERSION}（code ${VERSION_CODE}）必须大于当前 ${CURRENT_NAME}（code ${OLD_CODE}）"
     exit 1
   fi
 fi
@@ -72,7 +72,7 @@ APK_DST="release/LeapControl-v${VERSION}-debug.apk"
 if [[ -f "$APK_SRC" ]]; then
   cp -f "$APK_SRC" "$APK_DST"
   cp -f "$APK_SRC" "../零控-debug.apk"
-  echo "==> APK：$APK_DST（$(du -h "$APK_DST" | cut -f1)）"
+  echo "==> APK：${APK_DST}（$(du -h "$APK_DST" | cut -f1)）"
 else
   echo "⚠️  没有找到 APK：$APK_SRC"
 fi
