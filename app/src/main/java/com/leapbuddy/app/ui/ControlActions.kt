@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SensorDoor
 import androidx.compose.material.icons.filled.Window
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.leapbuddy.app.VehicleCapabilities
 
 /**
  * 首页控车按钮。
@@ -19,6 +20,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
  * [id] 若为 [toggle] 复合按钮（后备箱 / 车窗 / 遮阳帘），不直接对应指令，
  * 需经 [ControlActions.resolveCommand] 按当前车况解析成开或关；
  * 其余 id 与 Commands.build(name) 的指令名一一对应。
+ *
+ * [available] 描述该按钮依赖的硬件配置：车不支持时（[VehicleCapabilities] 对应位为 false）
+ * 按钮不会出现，避免给出点了必然失败的入口。默认恒可用。
  */
 data class ControlAction(
     val id: String,
@@ -26,6 +30,7 @@ data class ControlAction(
     val icon: ImageVector,
     /** 是否按车况高亮，并在开启时下发关闭指令、关闭时下发开启指令。 */
     val toggle: Boolean = false,
+    val available: (VehicleCapabilities) -> Boolean = { true },
 )
 
 object ControlActions {
@@ -37,14 +42,26 @@ object ControlActions {
         ControlAction("horn", "鸣笛寻车", Icons.Filled.NotificationsActive),
         ControlAction("batteryPreheat", "电池预热", Icons.Filled.LocalFireDepartment),
         ControlAction("sunshade", "遮阳帘", Icons.Filled.Curtains, toggle = true),
-        ControlAction("sunroof", "天窗", Icons.Filled.Roofing, toggle = true),
-        ControlAction("frunk", "前备箱", Icons.Filled.SensorDoor, toggle = true),
-        ControlAction("sentry", "哨兵", Icons.Filled.Security, toggle = true),
+        ControlAction("sunroof", "天窗", Icons.Filled.Roofing, toggle = true, available = { it.sunroof }),
+        ControlAction("frunk", "前备箱", Icons.Filled.SensorDoor, toggle = true, available = { it.frunk }),
+        ControlAction("sentry", "哨兵", Icons.Filled.Security, toggle = true, available = { it.sentry }),
     )
 
     val defaultLayout: List<String> = all.map { it.id }
 
     fun find(id: String): ControlAction? = all.firstOrNull { it.id == id }
+
+    /**
+     * 按车辆配置过滤出可用的按钮，顺序沿用给定的布局。
+     *
+     * @param capabilities 已识别的车辆配置；传 null（车况与配置都还没拿到）时
+     *                     只保留不依赖硬件的按钮——宁可少给，也不给点了必然报错的入口。
+     */
+    fun available(capabilities: VehicleCapabilities?, saved: List<String>): List<ControlAction> {
+        val caps = capabilities ?: VehicleCapabilities.EMPTY
+        val ordered = saved.mapNotNull { id -> find(id) }
+        return ordered.filter { it.available(caps) }
+    }
 
     /** 复合按钮是否处于「开启」状态（null 表示车况未知，不高亮）。 */
     fun isActive(id: String, status: CarStatus?): Boolean? = when (id) {

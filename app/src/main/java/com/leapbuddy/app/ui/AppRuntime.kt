@@ -28,9 +28,14 @@ import com.leapbuddy.app.Vehicle
 import com.leapbuddy.app.VehicleChargePlan
 import com.leapbuddy.app.VehicleLocationDomain
 import com.leapbuddy.app.VehicleOtaInfo
+import com.leapbuddy.app.VehicleCapabilityDetector
+import com.leapbuddy.app.VehicleCapabilities
 import com.leapbuddy.app.VehicleStatusMapper
 import com.leapbuddy.app.WidgetStatusMapper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -328,10 +333,58 @@ class AppRuntime(context: Context) {
         session.selectedCarType = vehicle.carType
         session.selectedNickname = vehicle.nickname.ifEmpty { vehicle.officialNickname }
         withContext(Dispatchers.IO) { sessionStore.save(session) }
+        // 换车后能力要重新按 VIN 加载，不能直接沿用上一辆的结果
+        syncCapabilities()
     }
 
     suspend fun logout(): Unit = withContext(Dispatchers.IO) {
         sessionStore.clear()
+    }
+
+    // ---------------- 车辆配置识别（冰箱 / 天窗 / 哨兵 / 座椅等） ----------------
+
+    private val capabilityPrefs = appContext.getSharedPreferences("leapbuddy_capabilities", Context.MODE_PRIVATE)
+
+    private val _capabilities = MutableStateFlow(VehicleCapabilities.EMPTY)
+    /** 当前车辆已识别到的可选配置（粘滞 + 持久化）。 */
+    val capabilities: StateFlow<VehicleCapabilities> = _capabilities.asStateFlow()
+
+    /** 已加载能力所对应的 VIN，用于切换车辆时判断是否需要重新加载。 */
+    private var capabilityVin: String? = null
+
+    init { syncCapabilities() }
+
+    /** 让 [_capabilities] 跟随当前选中车辆；VIN 没变则不重复读取。 */
+    private fun syncCapabilities() {
+        val vin = session.selectedVin
+        if (vin == capabilityVin) return
+        capabilityVin = vin
+        _capabilities.value = loadCapabilities(vin)
+    }
+
+    private fun loadCapabilities(vin: String): VehicleCapabilities {
+        if (vin.isBlank()) return VehicleCapabilities.EMPTY
+        val raw = capabilityPrefs.getString("caps_$vin", null) ?: return VehicleCapabilities.EMPTY
+        return runCatching { VehicleCapabilities.fromJson(JSONObject(raw)) }
+            .getOrDefault(VehicleCapabilities.EMPTY)
+    }
+
+    /**
+     * 每次拉到车况后，从**原始 signalMap** 识别配置并与历史结果粘滞合并。
+     * 必须用原始 JSONObject：车不支持某硬件时网关会整组不下发 key，
+     * 解析成 CarStatus 后「无信号」和「值为 0」都变成 null，无从区分。
+     */
+    private fun observeCapabilities(st: JSONObject) {
+        val vin = session.selectedVin
+        if (vin.isBlank()) return
+        val previous = if (capabilityVin == vin) _capabilities.value else loadCapabilities(vin)
+        val observed = VehicleCapabilityDetector.detect(st, session.selectedCarType)
+        val merged = VehicleCapabilityDetector.merge(previous, observed)
+        if (merged != previous) {
+            capabilityPrefs.edit().putString("caps_$vin", merged.toJson().toString()).apply()
+            capabilityVin = vin
+            _capabilities.value = merged
+        }
     }
 
     // ---------------- 车况 ----------------
@@ -383,22 +436,26 @@ class AppRuntime(context: Context) {
             doors = parseDoors(st),
             charging = parseCharging(st),
             chargeCableConnected = parseChargeCableConnected(st),
+            // 座椅信号号（前一个）必须与其命名信号严格对应，串位会把副驾读到主驾通风上去。
+            // 权威映射：加热 主驾 2100 / 副驾 2118 / 左后 1879 / 右后 1880
+            //          通风 主驾 2101 / 副驾 2119 / 左后 3727 / 右后 3728
             seatHeating = SeatLevels(
                 driver = seatLevel(st, "driverSeatHeating", "2100"),
-                passenger = seatLevel(st, "passengerSeatHeating", "2101"),
-                leftRear = seatLevel(st, "leftRearSeatHeating", "2118"),
-                rightRear = seatLevel(st, "rightRearSeatHeating", "2119"),
+                passenger = seatLevel(st, "passengerSeatHeating", "2118"),
+                leftRear = seatLevel(st, "leftRearSeatHeating", "1879"),
+                rightRear = seatLevel(st, "rightRearSeatHeating", "1880"),
             ),
             seatVentilation = SeatLevels(
-                driver = seatLevel(st, "driverSeatVentilation", "1879"),
-                passenger = seatLevel(st, "passengerSeatVentilation", "3727"),
-                leftRear = seatLevel(st, "leftRearSeatVentilation", "1880"),
+                driver = seatLevel(st, "driverSeatVentilation", "2101"),
+                passenger = seatLevel(st, "passengerSeatVentilation", "2119"),
+                leftRear = seatLevel(st, "leftRearSeatVentilation", "3727"),
                 rightRear = seatLevel(st, "rightRearSeatVentilation", "3728"),
             ),
             steeringWheelHeating = seatLevel(st, "steeringWheelHeating", "1816")?.coerceIn(0, 2),
-            rearviewMirrorHeating = parseOnOff(pick(st, "rearviewMirrorHeating", "49")),
+            // 不兜底 rearWindowHeating（后风挡加热）：那几乎全系都有，会让「有没有后视镜加热」永远为真
+            rearviewMirrorHeating = parseOnOff(pick(st, "rearviewMirrorHeating", "49", "50")),
             fridge = parseFridge(st),
-        )
+        ).also { observeCapabilities(st) }
     }
 
     // ---------------- 车况解析辅助 ----------------

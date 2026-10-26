@@ -119,7 +119,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.collectAsState
 import androidx.core.view.WindowCompat
+import com.leapbuddy.app.VehicleCapabilities
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -168,6 +170,8 @@ fun HomeScreen(
         var pendingAcTemp by remember { mutableStateOf<Int?>(null) }
         var controlLayout by remember { mutableStateOf(runtime.controlLayout()) }
         var showControlEditor by remember { mutableStateOf(false) }
+        // 车辆配置（冰箱/天窗/哨兵/座椅…）：已持久化的识别结果，不依赖当次车况
+        val capabilities by runtime.capabilities.collectAsState()
         var carBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
         var vinKey by remember { mutableStateOf(runtime.session.selectedVin) }
         var vehicles by remember { mutableStateOf<List<com.leapbuddy.app.Vehicle>>(emptyList()) }
@@ -486,6 +490,7 @@ fun HomeScreen(
                 status = status,
                 busy = controlling != null,
                 onCommand = { runControl(it) },
+                caps = capabilities,
             )
         } else if (showFridge) {
             FridgeScreen(
@@ -792,7 +797,9 @@ fun HomeScreen(
             }
             // ---- 快捷控车：一行显示 4 个，左右滑动查看其余，下方带横向滚动提示条 ----
             Spacer(Modifier.height(10.dp))
-            val cells = controlLayout + listOf(EDIT_CELL)
+            // 车不带对应硬件的按钮直接不出现（如无天窗的车不给天窗入口）
+            val cells = ControlActions.available(capabilities, controlLayout)
+                .map { it.id } + listOf(EDIT_CELL)
             val listState = rememberLazyListState()
             BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                 val gap = 12.dp
@@ -841,22 +848,30 @@ fun HomeScreen(
                 onTempChange = { runAcTemperature(it) },
             )
 
-            // ---- 座椅舒适 + 车载冰箱 ----
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                SeatComfortTile(
-                    modifier = Modifier.weight(1f),
-                    status = currentStatus,
-                    onClick = { showSeatComfort = true },
-                )
-                FridgeTile(
-                    modifier = Modifier.weight(1f),
-                    status = currentStatus,
-                    onClick = { showFridge = true },
-                )
+            // ---- 座椅舒适 + 车载冰箱：非全系标配，按已识别到的配置决定是否给入口 ----
+            val hasSeatComfort = capabilities.hasSeatComfort
+            val hasFridge = capabilities.fridge
+            if (hasSeatComfort || hasFridge) {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (hasSeatComfort) {
+                        SeatComfortTile(
+                            modifier = Modifier.weight(1f),
+                            status = currentStatus,
+                            onClick = { showSeatComfort = true },
+                        )
+                    }
+                    if (hasFridge) {
+                        FridgeTile(
+                            modifier = Modifier.weight(1f),
+                            status = currentStatus,
+                            onClick = { showFridge = true },
+                        )
+                    }
+                }
             }
 
             // ---- 定时空调 + 车辆体检 + 系统升级 ----
@@ -942,6 +957,7 @@ fun HomeScreen(
                     showControlEditor = false
                 },
                 onDismiss = { showControlEditor = false },
+                capabilities = capabilities,
             )
         }
 
@@ -1523,8 +1539,13 @@ private fun ControlEditorDialog(
     initial: List<String>,
     onSave: (List<String>) -> Unit,
     onDismiss: () -> Unit,
+    capabilities: VehicleCapabilities = VehicleCapabilities.EMPTY,
 ) {
-    val items = remember { androidx.compose.runtime.mutableStateListOf<String>().apply { addAll(initial) } }
+    // 编辑列表里也要剔除本车不支持的项，否则加进去也显示不出来
+    val items = remember {
+        androidx.compose.runtime.mutableStateListOf<String>()
+            .apply { addAll(initial.filter { id -> ControlActions.find(id)?.available(capabilities) == true }) }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = LocalAppColors.current.cardBg,
@@ -1569,7 +1590,7 @@ private fun ControlEditorDialog(
                     }
                 }
                 val canAdd = items.size < ControlActions.MaxSelectable
-                val available = ControlActions.all.filter { it.id !in items }
+                val available = ControlActions.all.filter { it.id !in items && it.available(capabilities) }
                 if (available.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text("添加按钮", color = LocalAppColors.current.textSecondary, fontSize = 12.sp)

@@ -10,6 +10,7 @@
 #   ./scripts/emu.sh log        看 App 的实时日志（Ctrl+C 退出）
 #   ./scripts/emu.sh install xx.apk   单独安装某个 APK
 #   ./scripts/emu.sh devices    列出所有已连接的设备
+#   ./scripts/emu.sh test       跑 JVM 单元测试（不需要模拟器或手机）
 #
 # 插着开了 USB 调试的手机时，自动优先用真机（模拟器会被跳过）；
 # 不插手机则自动启动模拟器。
@@ -219,9 +220,16 @@ cmd_log() {
     adb -s "$s" logcat -v brief --pid "$(adb -s "$s" shell ps -A | awk -v p="$PKG" '$0 ~ p {print $2; exit}')"
 }
 
-cmd_devices() {
-    echo "连接到的设备："
+cmd_devices() {    echo "连接到的设备："
     adb devices -l | awk 'NR>1 && NF {print "   "$0}'
+}
+
+# ---------- 单元测试 ----------
+cmd_test() {
+    info "跑 JVM 单测（不需要设备）"
+    ( cd "$PROJECT_DIR" && JAVA_HOME="$(/usr/libexec/java_home -v 21)" \
+        ./gradlew :app:testDebugUnitTest --no-daemon ) || die "单测失败，看上面的报错"
+    ok "单测全部通过（报告在 app/build/reports/tests/）"
 }
 
 # ---------- 入口 ----------
@@ -238,6 +246,7 @@ case "$SUB" in
     log)     cmd_log ;;
     install) cmd_install "${ARGS[0]:-}" ;;
     devices) cmd_devices ;;
+    test)    cmd_test ;;
     ""|run)
         grep -q -- --no-build <<< "${ARGS[*]}" || cmd_build
         cmd_start
