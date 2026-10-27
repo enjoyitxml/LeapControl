@@ -152,7 +152,9 @@ fun MainScreen(
     // 星空主题底色就是深空黑，必须按深色取内容色，否则会变成黑底黑字；
     // 其余主题仍照「跟随系统 / 始终浅色 / 始终深色」的用户设置走。
     val dark = season.forcesDarkContent || appearance.resolvesToDark(systemInDark)
-    val colors = appColors(dark)
+    // 主题色跟着季节走：卡片描边、柱状图、强调元素都用它
+    val themeAccent = season.accent(dark)
+    val colors = appColors(dark, themeAccent)
 
     // 状态栏/导航栏透明，图标颜色随主题；关闭手势条对比度蒙层，让渐变一直透到底
     // 前后台事件：回前台恢复播放，进后台暂停
@@ -194,7 +196,7 @@ fun MainScreen(
         onDispose { }
     }
 
-    ProvideAppColors(dark = dark) {
+    ProvideAppColors(dark = dark, accent = themeAccent) {
         MaterialTheme(
             colorScheme = if (dark) {
                 darkColorScheme(primary = colors.accent, background = colors.bgTop)

@@ -51,61 +51,82 @@ data class AppColors(
     val dockIndicator: Color,
 )
 
-private fun lightColors() = AppColors(
+/**
+ * 把主题色按比例混进底色/描边。
+ * 卡片不是纯白/纯深灰，而是「白里透一点季节色」，同一套控件在四季主题下颜色自然不同。
+ */
+private fun mix(base: Color, other: Color, amount: Float): Color = Color(
+    red = base.red + (other.red - base.red) * amount,
+    green = base.green + (other.green - base.green) * amount,
+    blue = base.blue + (other.blue - base.blue) * amount,
+    alpha = 1f,
+)
+
+/** 品牌绿：没有主题色注入时的兜底。 */
+private val DefaultAccent = Color(0xFF2FA85C)
+
+private fun lightColors(accent: Color = DefaultAccent) = AppColors(
     isDark = false,
     bgTop = Color(0xFFF7F9F8),
     bgBottom = Color(0xFFF2F5F3),
     // 磨砂半透明：让四季背景透出来，同时保证文字对比度（仅用于首页沉浸式卡片）
     cardBg = Color(0xD9FFFFFF),
     // 二级页实心面板：纯白，与浅色渐变形成清晰对比、不发灰
-    panelBg = Color(0xFFFFFFFF),
+    panelBg = mix(Color.White, accent, 0.05f),
     textPrimary = Color(0xFF1B1D22),
     textSecondary = Color(0xFF7A7E87),
-    accent = Color(0xFF2FA85C),
+    accent = accent,
     iconBg = Color(0x9CFFFFFF),
     quickButtonBg = Color(0xFFFFFFFF),
     quickButtonPressed = Color(0xFFECEFF0),
-    iconBgActive = Color(0x592FA85C),
+    iconBgActive = accent.copy(alpha = 0.35f),
     barTrack = Color(0x33000000),
     barTrackStrong = Color(0x8C000000),
     chipBg = Color(0x99FFFFFF),
-    chipBgActive = Color(0x402FA85C),
-    border = Color(0x1C000000),
+    chipBgActive = accent.copy(alpha = 0.25f),
+    border = accent.copy(alpha = 0.16f),
     dockBg = Color(0xCCFFFFFF),
     dockUnselected = Color(0xFFB7BCC2),
-    dockIndicator = Color(0x592FA85C),
+    dockIndicator = accent.copy(alpha = 0.35f),
 )
 
-private fun darkColors() = AppColors(
+private fun darkColors(accent: Color = DefaultAccent) = AppColors(
     isDark = true,
     bgTop = Color(0xFF0C0D10),
     bgBottom = Color(0xFF181A1F),
     cardBg = Color(0xCC14161B),
     // 二级页实心面板：中性深灰，压在深绿 / 深蓝等季节背景上清晰可辨
-    panelBg = Color(0xFF1B1E24),
+    panelBg = mix(Color(0xFF1B1E24), accent, 0.10f),
     textPrimary = Color(0xFFF2F2F4),
     textSecondary = Color(0xFF8E9099),
-    accent = Color(0xFF30D158),
+    accent = accent,
     iconBg = Color(0x1FFFFFFF),
     // 深色下用略高于页面的实心圆，靠投影与底色差异浮起来
     quickButtonBg = Color(0xFF25282F),
     quickButtonPressed = Color(0xFF32363E),
-    iconBgActive = Color(0x4D30D158),
+    iconBgActive = accent.copy(alpha = 0.35f),
     barTrack = Color(0x33FFFFFF),
     barTrackStrong = Color(0x8CFFFFFF),
     chipBg = Color(0x14FFFFFF),
-    chipBgActive = Color(0x4030D158),
-    border = Color(0x2EFFFFFF),
+    chipBgActive = accent.copy(alpha = 0.25f),
+    border = accent.copy(alpha = 0.24f),
     dockBg = Color(0xCC14161B),
     dockUnselected = Color(0xFF6A6E76),
-    dockIndicator = Color(0x4D30D158),
+    dockIndicator = accent.copy(alpha = 0.4f),
 )
 
-fun appColors(dark: Boolean): AppColors = if (dark) darkColors() else lightColors()
+fun appColors(dark: Boolean, accent: Color? = null): AppColors =
+    if (dark) darkColors(accent ?: DefaultAccent) else lightColors(accent ?: DefaultAccent)
 
 val LocalAppColors = staticCompositionLocalOf { lightColors() }
 
+/**
+ * 注入配色。
+ *
+ * [accent] 传当前季节主题的主题色，卡片底色、描边、强调元素会随之变化；
+ * 不传就退回品牌绿（启动早期、未决定主题时用）。
+ */
 @Composable
-fun ProvideAppColors(dark: Boolean, content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalAppColors provides appColors(dark), content = content)
+fun ProvideAppColors(dark: Boolean, accent: Color? = null, content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalAppColors provides appColors(dark, accent), content = content)
 }
