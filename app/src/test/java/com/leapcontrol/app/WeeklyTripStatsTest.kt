@@ -90,6 +90,35 @@ class WeeklyTripStatsTest {
     }
 
     @Test
+    fun `values 恒为七根且脏数据归零`() {
+        val mixed = listOf(
+            day("a", -3.0),
+            day("b", Double.NaN),
+            day("c", 9000.0),
+            day("d", 12.0),
+        )
+        val v = WeeklyTripStats.values(mixed)
+        assertEquals(7, v.size)
+        assertEquals(0.0, v[3], 1e-6) // -3
+        assertEquals(0.0, v[4], 1e-6) // NaN
+        assertEquals(0.0, v[5], 1e-6) // 9000
+        assertEquals(12.0, v[6], 1e-6)
+    }
+
+    @Test
+    fun `柱顶标注整数不带小数`() {
+        assertEquals("48", WeeklyTripStats.dayText(48.0))
+        assertEquals("0", WeeklyTripStats.dayText(0.0))
+        assertEquals("12", WeeklyTripStats.dayText(12.4))
+    }
+
+    @Test
+    fun `柱顶标注小里程保留一位小数`() {
+        assertEquals("6.5", WeeklyTripStats.dayText(6.5))
+        assertEquals("0.4", WeeklyTripStats.dayText(0.4))
+    }
+
+    @Test
     fun `超过七条时只取最近七天`() {
         val many = (1..10).map { day("d$it", it.toDouble()) }
         val series = WeeklyTripStats.series(many)
