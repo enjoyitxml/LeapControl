@@ -1,711 +1,719 @@
 package com.leapcontrol.app.ui
 
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.MileageEnergySummary
+import com.leapcontrol.app.MileageEnergyParser
 import com.leapcontrol.app.R
-import com.leapcontrol.app.ScheduledAcPlan
 import com.leapcontrol.app.VehicleCapabilities
-import java.util.Locale
 
 /**
- * 首页功能模块区：定义在 [HomeModules]，卡片统一按「空调卡」的尺寸与圆角渲染，
- * 在零控页面最下方纵向排布（整页向上滑动浏览），所有卡片放在一起、不再分组；
- * 最底部一个「自定义」按钮可调整顺序、删除与添加模块。
+ * 首页功能模块区：照搬开源参考项目 leapauto 的下半部分布局（保留零控自身的视频背景与
+ * AppColors 深浅主题）。结构为三行：
+ *   ① 胎压俯视卡 + 车况状态 2×2 卡（总里程 / 电流 / 门锁 / 车窗）—— 并排一行；
+ *   ② 空调条（+ 车载冰箱条，本车有冰箱时 50:50 并排）—— 一行；
+ *   ③ 近 7 天行驶里程图表卡 —— 整行。
+ * 原先「统一大卡片纵列 + 自定义顺序」的方案作废（与官方首页 1:1 卡片式不一致，且原项目
+ * 下半部分本就是这套结构化布局）。
+ *
+ * 注：座椅舒适 / 车辆健康 / 哨兵 / 定时空调 / 充电 这些模块在原项目首页下半部分没有对应入口
+ * （分别位于空调详情、健康诊断弹窗、控制中心磁贴等），故此处按原项目结构不重复放置。
  */
 object HomeModules {
-    // 模块不再分组：所有卡片在首页底部纵向排在一起。
-
-    data class Spec(
-        val id: String,
-        val title: String,
-        val iconRes: Int,
-        /** 本车是否具备该模块：没有对应硬件的模块不给入口。 */
-        val available: (VehicleCapabilities) -> Boolean = { true },
+    // 仅保留给 AppRuntime.homeModules() / setHomeModules() 兼容（顺序偏好现由下方固定布局取代）。
+    private val KNOWN = setOf(
+        "climate", "mileage", "tire", "seat", "health",
+        "charging", "scheduledAc", "fridge", "sentry",
+    )
+    val DEFAULT_ORDER = listOf(
+        "climate", "mileage", "tire", "seat", "health",
+        "charging", "scheduledAc", "fridge", "sentry",
     )
 
-    val CLIMATE = Spec("climate", "空调", R.drawable.ic_qc_ac)
-    val SEAT = Spec("seat", "座椅舒适", R.drawable.ic_mod_seat) { it.hasSeatComfort }
-    val TIRE = Spec("tire", "胎压", R.drawable.ic_mod_tire)
-    val MILEAGE = Spec("mileage", "里程能耗", R.drawable.ic_mod_mileage)
-    val HEALTH = Spec("health", "车辆健康", R.drawable.ic_health)
-    val FRIDGE = Spec("fridge", "车载冰箱", R.drawable.ic_mod_fridge) { it.fridge }
-    val SCHEDULED_AC = Spec("scheduledAc", "定时空调", R.drawable.ic_phosphor_fan)
-    val CHARGING = Spec("charging", "充电", R.drawable.ic_charge_station)
-    val SENTRY = Spec("sentry", "哨兵模式", R.drawable.ic_qc_sentry) { it.sentry }
-
-    val ALL: List<Spec> = listOf(
-        CLIMATE, SEAT, TIRE, MILEAGE, HEALTH, FRIDGE, SCHEDULED_AC, CHARGING, SENTRY,
-    )
-
-    /**
-     * 默认顺序（车辆位置模块已移除：车端基本不上报经纬度，无实际用途）。
-     */
-    val DEFAULT_ORDER: List<String> = listOf(
-        "climate", "mileage", "tire", "seat", "health", "charging", "scheduledAc", "fridge", "sentry",
-    )
-
-    fun find(id: String): Spec? = ALL.firstOrNull { it.id == id }
-
-    /** 去掉未知 id 与重复项。 */
     fun sanitize(ids: List<String>): List<String> =
-        ids.filter { id -> ALL.any { it.id == id } }.distinct()
-
-    /** 按顺序取出本车可用的模块（不可用的直接跳过，不留空卡片）。 */
-    fun available(ids: List<String>, caps: VehicleCapabilities): List<Spec> =
-        sanitize(ids).mapNotNull(::find).filter { it.available(caps) }
+        ids.filter { it in KNOWN }.distinct()
 }
 
-/** 模块卡统一尺寸：与官方空调卡一致圆角，整页纵向排布，卡片加高确保文字不被遮挡。 */
-val MODULE_CARD_HEIGHT = 170.dp
-private val MODULE_CARD_RADIUS get() = OFFICIAL_CARD_RADIUS
-
-/** 模块卡片需要的交互回调（由 HomeScreen 传入）。 */
+/** 模块区需要的交互回调（由 HomeScreen 传入）。 */
 data class ModuleCallbacks(
     val onOpenClimate: () -> Unit = {},
-    val onOpenSeat: () -> Unit = {},
     val onOpenFridge: () -> Unit = {},
-    val onOpenHealth: () -> Unit = {},
-    val onOpenScheduledAc: () -> Unit = {},
-    val onOpenCharging: () -> Unit = {},
     val onOpenTire: () -> Unit = {},
-    val onToggleSentry: () -> Unit = {},
     val onAcOn: () -> Unit = {},
     val onAcOff: () -> Unit = {},
-    val onAcTempChange: (Int) -> Unit = {},
+    val onToggleFridge: (Boolean) -> Unit = {},
     val acBusy: Boolean = false,
     val onRefreshEnergy: () -> Unit = {},
 )
 
 /**
- * 首页最下方的模块区：横向滑动的模块卡 + 滚动指示条 + 自定义按钮。
+ * 首页最下方的功能模块区（快捷控车圆钮下方）。照搬原项目三行布局。
  */
 @Composable
 fun HomeModuleSection(
-    runtime: AppRuntime,
     status: CarStatus?,
+    energy: MileageEnergySummary?,
     capabilities: VehicleCapabilities,
-    energy: MileageEnergySummary?,
-    acPlan: ScheduledAcPlan,
     callbacks: ModuleCallbacks,
 ) {
-    var layout by remember { mutableStateOf(runtime.homeModules()) }
-    var showEditor by remember { mutableStateOf(false) }
-    val specs = HomeModules.available(layout, capabilities)
-
-    // 所有卡片纵向排在一起（整页向上滑动浏览），不再按分组归类、不再横向滑动
-    Column(modifier = Modifier.fillMaxWidth()) {
-        specs.forEach { spec ->
-            HomeModuleCard(
-                spec = spec,
-                status = status,
-                energy = energy,
-                acPlan = acPlan,
-                callbacks = callbacks,
-                capabilities = capabilities,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 12.dp),
-            )
-        }
-        // ---- 页面最底部的自定义按钮 ----
-        CustomizeButton(onClick = { showEditor = true })
-    }
-
-    if (showEditor) {
-        ModuleEditorDialog(
-            initial = layout,
-            capabilities = capabilities,
-            onSave = { ids ->
-                runtime.setHomeModules(ids)
-                layout = runtime.homeModules()
-                showEditor = false
-            },
-            onDismiss = { showEditor = false },
-        )
-    }
-}
-
-/** 底部「自定义」胶囊按钮：只显示文字，不放图标（避免视觉噪声）。 */
-@Composable
-private fun CustomizeButton(onClick: () -> Unit) {
-    val C = LocalAppColors.current
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Surface(
-            shape = RoundedCornerShape(50),
-            color = C.chipBg,
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .clickable(onClick = onClick),
+    val hasFridge = status?.fridge != null
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        // ① 胎压俯视卡 + 车况状态 2×2 卡
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = "自定义",
-                color = C.textPrimary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+            TireStatusCard(
+                status = status,
+                onOpen = callbacks.onOpenTire,
+                modifier = Modifier.weight(1f).height(176.dp),
+            )
+            VehicleStatusGridCard(
+                status = status,
+                modifier = Modifier.weight(1f).height(176.dp),
             )
         }
-    }
-}
 
-/** 按 id 分发到具体卡片。 */
-@Composable
-private fun HomeModuleCard(
-    spec: HomeModules.Spec,
-    status: CarStatus?,
-    energy: MileageEnergySummary?,
-    acPlan: ScheduledAcPlan,
-    callbacks: ModuleCallbacks,
-    capabilities: VehicleCapabilities = VehicleCapabilities.EMPTY,
-    modifier: Modifier = Modifier,
-) {
-    when (spec.id) {
-        HomeModules.CLIMATE.id -> AcTile(
-            modifier = modifier
-                .height(MODULE_CARD_HEIGHT)
-                .clip(officialCardShape())
-                .clickable(onClick = callbacks.onOpenClimate),
-            status = status,
-            busy = callbacks.acBusy,
-            busyOn = callbacks.acBusy,
-            busyOff = callbacks.acBusy,
-            onAcOn = callbacks.onAcOn,
-            onAcOff = callbacks.onAcOff,
-            onTempChange = callbacks.onAcTempChange,
-            compact = true,
+        // ② 空调条（+ 冰箱条）
+        if (hasFridge) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                ClimateBar(
+                    status = status,
+                    callbacks = callbacks,
+                    modifier = Modifier.weight(1f),
+                )
+                FridgeBar(
+                    status = status,
+                    callbacks = callbacks,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        } else {
+            ClimateBar(
+                status = status,
+                callbacks = callbacks,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        // ③ 近 7 天行驶里程图表卡
+        RecentMileageCard(
+            energy = energy,
+            onRefresh = callbacks.onRefreshEnergy,
+            modifier = Modifier.fillMaxWidth(),
         )
-
-        HomeModules.SEAT.id -> SeatModuleCard(status, callbacks.onOpenSeat, modifier)
-        HomeModules.TIRE.id -> TireModuleCard(status, callbacks.onOpenTire, modifier)
-        HomeModules.MILEAGE.id -> MileageModuleCard(status, energy, callbacks.onRefreshEnergy, modifier)
-        HomeModules.HEALTH.id -> HealthModuleCard(status, capabilities, callbacks.onOpenHealth, modifier)
-        HomeModules.FRIDGE.id -> FridgeModuleCard(status, callbacks.onOpenFridge, modifier)
-        HomeModules.SCHEDULED_AC.id -> ScheduledAcModuleCard(acPlan, callbacks.onOpenScheduledAc, modifier)
-        HomeModules.CHARGING.id -> ChargingModuleCard(status, callbacks.onOpenCharging, modifier)
-        HomeModules.SENTRY.id -> SentryModuleCard(status, callbacks.onToggleSentry, modifier)
     }
 }
 
 // ============================================================================
-// 卡片骨架与各个模块卡片
+// 通用卡片骨架
 // ============================================================================
 
-/** 模块卡骨架：标题行（标题 + 右上图标）+ 内容区，尺寸与圆角对齐空调卡。 */
+/** 模块区统一卡片底：C.cardBg + 16dp 圆角（与首页其他卡片一致）。 */
 @Composable
-private fun ModuleFrame(
+private fun LowerCard(
     modifier: Modifier = Modifier,
-    title: String,
-    corner: @Composable () -> Unit = {},
-    onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val C = LocalAppColors.current
-    val shape = RoundedCornerShape(MODULE_CARD_RADIUS)
     Column(
         modifier = modifier
-            .height(MODULE_CARD_HEIGHT)
-            .clip(shape)
-            .background(C.cardBg, shape)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 14.dp, vertical = 15.dp),
+            .background(C.cardBg, RoundedCornerShape(16.dp))
+            .padding(14.dp),
+        content = content,
+    )
+}
+
+/** 卡片右上角的异常小圆点 + 文案。 */
+@Composable
+private fun WarningDot(text: String) {
+    val C = LocalAppColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = title,
-                color = C.textPrimary,
-                fontSize = 13.sp,
-                modifier = Modifier.weight(1f),
-            )
-            Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) { corner() }
-        }
-        content()
+        Box(
+            modifier = Modifier
+                .size(5.5.dp)
+                .background(Color(0xFFE5484D), CircleShape),
+        )
+        Text(
+            text = text,
+            color = Color(0xFFE5484D),
+            fontSize = 10.sp,
+        )
     }
 }
 
-/** 卡片右上角图标（与空调卡的风扇钮同尺寸，默认主色，高亮时用强调色）。 */
-@Composable
-private fun ModuleCornerIcon(iconRes: Int, highlight: Boolean = false) {
-    Icon(
-        painter = painterResource(iconRes),
-        contentDescription = null,
-        tint = if (highlight) LocalAppColors.current.accent else LocalAppColors.current.textSecondary,
-        modifier = Modifier.size(20.dp),
-    )
-}
+// ============================================================================
+// ① 胎压俯视卡
+// ============================================================================
 
-/** 卡片底部的一行说明文字。 */
 @Composable
-private fun ModuleLine(text: String, highlight: Boolean = false) {
-    Text(
-        text = text,
-        color = if (highlight) LocalAppColors.current.accent else LocalAppColors.current.textSecondary,
-        fontSize = 11.sp,
-        maxLines = 1,
-    )
-}
-
-/** 卡片中部的大号数值 + 单位。 */
-@Composable
-private fun ModuleBigValue(value: String, unit: String) {
+private fun TireStatusCard(
+    status: CarStatus?,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val C = LocalAppColors.current
-    Row(verticalAlignment = Alignment.Bottom) {
+    val tires = status?.tires.orEmpty()
+    val hasWarning = tires.any { it.warning }
+    Box(modifier = modifier) {
+        LowerCard(modifier = Modifier.fillMaxSize()) {
+            if (status == null || tires.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("暂无胎压数据", color = C.textSecondary, fontSize = 13.sp)
+                }
+                return@LowerCard
+            }
+            if (hasWarning) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
+                    WarningDot("异常")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    TireMiniValue(tires.firstOrNull { it.position == "左前" }, alignEnd = true)
+                    TireMiniValue(tires.firstOrNull { it.position == "左后" }, alignEnd = true)
+                }
+                Spacer(Modifier.width(6.dp))
+                TireTopView(
+                    tires = tires,
+                    modifier = Modifier
+                        .size(width = 92.dp, height = 150.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable(onClick = onOpen),
+                )
+                Spacer(Modifier.width(6.dp))
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.Start,
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    TireMiniValue(tires.firstOrNull { it.position == "右前" }, alignEnd = false)
+                    TireMiniValue(tires.firstOrNull { it.position == "右后" }, alignEnd = false)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TireMiniValue(
+    tire: TireInfo?,
+    alignEnd: Boolean,
+) {
+    val C = LocalAppColors.current
+    val warning = tire?.warning == true
+    val num = tire?.pressure
+        ?.replace(Regex("[^\\d.]"), "")
+        ?.takeIf { it.isNotBlank() } ?: "--"
+    val valueColor = if (warning) Color(0xFFE5484D) else C.textPrimary
+    val unitColor = if (warning) Color(0xFFE5484D) else C.textSecondary
+    Column(
+        horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+    ) {
+        Text(
+            text = num,
+            color = valueColor,
+            fontSize = 16.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            lineHeight = 16.sp,
+            maxLines = 1,
+        )
+        Text(
+            text = "kPa",
+            color = unitColor,
+            fontSize = 10.sp,
+            lineHeight = 10.sp,
+            maxLines = 1,
+        )
+    }
+}
+
+// ============================================================================
+// ① 车况状态 2×2 卡（总里程 / 电流 / 门锁 / 车窗）
+// ============================================================================
+
+@Composable
+private fun VehicleStatusGridCard(
+    status: CarStatus?,
+    modifier: Modifier = Modifier,
+) {
+    val C = LocalAppColors.current
+    LowerCard(modifier = modifier) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StatusCell(
+                    label = "总里程",
+                    value = status?.totalMileage?.formatMileage() ?: "--",
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                )
+                PowerInfoCell(
+                    status = status,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                val lockWarning = status?.locked == false
+                val lockValue = when (status?.locked) {
+                    true -> "车锁已锁"
+                    false -> "车锁未锁"
+                    null -> "--"
+                }
+                StatusCell(
+                    label = "门锁",
+                    value = lockValue,
+                    warning = lockWarning,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                )
+                val windowWarning = status?.windowOpen == true
+                val windowValue = when (status?.windowOpen) {
+                    true -> "车窗未关"
+                    false -> "车窗已关"
+                    null -> "--"
+                }
+                StatusCell(
+                    label = "车窗",
+                    value = windowValue,
+                    warning = windowWarning,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                )
+            }
+        }
+    }
+}
+
+private fun String.formatMileage(): String {
+    val raw = this.trim()
+    return when {
+        raw.isEmpty() || raw == "--" -> "--"
+        raw.endsWith("km", ignoreCase = true) -> raw.replace(" ", "")
+        else -> "${raw}km"
+    }
+}
+
+/** 2×2 单元格：标签 + 数值。 */
+@Composable
+private fun StatusCell(
+    label: String,
+    value: String,
+    warning: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val C = LocalAppColors.current
+    val valueColor = when {
+        warning -> Color(0xFFE5484D)
+        value == "--" -> C.textSecondary
+        else -> C.textPrimary
+    }
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(text = label, color = C.textSecondary, fontSize = 11.sp)
+        Spacer(Modifier.height(4.dp))
         Text(
             text = value,
-            color = C.textPrimary,
-            fontSize = 26.sp,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.width(3.dp))
-        Text(
-            text = unit,
-            color = C.textPrimary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 4.dp),
+            color = valueColor,
+            fontSize = 14.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            maxLines = 1,
         )
     }
 }
 
-// ---- 座椅舒适 ----
+/**
+ * 功率信息单元格：点击在 充电功率 / 剩余时间 / 电压 / 电流 / 电池温度 之间循环，
+ * 底部小圆点指示当前页（照搬原项目 power pager 思路，默认停在「电流」）。
+ */
 @Composable
-private fun SeatModuleCard(status: CarStatus?, onClick: () -> Unit, modifier: Modifier) {
-    ModuleFrame(
-        modifier = modifier,
-        title = "座椅舒适",
-        corner = { ModuleCornerIcon(R.drawable.ic_mod_seat) },
-        onClick = onClick,
-    ) {
-        Spacer(Modifier.height(12.dp))
-        val heat = status?.seatHeating
-        val vent = status?.seatVentilation
-        ModuleLine("主驾 加热${levelText(heat?.driver)} · 通风${levelText(vent?.driver)}")
-        Spacer(Modifier.height(4.dp))
-        ModuleLine("副驾 加热${levelText(heat?.passenger)} · 通风${levelText(vent?.passenger)}")
-        status?.steeringWheelHeating?.let { level ->
-            Spacer(Modifier.height(4.dp))
-            ModuleLine("方向盘加热 ${levelText(level)}")
-        }
-    }
-}
-
-private fun levelText(level: Int?): String = when (level) {
-    null -> "--"
-    0 -> "关"
-    else -> "${level}档"
-}
-
-// ---- 胎压 ----
-@Composable
-private fun TireModuleCard(status: CarStatus?, onClick: () -> Unit, modifier: Modifier) {
-    ModuleFrame(
-        modifier = modifier,
-        title = "胎压",
-        corner = { ModuleCornerIcon(R.drawable.ic_mod_tire) },
-        onClick = onClick,
-    ) {
-        val tires = status?.tires.orEmpty()
-        if (tires.isEmpty()) {
-            Spacer(Modifier.height(14.dp))
-            Text(
-                text = "暂无胎压数据",
-                color = LocalAppColors.current.textSecondary,
-                fontSize = 13.sp,
-            )
-            return@ModuleFrame
-        }
-        Spacer(Modifier.height(12.dp))
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                TireCell("左前", tires.firstOrNull { it.position == "左前" }, Modifier.weight(1f))
-                TireCell("右前", tires.firstOrNull { it.position == "右前" }, Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                TireCell("左后", tires.firstOrNull { it.position == "左后" }, Modifier.weight(1f))
-                TireCell("右后", tires.firstOrNull { it.position == "右后" }, Modifier.weight(1f))
-            }
-        }
-    }
-}
-
-@Composable
-private fun TireCell(label: String, tire: TireInfo?, modifier: Modifier = Modifier) {
-    val C = LocalAppColors.current
-    Column(modifier = modifier) {
-        Text(label, color = C.textSecondary, fontSize = 11.sp)
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = tire?.pressure ?: "--",
-            color = when {
-                tire == null -> C.textSecondary
-                tire.warning -> Color(0xFFE5484D)
-                else -> C.textPrimary
-            },
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
-        )
-    }
-}
-
-// ---- 行驶里程 / 能耗 ----
-@Composable
-private fun MileageModuleCard(
+private fun PowerInfoCell(
     status: CarStatus?,
+    modifier: Modifier = Modifier,
+) {
+    val C = LocalAppColors.current
+    val pages = listOf(
+        "充电功率" to (status?.chargingPower ?: "--"),
+        "剩余时间" to (status?.chargeTimeLeft ?: "--"),
+        "电压" to (status?.chargeVoltage ?: "--"),
+        "电流" to (status?.chargeCurrent ?: "--"),
+        "电池温度" to (status?.batteryTemp ?: "--"),
+    )
+    var page by remember { mutableStateOf(3) } // 默认「电流」
+    Column(
+        modifier = modifier
+            .clickable { page = (page + 1) % pages.size },
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(text = pages[page].first, color = C.textSecondary, fontSize = 11.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = pages[page].second,
+            color = if (pages[page].second == "--") C.textSecondary else C.textPrimary,
+            fontSize = 14.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(5.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            repeat(pages.size) { i ->
+                Box(
+                    modifier = Modifier
+                        .size(if (i == page) 6.dp else 2.5.dp, 2.dp)
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(if (i == page) C.accent else C.barTrack),
+                )
+            }
+        }
+    }
+}
+
+// ============================================================================
+// ② 空调条 / 冰箱条（照搬原项目 ClimateOverviewCard 紧凑双子舱样式）
+// ============================================================================
+
+@Composable
+private fun ClimateBar(
+    status: CarStatus?,
+    callbacks: ModuleCallbacks,
+    modifier: Modifier = Modifier,
+) {
+    val C = LocalAppColors.current
+    val target = status?.acTargetTemp?.toIntOrNull() ?: 24
+    val acOn = status?.acOn == true
+    val interior = status?.interiorTemp?.replace("°C", "", ignoreCase = true)
+        ?.replace("°", "", ignoreCase = true)?.trim()
+    val sub = if (acOn) {
+        if (interior.isNullOrBlank()) "运行中" else "车内 $interior°C"
+    } else "已关闭"
+    LowerCard(
+        modifier = modifier.height(58.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(onClick = callbacks.onOpenClimate),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val tint = if (acOn) C.accent else C.textSecondary
+                Icon(
+                    painter = painterResource(R.drawable.ic_ac_fan),
+                    contentDescription = "空调状态",
+                    tint = tint,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(verticalArrangement = Arrangement.Center) {
+                    Text(
+                        if (acOn) "空调 · ${target}°C" else "空调",
+                        color = if (acOn) C.accent else C.textPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.height(1.dp))
+                    Text(
+                        text = sub,
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                    )
+                }
+            }
+            Spacer(Modifier.width(6.dp))
+            PillSwitch(
+                checked = acOn,
+                enabled = !callbacks.acBusy,
+                onCheckedChange = { if (it) callbacks.onAcOn() else callbacks.onAcOff() },
+            )
+        }
+    }
+}
+
+@Composable
+private fun FridgeBar(
+    status: CarStatus?,
+    callbacks: ModuleCallbacks,
+    modifier: Modifier = Modifier,
+) {
+    val C = LocalAppColors.current
+    val fridge = status?.fridge
+    val enabled = fridge?.enabled == true
+    val temp = fridge?.temp
+    val sub = if (enabled) "${temp ?: "--"}°C" else "已关闭"
+    LowerCard(
+        modifier = modifier.height(58.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(onClick = callbacks.onOpenFridge),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val tint = if (enabled) C.accent else C.textSecondary
+                Icon(
+                    painter = painterResource(R.drawable.ic_mod_fridge),
+                    contentDescription = "车载冰箱",
+                    tint = tint,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(verticalArrangement = Arrangement.Center) {
+                    Text(
+                        "车载冰箱",
+                        color = if (enabled) C.accent else C.textPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.height(1.dp))
+                    Text(
+                        text = sub,
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                    )
+                }
+            }
+            Spacer(Modifier.width(6.dp))
+            PillSwitch(
+                checked = enabled,
+                onCheckedChange = { callbacks.onToggleFridge(it) },
+            )
+        }
+    }
+}
+
+/** iOS 风格胶囊开关：开启时滑块居右、轨道着主题色。 */
+@Composable
+private fun PillSwitch(
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val C = LocalAppColors.current
+    val thumbX by animateDpAsState(
+        targetValue = if (checked) 22.dp else 2.dp,
+        label = "pillThumb",
+    )
+    Box(
+        modifier = Modifier
+            .size(44.dp, 24.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (checked) C.accent else C.barTrack)
+            .then(if (enabled) Modifier.clickable { onCheckedChange(!checked) } else Modifier),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(
+            modifier = Modifier
+                .offset(x = thumbX)
+                .size(20.dp)
+                .background(Color.White, CircleShape),
+        )
+    }
+}
+
+// ============================================================================
+// ③ 近 7 天行驶里程图表卡
+// ============================================================================
+
+@Composable
+private fun RecentMileageCard(
     energy: MileageEnergySummary?,
     onRefresh: () -> Unit,
-    modifier: Modifier,
-) {
-    val totalKm = status?.totalMileage?.toDoubleOrNull()
-        ?: energy?.totalMileageKm
-    ModuleFrame(
-        modifier = modifier,
-        title = "里程能耗",
-        corner = { ModuleCornerIcon(R.drawable.ic_mod_mileage) },
-        onClick = onRefresh,
-    ) {
-        Spacer(Modifier.height(10.dp))
-        ModuleBigValue(value = totalKm?.let { formatKm(it) } ?: "--", unit = "km")
-        Spacer(Modifier.height(8.dp))
-        ModuleLine(
-            text = energy?.overallConsumption?.let { "综合能耗 ${formatNumber(it)} kWh/100km" }
-                ?: "综合能耗 --",
-        )
-        Spacer(Modifier.height(4.dp))
-        ModuleLine(
-            text = energy?.recent7DaysKm?.let { "近 7 日 ${formatKm(it)} km" } ?: "近 7 日 --",
-        )
-    }
-}
-
-private fun formatKm(value: Double): String =
-    if (value % 1.0 == 0.0) value.toLong().toString()
-    else String.format(Locale.US, "%.1f", value)
-
-private fun formatNumber(value: Double): String =
-    if (value % 1.0 == 0.0) value.toLong().toString()
-    else String.format(Locale.US, "%.1f", value)
-
-// ---- 车辆健康 ----
-@Composable
-private fun HealthModuleCard(
-    status: CarStatus?,
-    capabilities: VehicleCapabilities = VehicleCapabilities.EMPTY,
-    onClick: () -> Unit,
-    modifier: Modifier,
-) {
-    val report = remember(status, capabilities) { VehicleHealthDiagnostics.evaluate(status, capabilities) }
-    ModuleFrame(
-        modifier = modifier,
-        title = "车辆健康",
-        corner = { ModuleCornerIcon(R.drawable.ic_health, highlight = report.level == HealthLevel.GOOD) },
-        onClick = onClick,
-    ) {
-        Spacer(Modifier.height(10.dp))
-        val C = LocalAppColors.current
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                text = if (status == null) "--" else report.score.toString(),
-                color = C.textPrimary,
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.width(3.dp))
-            Text(
-                text = "分",
-                color = C.textPrimary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 4.dp),
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        ModuleLine(report.summary)
-        Spacer(Modifier.height(4.dp))
-        ModuleLine(
-            text = if (report.issues.isEmpty()) "未发现异常" else "${report.issues.size} 项待处理",
-            highlight = report.issues.isNotEmpty(),
-        )
-    }
-}
-
-// ---- 车载冰箱 ----
-@Composable
-private fun FridgeModuleCard(status: CarStatus?, onClick: () -> Unit, modifier: Modifier) {
-    val fridge = status?.fridge
-    ModuleFrame(
-        modifier = modifier,
-        title = "车载冰箱",
-        corner = { ModuleCornerIcon(R.drawable.ic_mod_fridge, highlight = fridge?.enabled == true) },
-        onClick = onClick,
-    ) {
-        Spacer(Modifier.height(12.dp))
-        val state = when (fridge?.enabled) {
-            true -> "工作中"
-            false -> "已关闭"
-            null -> "状态未知"
-        }
-        ModuleBigValue(value = fridge?.temp?.let { "$it" } ?: "--", unit = "°C")
-        Spacer(Modifier.height(8.dp))
-        ModuleLine(state, highlight = fridge?.enabled == true)
-    }
-}
-
-// ---- 定时空调 ----
-@Composable
-private fun ScheduledAcModuleCard(plan: ScheduledAcPlan, onClick: () -> Unit, modifier: Modifier) {
-    ModuleFrame(
-        modifier = modifier,
-        title = "定时空调",
-        corner = { ModuleCornerIcon(R.drawable.ic_phosphor_fan, highlight = plan.enabled) },
-        onClick = onClick,
-    ) {
-        Spacer(Modifier.height(12.dp))
-        ModuleBigValue(value = if (plan.enabled) plan.startTime else "--", unit = "")
-        Spacer(Modifier.height(8.dp))
-        ModuleLine(
-            text = if (plan.enabled) "每天 ${plan.temperatureC}°C" else "未设置定时",
-            highlight = plan.enabled,
-        )
-    }
-}
-
-// ---- 充电 ----
-@Composable
-private fun ChargingModuleCard(status: CarStatus?, onClick: () -> Unit, modifier: Modifier) {
-    val charging = status?.charging == true
-    ModuleFrame(
-        modifier = modifier,
-        title = "充电",
-        corner = { ModuleCornerIcon(R.drawable.ic_charge_station, highlight = charging) },
-        onClick = onClick,
-    ) {
-        Spacer(Modifier.height(12.dp))
-        ModuleBigValue(
-            value = if (charging) status?.chargingPower?.filter { it.isDigit() || it == '.' } ?: "--" else "--",
-            unit = if (charging) "kW" else "",
-        )
-        Spacer(Modifier.height(8.dp))
-        ModuleLine(
-            text = when {
-                charging -> status?.chargeTimeLeft?.let { "剩余 $it" } ?: "充电中"
-                status?.chargeCableConnected == true -> "已插枪，未充电"
-                else -> "未充电"
-            },
-            highlight = charging,
-        )
-    }
-}
-
-// ---- 哨兵模式 ----
-@Composable
-private fun SentryModuleCard(status: CarStatus?, onToggle: () -> Unit, modifier: Modifier) {
-    val on = status?.sentryOn == true
-    ModuleFrame(
-        modifier = modifier,
-        title = "哨兵模式",
-        corner = { ModuleCornerIcon(R.drawable.ic_qc_sentry, highlight = on) },
-        onClick = onToggle,
-    ) {
-        Spacer(Modifier.height(14.dp))
-        Text(
-            text = when (status?.sentryOn) {
-                true -> "已开启"
-                false -> "已关闭"
-                null -> "--"
-            },
-            color = LocalAppColors.current.textPrimary,
-            fontSize = 26.sp,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(8.dp))
-        ModuleLine(if (on) "点击关闭哨兵" else "点击开启哨兵", highlight = on)
-    }
-}
-
-// 车辆位置模块已移除（车端基本不上报经纬度，无实际用途）。
-
-
-// ============================================================================
-// 自定义模块：顺序（上移 / 下移）、删除、添加
-// ============================================================================
-
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun ModuleEditorDialog(
-    initial: List<String>,
-    capabilities: VehicleCapabilities,
-    onSave: (List<String>) -> Unit,
-    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val C = LocalAppColors.current
-    // 已有的（本车可用的）排在前面，未添加的放进下方候选区
-    val items = remember {
-        mutableStateListOf<String>().apply {
-            addAll(HomeModules.available(initial, capabilities).map { it.id })
+    LowerCard(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("近7天行驶里程", color = C.textPrimary, fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+            Icon(
+                painter = painterResource(R.drawable.ic_mod_mileage),
+                contentDescription = null,
+                tint = C.textSecondary,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable(onClick = onRefresh),
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        val total = energy?.recent7DaysKm
+        Text(
+            text = total?.let { if (it % 1.0 == 0.0) it.toLong().toString() else String.format("%.1f", it) } ?: "--",
+            color = C.accent,
+            fontSize = 28.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text("km", color = C.textSecondary, fontSize = 12.sp)
+        Spacer(Modifier.height(6.dp))
+        SevenDayChart(
+            points = energy?.recentDays.orEmpty(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun SevenDayChart(
+    points: List<com.leapcontrol.app.DailyMileage>,
+    modifier: Modifier = Modifier,
+) {
+    val C = LocalAppColors.current
+    if (points.isEmpty()) {
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(120.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("暂无近 7 天里程数据", color = C.textSecondary, fontSize = 13.sp)
+        }
+        return
+    }
+    val max = (points.maxOfOrNull { it.km } ?: 0.0).coerceAtLeast(1.0)
+    val labels = points.map { MileageEnergyParser.dayLabel(it.day) }
+    Column(modifier = modifier) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(116.dp)
+                .padding(top = 10.dp, bottom = 2.dp),
+        ) {
+            val w = size.width
+            val h = size.height
+            val n = points.size
+            val stepX = w / (n - 1).coerceAtLeast(1)
+            val chartH = h - 18.dp.toPx()
+            val baseY = h - 14.dp.toPx()
+            val pts = points.mapIndexed { i, p ->
+                val x = if (n == 1) w / 2 else i * stepX
+                val y = baseY - (p.km / max).toFloat().coerceIn(0f, 1f) * chartH
+                Offset(x, y)
+            }
+            // 面积填充
+            val areaPath = Path().apply {
+                moveTo(pts.first().x, baseY)
+                pts.forEach { lineTo(it.x, it.y) }
+                lineTo(pts.last().x, baseY)
+                close()
+            }
+            drawPath(
+                areaPath,
+                Brush.verticalGradient(
+                    listOf(
+                        C.accent.copy(alpha = 0.35f),
+                        C.accent.copy(alpha = 0.02f),
+                    ),
+                ),
+            )
+            // 折线
+            val linePath = Path().apply {
+                moveTo(pts.first().x, pts.first().y)
+                pts.forEach { lineTo(it.x, it.y) }
+            }
+            drawPath(linePath, C.accent, style = Stroke(2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))
+            // 数据点（末点放大强调）
+            pts.forEachIndexed { i, p ->
+                val last = i == pts.lastIndex
+                drawCircle(C.accent, radius = if (last) 3.5.dp.toPx() else 2.5.dp.toPx())
+            }
+        }
+        // 日期标签
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            labels.forEach { label ->
+                Text(
+                    text = label,
+                    fontSize = 9.sp,
+                    color = C.textSecondary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                )
+            }
         }
     }
-    val candidates = HomeModules.available(HomeModules.ALL.map { it.id }, capabilities)
-        .filter { it.id !in items }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = C.cardBg,
-        title = { Text("自定义功能模块", color = C.textPrimary) },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                Text(
-                    "拖动顺序会同步到首页横滑区；最少保留 1 个模块。",
-                    color = C.textSecondary,
-                    fontSize = 12.sp,
-                )
-                Spacer(Modifier.height(12.dp))
-                items.forEachIndexed { index, id ->
-                    val spec = HomeModules.find(id) ?: return@forEachIndexed
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            painter = painterResource(spec.iconRes),
-                            contentDescription = null,
-                            tint = C.textPrimary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            spec.title,
-                            color = C.textPrimary,
-                            fontSize = 14.sp,
-                            modifier = Modifier.weight(1f),
-                        )
-                        IconButton(
-                            onClick = {
-                                if (index > 0) {
-                                    items.removeAt(index)
-                                    items.add(index - 1, id)
-                                }
-                            },
-                            enabled = index > 0,
-                        ) {
-                            Icon(
-                                Icons.Filled.KeyboardArrowUp,
-                                null,
-                                tint = if (index > 0) C.textPrimary else C.barTrack,
-                            )
-                        }
-                        IconButton(
-                            onClick = {
-                                if (index < items.size - 1) {
-                                    items.removeAt(index)
-                                    items.add(index + 1, id)
-                                }
-                            },
-                            enabled = index < items.size - 1,
-                        ) {
-                            Icon(
-                                Icons.Filled.KeyboardArrowDown,
-                                null,
-                                tint = if (index < items.size - 1) C.textPrimary else C.barTrack,
-                            )
-                        }
-                        IconButton(
-                            onClick = { if (items.size > 1) items.removeAt(index) },
-                            enabled = items.size > 1,
-                        ) {
-                            Icon(
-                                Icons.Filled.Close,
-                                null,
-                                tint = if (items.size > 1) Color(0xFFFF6B6B) else C.barTrack,
-                            )
-                        }
-                    }
-                }
-                if (candidates.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("添加模块", color = C.textSecondary, fontSize = 12.sp)
-                    Spacer(Modifier.height(8.dp))
-                    androidx.compose.foundation.layout.FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        candidates.forEach { spec ->
-                            AssistChip(
-                                onClick = { items.add(spec.id) },
-                                label = { Text(spec.title, fontSize = 12.sp) },
-                                leadingIcon = {
-                                    Icon(
-                                        painter = painterResource(spec.iconRes),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                },
-                                colors = AssistChipDefaults.assistChipColors(
-                                    labelColor = C.textPrimary,
-                                    leadingIconContentColor = C.textPrimary,
-                                ),
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                // 未添加进列表的模块也保留在配置里（顺序在前，显示时按可用性过滤）
-                val rest = HomeModules.sanitize(initial).filter { it !in items }
-                onSave(items.toList() + rest)
-            }) { Text("保存", color = C.accent) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消", color = C.textSecondary) }
-        },
-    )
 }

@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.darkColorScheme
@@ -283,12 +286,27 @@ fun MainScreen(
                 // 视频层「常驻」组合、不随切页 / 进二级页卸载：用 alpha 显隐 + paused 控制播放，
                 // 切回首页时画面连续、不会从头起播闪烁一下（我的页、设置/个性化/关于、
                 // 以及首页二级页不显示视频，纯主题色渐变，靠 alpha=0 隐藏、暂停解码省电）。
+                //
+                // 车模滑出视口时的背景切换做「交叉淡入淡出」：视频 alpha 渐隐到 0 的同时，
+                // 纯色背景层 alpha 渐入到 1；雾化遮罩 / 下缘渐隐跟随视频一起渐隐，避免硬切突兀。
                 val videoActive = videoEnabled && tab == 0 && homeOnMainPage && !carModelGone
+                val videoAlpha by animateFloatAsState(
+                    targetValue = if (videoActive) 1f else 0f,
+                    animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+                    label = "videoAlpha",
+                )
+                // 纯色背景层：车模滑出后渐入；滑回时渐出，与视频形成柔和交叉过渡
+                val solidAlpha by animateFloatAsState(
+                    targetValue = if (carModelGone) 1f else 0f,
+                    animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+                    label = "solidAlpha",
+                )
                 if (videoEnabled) {
+                    // 视频层：始终挂载（carModelGone 时 alpha 渐隐到 0 而非直接卸载，保证淡出连续）
                     Box(
                         modifier = Modifier
                             .matchParentSize()
-                            .alpha(if (videoActive) 1f else 0f)
+                            .alpha(videoAlpha),
                     ) {
                         SeasonVideoBackground(
                             seasonId = activeSeasonId,
@@ -299,51 +317,50 @@ fun MainScreen(
                             modifier = Modifier.matchParentSize(),
                         )
                     }
-                }
-                // 车模滑出视口后：视频已隐藏，改用纯色背景铺底，文字压在干净底色上更清晰
-                if (carModelGone) {
+                    // 纯色背景层：车模滑出后交叉淡入，盖住根渐变，文字压在干净底色上更清晰
                     Box(
                         modifier = Modifier
                             .matchParentSize()
+                            .alpha(solidAlpha)
                             .background(season.gradient(dark).last()),
                     )
-                }
-                // 雾化遮罩 + 下缘渐隐只在首页主界面且车模可见时绘制（无播放器的静态层，切页重建无副作用）
-                if (videoActive) {
-                    // ---- 雾化遮罩：以车模正中心为圆心，向外圆弧发散 ----
-                    // 圆心处完全通透（车模不被压灰），越往四周越浓，屏幕顶端最浓。
-                    // 取主题渐变的最顶色，视频是「淡出进背景」而不是被压上一块别的颜色。
-                    val veilColor = season.gradient(dark).first()
-                    val veilRadiusY = with(density) { HEADER_VEIL_RADIUS_Y.toPx() }
-                    val veilCenterY = statusBarTopPx + with(density) {
-                        (HEADER_VEIL_CONTENT_HEIGHT + CAR_ARTWORK_HEIGHT / 2).toPx()
-                    }
-                    val veilBrush = remember(veilColor, veilRadiusY, veilCenterY, season.veilAlphaScale) {
-                        radialVeilBrush(veilColor, veilCenterY, veilRadiusY, season.veilAlphaScale)
-                    }
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .background(veilBrush),
-                    )
-                    // 下缘渐隐回主题色：主景留在画面上部，从快捷控件上沿（约 38%）开始压暗，
-                    // 到控件区已接近纯色 —— 文字与组件压在干净底色上，不会被画面细节吃掉。
-                    val scrim = season.gradient(dark).last()
-                    val scrimScale = season.scrimAlphaScale
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    0.00f to Color.Transparent,
-                                    0.38f to Color.Transparent,
-                                    0.50f to scrim.copy(alpha = 0.55f * scrimScale),
-                                    0.62f to scrim.copy(alpha = 0.85f * scrimScale),
-                                    0.78f to scrim.copy(alpha = 0.95f * scrimScale),
-                                    1.00f to scrim.copy(alpha = 0.98f * scrimScale),
+                    // 雾化遮罩 + 下缘渐隐：仅视频显示时才有意义，跟随 videoAlpha 一起渐隐
+                    Box(Modifier.matchParentSize().alpha(videoAlpha)) {
+                        // ---- 雾化遮罩：以车模正中心为圆心，向外圆弧发散 ----
+                        // 圆心处完全通透（车模不被压灰），越往四周越浓，屏幕顶端最浓。
+                        // 取主题渐变的最顶色，视频是「淡出进背景」而不是被压上一块别的颜色。
+                        val veilColor = season.gradient(dark).first()
+                        val veilRadiusY = with(density) { HEADER_VEIL_RADIUS_Y.toPx() }
+                        val veilCenterY = statusBarTopPx + with(density) {
+                            (HEADER_VEIL_CONTENT_HEIGHT + CAR_ARTWORK_HEIGHT / 2).toPx()
+                        }
+                        val veilBrush = remember(veilColor, veilRadiusY, veilCenterY, season.veilAlphaScale) {
+                            radialVeilBrush(veilColor, veilCenterY, veilRadiusY, season.veilAlphaScale)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .background(veilBrush),
+                        )
+                        // 下缘渐隐回主题色：主景留在画面上部，从快捷控件上沿（约 38%）开始压暗，
+                        // 到控件区已接近纯色 —— 文字与组件压在干净底色上，不会被画面细节吃掉。
+                        val scrim = season.gradient(dark).last()
+                        val scrimScale = season.scrimAlphaScale
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        0.00f to Color.Transparent,
+                                        0.38f to Color.Transparent,
+                                        0.50f to scrim.copy(alpha = 0.55f * scrimScale),
+                                        0.62f to scrim.copy(alpha = 0.85f * scrimScale),
+                                        0.78f to scrim.copy(alpha = 0.95f * scrimScale),
+                                        1.00f to scrim.copy(alpha = 0.98f * scrimScale),
+                                    )
                                 )
-                            )
-                    )
+                        )
+                    }
                 }
                 Scaffold(
                     containerColor = Color.Transparent,

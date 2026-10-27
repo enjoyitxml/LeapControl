@@ -714,17 +714,11 @@ fun HomeScreen(
             Box(modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 6.dp, start = 22.dp, end = 22.dp)) {
-                // 右侧两个图标按钮：车辆健康 + 皮肤（只显示图标，顶边与左侧车名顶端对齐）
+                // 右侧图标按钮：个性化（皮肤），顶边与左侧车名顶端对齐
                 Row(
                     modifier = Modifier.align(Alignment.TopEnd),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    HeaderIconButton(
-                        iconRes = R.drawable.ic_health,
-                        description = "车辆健康",
-                        onClick = { showVehicleHealth = true },
-                    )
-                    Spacer(Modifier.width(2.dp))
                     HeaderIconButton(
                         iconRes = R.drawable.ic_skin,
                         description = "皮肤",
@@ -765,30 +759,6 @@ fun HomeScreen(
                             description = "修改车名",
                             size = 18.dp,
                             onClick = { showRenameDialog = true },
-                        )
-                    }
-                    // 更新时间：日期 + 时分（去掉年份与秒钟），点一下可手动刷新
-                    Spacer(Modifier.height(2.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable(enabled = !refreshing) { refresh() },
-                    ) {
-                        if (refreshing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(11.dp),
-                                strokeWidth = 1.6.dp,
-                                color = LocalAppColors.current.textPrimary,
-                            )
-                            Spacer(Modifier.width(5.dp))
-                        }
-                        Text(
-                            text = when {
-                                refreshing -> "更新中…"
-                                lastUpdated == 0L -> "尚未更新"
-                                else -> "更新于 ${formatUpdateTime(lastUpdated)}"
-                            },
-                            color = LocalAppColors.current.textPrimary,
-                            fontSize = 11.5.sp,
                         )
                     }
                     VehicleDropdown(
@@ -929,6 +899,33 @@ fun HomeScreen(
                 }
             }
 
+            // ---- 车况更新时间（随内容滚动，不再固定在顶栏）：点一下可手动刷新 ----
+            Spacer(Modifier.height(12.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !refreshing) { refresh() },
+            ) {
+                if (refreshing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(11.dp),
+                        strokeWidth = 1.6.dp,
+                        color = LocalAppColors.current.textPrimary,
+                    )
+                    Spacer(Modifier.width(5.dp))
+                }
+                Text(
+                    text = when {
+                        refreshing -> "更新中…"
+                        lastUpdated == 0L -> "尚未更新"
+                        else -> "更新于 ${formatUpdateTime(lastUpdated)}"
+                    },
+                    color = LocalAppColors.current.textPrimary.copy(alpha = 0.7f),
+                    fontSize = 11.5.sp,
+                )
+            }
+
             // ---- 充电中心入口（胶囊按钮，续航下方，样式参考官网 App）----
             ChargingCenterEntry(onClick = { showChargingCenter = true })
 
@@ -1003,23 +1000,28 @@ fun HomeScreen(
             // 全部按「空调卡」的尺寸与圆角渲染，顺序、增删由底部「自定义模块」调整。
             Spacer(Modifier.height(14.dp))
             HomeModuleSection(
-                runtime = runtime,
                 status = currentStatus,
-                capabilities = capabilities,
                 energy = energySummary,
-                acPlan = acPlan,
+                capabilities = capabilities,
                 callbacks = ModuleCallbacks(
                     onOpenClimate = { showClimate = true },
-                    onOpenSeat = { showSeatComfort = true },
                     onOpenFridge = { showFridge = true },
-                    onOpenHealth = { showVehicleHealth = true },
-                    onOpenScheduledAc = { showScheduledAc = true },
-                    onOpenCharging = { showChargingCenter = true },
                     onOpenTire = { showTire = true },
-                    onToggleSentry = { ensureConfirmed("哨兵模式") { runControl("sentry") } },
                     onAcOn = { ensureConfirmed("开启空调") { runAcCommand(true) } },
                     onAcOff = { ensureConfirmed("关闭空调") { runAcCommand(false) } },
-                    onAcTempChange = { temp -> ensureConfirmed("空调调温") { runAcTemperature(temp) } },
+                    onToggleFridge = { enable ->
+                        ensureConfirmed(if (enable) "开启车载冰箱" else "关闭车载冰箱") {
+                            val f = currentStatus?.fridge
+                            runFridgeCommand(
+                                com.leapcontrol.app.FridgeControlCommand(
+                                    enable = enable,
+                                    mode = f?.mode ?: com.leapcontrol.app.FridgeMode.COLD,
+                                    temp = f?.temp ?: 4,
+                                    style = f?.style ?: com.leapcontrol.app.FridgeStyle.NORMAL,
+                                ),
+                            )
+                        }
+                    },
                     acBusy = controlling == "acOn" || controlling == "acOff" || controlling == "acTemp",
                     onRefreshEnergy = {
                         scope.launch { runCatching { runtime.refreshMileageEnergy(force = true) } }
