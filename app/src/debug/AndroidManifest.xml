@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 仅 debug 包：主题预览页，用来在模拟器上核对 20 套背景的实际观感，release 不带 -->
+    <application>
+        <activity
+            android:name=".ui.ThemePreviewActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.LeapBuddy" />
+    </application>
+</manifest>
