@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.R
 
 /**
- * 「隐私条款」页：说明软件免费、基于开源项目二次开发、数据全部留在本地、不收集隐私。
+ * 「隐私条款」页：说明软件免费、纯自用不外发、数据全部留在本地、不收集隐私。
  */
 object PrivacyText {
     const val LEAD =
@@ -27,8 +27,8 @@ object PrivacyText {
     val SECTIONS: List<Pair<String, List<String>>> = listOf(
         "一、完全免费" to listOf(
             "零控是完全免费的自用工具：无广告、无订阅、无内购、无强制收费，也不存在任何\"解锁高级功能\"的付费墙。",
-            "所有功能对所有用户一视同仁开放；打赏纯属自愿赠与，不影响任何功能的使用。",
-            "本项目基于开源项目二次开发，代码与数据处理方式可自行查阅（见「开源协议与致谢」）。",
+            "所有功能一视同仁开放，不设付费门槛，也不做任何形式的收费。",
+            "本项目是作者自用的非商业工具，不对外分发、不提供任何收费服务，也不承接任何第三方使用。",
         ),
         "二、数据全部存在本地" to listOf(
             "登录凭证、控车密码、自定义车名、快捷按钮与模块排序等，全部保存在你手机本地的 App 私有目录，不会上传到任何服务器。",
@@ -101,13 +101,16 @@ fun PrivacyScreen(
         }
 
         // ---- 关联入口 ----
-        Spacer(Modifier.height(12.dp))
-        ClickRow(
-            title = "开源协议与致谢",
-            desc = "本项目所基于的开源项目与原作者",
-            iconRes = R.drawable.ic_opensource,
-            onClick = onOpenOpenSource,
-        )
+        // 自用版本已隐藏「开源协议与致谢」入口（开关见 SHOW_DEV_ENTRIES），避免本页成为绕过隐藏的跳板
+        if (SHOW_DEV_ENTRIES) {
+            Spacer(Modifier.height(12.dp))
+            ClickRow(
+                title = "开源协议与致谢",
+                desc = "本项目所基于的开源项目与原作者",
+                iconRes = R.drawable.ic_opensource,
+                onClick = onOpenOpenSource,
+            )
+        }
 
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.navigationBarsPadding())

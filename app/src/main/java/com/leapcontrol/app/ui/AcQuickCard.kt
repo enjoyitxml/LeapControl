@@ -13,9 +13,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -37,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,7 +52,7 @@ import com.leapcontrol.app.R
  * 所以整条按 ~1.2 倍等比撑高（宽度不变，横向比例不动）：
  *   - 整条：高 72dp、圆角 8dp、左右内边距 24dp
  *   - 左：`◀ 24° ▶` —— 温度大字 32sp，两侧各一个箭头用来减 / 加
- *   - 中：「车内温度 32.5℃」12sp 次要文字
+ *   - 中：「目前车内温度 32.5℃」13.5sp 次要文字，在剩余宽度内居中
  *   - 右：34dp 圆形按钮 + 22dp 四叶风扇（**唯一**的空调开关）
  *
  * 温度是「待下发」的：车端没有单独的调温指令，温度只是「开空调」指令里的一个字段，
@@ -119,39 +122,52 @@ fun AcQuickCard(
             .clip(RoundedCornerShape(8.dp))
             // 与胎压 / 近7天 / 相伴卡同一套卡片底：白里带一点主题色，描边也用主题色
             .background(C.panelBg, RoundedCornerShape(8.dp))
-            // 左侧留给箭头，右边距略小于左边，让风扇钮不显得贴边
-            .padding(start = 14.dp, end = 20.dp),
+            // 左右内边距一致：左边是箭头图标框、右边是 34dp 圆形按钮，取同一数值后
+            // 两端到卡片边缘的视觉留白才对称
+            .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Start,
     ) {
         // 左：◀ 设定温度 ▶
+        // 数字给一个最小宽度并在槽内居中：`°` 是上标字形，右侧天然比左侧空，
+        // 直接靠字形排会让两颗箭头到数字的间隙一宽一窄；定宽之后两侧间隙都是 3.5dp，
+        // 箭头的位置也固定，「16°」→「32°」不会左右跳
         TempArrow(
             icon = Icons.Filled.KeyboardArrowLeft,
             description = "降低设定温度",
             enabled = !busy && AcTempDraft.canStep(target, -1),
             onClick = { onStep(-1) },
         )
+        Spacer(Modifier.width(TEMP_SIDE_GAP))
         Text(
             text = "$target°",
+            modifier = Modifier.widthIn(min = TEMP_SLOT_WIDTH),
             color = C.textPrimary,
             fontSize = 30.sp,
             fontWeight = FontWeight.Normal,
             letterSpacing = (-0.6).sp,
+            textAlign = TextAlign.Center,
             maxLines = 1,
         )
+        Spacer(Modifier.width(TEMP_SIDE_GAP))
         TempArrow(
             icon = Icons.Filled.KeyboardArrowRight,
             description = "升高设定温度",
             enabled = !busy && AcTempDraft.canStep(target, 1),
             onClick = { onStep(1) },
+            // `°` 是上标字形，右侧自带一小段空白，箭头按包围盒排会显得离数字更远；
+            // 往左收 2dp 之后，两侧的视觉间隙才一致（只动绘制位置，布局占位不变）
+            modifier = Modifier.offset(x = (-2).dp),
         )
 
-        Spacer(Modifier.width(10.dp))
-        // 中：车内温度（占剩余宽度，窄屏优先省略而不是把风扇挤出去）
+        Spacer(Modifier.width(8.dp))
+        // 中：目前车内温度（占剩余宽度并居中；窄屏优先省略，而不是把风扇挤出去）
         Text(
-            text = "车内温度 $indoor℃",
+            text = "目前车内温度 $indoor℃",
             color = C.textSecondary,
-            fontSize = 12.sp,
+            fontSize = 13.5.sp,
+            lineHeight = 18.sp,
+            textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -198,10 +214,12 @@ private fun TempArrow(
     description: String,
     enabled: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val C = LocalAppColors.current
     Box(
         modifier = Modifier
+            .then(modifier)
             .size(28.dp)
             .clip(CircleShape)
             .clickable(enabled = enabled, onClick = onClick),
@@ -216,6 +234,15 @@ private fun TempArrow(
         )
     }
 }
+
+/** 温度数字与两侧箭头之间的固定间隙（左、右各一份，必须一致）。 */
+private val TEMP_SIDE_GAP = 2.dp
+
+/**
+ * 温度数字的最小宽度：让两颗箭头的位置不受字形宽度影响（不同机型字体下「32°」宽 44~50dp）。
+ * 用 widthIn(min) 而不是 width：字体特别宽时宁可整条串宽一点，也不能把 `°` 裁掉。
+ */
+private val TEMP_SLOT_WIDTH = 48.dp
 
 /** 关闭态圆形按钮的底色：浅色主题用略深于卡片的浅灰，深色主题用一层淡白压出圆盘。 */
 private fun fanCircleBg(isDark: Boolean): Color =

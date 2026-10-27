@@ -8,7 +8,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,7 +24,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -45,11 +43,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,10 +57,11 @@ import kotlinx.coroutines.launch
 private const val FEEDBACK_URL = "https://wj.qq.com/s2/28372168/dzhz/"
 
 /**
- * 「我的」页面：入口列表 —— 设置 / 个性化 / 支持开发者 / 开源协议与致谢 / 意见反馈 / 关于，
- * 其中「意见反馈」直接跳外部问卷，「关于」内嵌「免责声明」「隐私条款」两个子入口，
- * 其余项都下沉到各自的二级页；页面顶部是头像（可换内置卡通头像或相册照片），
- * 页面底部保留退出登录。
+ * 「我的」页面：入口列表 —— 设置 / 个性化 / 关于（「关于」内嵌「免责声明」「隐私条款」两个子入口），
+ * 以及页脚的作者致谢；页面顶部是头像（可换内置卡通头像或相册照片），底部保留退出登录。
+ *
+ * 「支持开发者」「开源协议与致谢」「意见反馈」「QQ 交流群」在自用版本里统一隐藏，
+ * 由 [SHOW_DEV_ENTRIES] 控制，页面实现仍然保留。
  */
 @Composable
 fun ProfileScreen(
@@ -200,31 +198,35 @@ fun ProfileScreen(
                 "外观模式、四季主题与动态背景",
             ) { onOpenPage(SettingsPage.PERSONALIZATION) }
             Spacer(Modifier.height(12.dp))
-            // 支持开发者：紧跟在「个性化」之后，两个都是"想帮作者"的入口
-            ProfileItem(
-                R.drawable.ic_support,
-                "支持开发者",
-                "软件完全免费，如果帮到了你，请作者喝杯咖啡",
-            ) { onOpenPage(SettingsPage.SUPPORT) }
-            Spacer(Modifier.height(12.dp))
-            ProfileItem(
-                R.drawable.ic_opensource,
-                "开源协议与致谢",
-                "基于开源项目二次开发，感谢原作者",
-            ) { onOpenPage(SettingsPage.OPEN_SOURCE) }
-            Spacer(Modifier.height(12.dp))
-            // 意见反馈：腾讯问卷，用系统浏览器打开；设备上没浏览器时会明确提示，而不是点了没反应。
-            // 紧挨「关于」上方：都是"最后再看一眼"的位置，用户想吐槽时往下翻一眼就能找到。
-            ProfileItem(
-                R.drawable.ic_feedback,
-                "意见反馈",
-                "填写问卷，反馈问题或提出功能建议",
-            ) {
-                if (!runtime.openExternal(FEEDBACK_URL)) {
-                    Toast.makeText(context, "没有找到可用的浏览器", Toast.LENGTH_SHORT).show()
+
+            // 支持开发者 / 开源协议与致谢 / 意见反馈：三个都是「面向外部」的模块，
+            // 零控转为纯自用后统一隐藏（开关见 SHOW_DEV_ENTRIES），页面本身仍保留
+            if (SHOW_DEV_ENTRIES) {
+                ProfileItem(
+                    R.drawable.ic_support,
+                    "支持开发者",
+                    "软件完全免费，如果帮到了你，请作者喝杯咖啡",
+                ) { onOpenPage(SettingsPage.SUPPORT) }
+                Spacer(Modifier.height(12.dp))
+                ProfileItem(
+                    R.drawable.ic_opensource,
+                    "开源协议与致谢",
+                    "基于开源项目二次开发，感谢原作者",
+                ) { onOpenPage(SettingsPage.OPEN_SOURCE) }
+                Spacer(Modifier.height(12.dp))
+                // 意见反馈：腾讯问卷，用系统浏览器打开；设备上没浏览器时会明确提示，而不是点了没反应
+                ProfileItem(
+                    R.drawable.ic_feedback,
+                    "意见反馈",
+                    "填写问卷，反馈问题或提出功能建议",
+                ) {
+                    if (!runtime.openExternal(FEEDBACK_URL)) {
+                        Toast.makeText(context, "没有找到可用的浏览器", Toast.LENGTH_SHORT).show()
+                    }
                 }
+                Spacer(Modifier.height(12.dp))
             }
-            Spacer(Modifier.height(12.dp))
+
             // 关于放最底部：内嵌「免责声明」「隐私条款」入口
             ProfileItem(
                 R.drawable.ic_info,
@@ -232,37 +234,16 @@ fun ProfileScreen(
                 "版本信息、免责声明与隐私条款",
             ) { onOpenPage(SettingsPage.ABOUT) }
 
-            // 页脚：交流群（放在所有入口之下，居中的小字，不抢主内容的视觉）。
-            // 整行可点：点一下就把群号复制到剪贴板，省得手动选数字。
-            Spacer(Modifier.height(26.dp))
-            val qqGroup = "179731222"
-            val clipboard = LocalClipboardManager.current
-            val context = LocalContext.current
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
-                        clipboard.setText(AnnotatedString(qqGroup))
-                        Toast.makeText(context, "已复制群号 $qqGroup", Toast.LENGTH_SHORT).show()
-                    }
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "QQ交流群：$qqGroup",
-                    color = LocalAppColors.current.textSecondary.copy(alpha = 0.75f),
-                    fontSize = 12.sp,
-                )
-                Spacer(Modifier.width(5.dp))
-                Icon(
-                    Icons.Filled.ContentCopy,
-                    contentDescription = "复制群号",
-                    tint = LocalAppColors.current.textSecondary.copy(alpha = 0.55f),
-                    modifier = Modifier.size(13.dp),
-                )
-            }
+            // 页脚：作者与致谢。居中小字，压在所有入口最下方，不抢主内容的视觉。
+            Spacer(Modifier.height(28.dp))
+            Text(
+                text = "由夏明亮开发，献给我最爱的老婆和圆圆。",
+                modifier = Modifier.fillMaxWidth(),
+                color = LocalAppColors.current.textSecondary.copy(alpha = 0.72f),
+                fontSize = 11.5.sp,
+                lineHeight = 18.sp,
+                textAlign = TextAlign.Center,
+            )
 
             Spacer(Modifier.height(24.dp))
 
