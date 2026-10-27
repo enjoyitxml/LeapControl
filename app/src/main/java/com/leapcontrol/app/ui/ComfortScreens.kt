@@ -38,6 +38,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -572,10 +573,32 @@ fun ClimateScreen(
     /** 「关闭空调」指令在途。 */
     busyOff: Boolean = false,
     onOpenScheduledAc: () -> Unit = {},
+    /**
+     * 开关空调时把当前设定温度一起下发。为空则退回 [onCommand]（不带温度）。
+     *
+     * 车端没有单独的调温指令，温度只是「开空调」指令里的字段，所以关机态点调温箭头
+     * 只改界面上的草稿，真正下发必须走这里。详见 [AcTempDraft]。
+     */
+    onAcPower: ((Boolean, Int) -> Unit)? = null,
 ) {
     val C = LocalAppColors.current
     val acOn = status?.acOn
-    val target = status?.acTargetTemp?.toIntOrNull() ?: 24
+
+    // 关机态调出来的预设温度：只存在界面上，等「开启空调」时带下去
+    val remoteTemp = AcTempDraft.parse(status?.acTargetTemp)
+    var pendingTemp by remember { mutableStateOf<Int?>(null) }
+    val target = AcTempDraft.shown(acOn == true, remoteTemp, pendingTemp)
+    // 开机后车端回报了同一个温度，就把草稿交还给车端
+    LaunchedEffect(acOn, remoteTemp, pendingTemp) {
+        if (acOn == true && pendingTemp != null && remoteTemp == pendingTemp) pendingTemp = null
+    }
+    // 空调开着 = 在调温，立即下发；关着 = 只改草稿，不发指令
+    val onStep: (Int) -> Unit = { delta ->
+        val next = AcTempDraft.step(target, delta)
+        if (next != target) {
+            if (acOn == true) onTempChange(next) else pendingTemp = next
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -617,7 +640,7 @@ fun ClimateScreen(
         }
 
         Spacer(Modifier.height(12.dp))
-        ClimateTempCard(target = target, busy = busy, onTempChange = onTempChange)
+        ClimateTempCard(target = target, busy = busy, onTempChange = onStep)
 
         Spacer(Modifier.height(12.dp))
         // 空调电源：显式「开启 / 关闭」两个按钮，绝不按推断状态取反。
@@ -627,8 +650,9 @@ fun ClimateScreen(
             acOn = acOn,
             busyOn = busyOn,
             busyOff = busyOff,
-            onAcOn = { onCommand("acOn") },
-            onAcOff = { onCommand("acOff") },
+            // 开启时把界面上的设定温度一并带下去（车端只有「开空调带温度」这一种调温方式）
+            onAcOn = { if (onAcPower != null) onAcPower(true, target) else onCommand("acOn") },
+            onAcOff = { if (onAcPower != null) onAcPower(false, target) else onCommand("acOff") },
         )
 
         Spacer(Modifier.height(12.dp))

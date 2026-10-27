@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import com.leapcontrol.app.AmapPoi
+import com.leapcontrol.app.ApkUpdater
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.GitHubUpdate
@@ -498,6 +499,30 @@ class AppRuntime(context: Context) {
         )
         true
     }.getOrDefault(false)
+
+    /**
+     * 下载更新包到本地。
+     *
+     * 仓库已私有，网页直链用浏览器打不开（要 GitHub 登录态），所以走 GitHub API
+     * 的附件接口 + 构建时注入的只读令牌。结果用 [Result] 返回，由调用处给用户看错误文案。
+     */
+    suspend fun downloadUpdate(
+        info: AppUpdateInfo,
+        onProgress: (ApkUpdater.Progress) -> Unit = {},
+    ): Result<File> = withContext(Dispatchers.IO) {
+        runCatching { ApkUpdater.download(appContext, info, onProgress) }
+    }
+
+    /**
+     * 唤起系统安装器。
+     *
+     * 返回 false 有两种可能：文件不在了，或者系统还没允许本应用「安装未知应用」
+     * （此时 [ApkUpdater.install] 已经跳到授权页，用户回来再点一次即可）。
+     */
+    fun installUpdate(file: File): Boolean = ApkUpdater.install(appContext, file)
+
+    /** 当前是否已获得「安装未知应用」授权。 */
+    fun canInstallUpdate(): Boolean = ApkUpdater.canInstall(appContext)
 
     // ---------------- 车况快照（跨页面 / 跨 Tab 保持） ----------------
     //
