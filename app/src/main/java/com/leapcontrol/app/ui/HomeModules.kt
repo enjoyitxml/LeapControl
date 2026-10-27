@@ -144,6 +144,7 @@ fun HomeModuleSection(
                 energy = energy,
                 acPlan = acPlan,
                 callbacks = callbacks,
+                capabilities = capabilities,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 12.dp),
@@ -198,6 +199,7 @@ private fun HomeModuleCard(
     energy: MileageEnergySummary?,
     acPlan: ScheduledAcPlan,
     callbacks: ModuleCallbacks,
+    capabilities: VehicleCapabilities = VehicleCapabilities.EMPTY,
     modifier: Modifier = Modifier,
 ) {
     when (spec.id) {
@@ -219,7 +221,7 @@ private fun HomeModuleCard(
         HomeModules.SEAT.id -> SeatModuleCard(status, callbacks.onOpenSeat, modifier)
         HomeModules.TIRE.id -> TireModuleCard(status, callbacks.onOpenTire, modifier)
         HomeModules.MILEAGE.id -> MileageModuleCard(status, energy, callbacks.onRefreshEnergy, modifier)
-        HomeModules.HEALTH.id -> HealthModuleCard(status, callbacks.onOpenHealth, modifier)
+        HomeModules.HEALTH.id -> HealthModuleCard(status, capabilities, callbacks.onOpenHealth, modifier)
         HomeModules.FRIDGE.id -> FridgeModuleCard(status, callbacks.onOpenFridge, modifier)
         HomeModules.SCHEDULED_AC.id -> ScheduledAcModuleCard(acPlan, callbacks.onOpenScheduledAc, modifier)
         HomeModules.CHARGING.id -> ChargingModuleCard(status, callbacks.onOpenCharging, modifier)
@@ -431,8 +433,13 @@ private fun formatNumber(value: Double): String =
 
 // ---- 车辆健康 ----
 @Composable
-private fun HealthModuleCard(status: CarStatus?, onClick: () -> Unit, modifier: Modifier) {
-    val report = remember(status) { VehicleHealthDiagnostics.evaluate(status) }
+private fun HealthModuleCard(
+    status: CarStatus?,
+    capabilities: VehicleCapabilities = VehicleCapabilities.EMPTY,
+    onClick: () -> Unit,
+    modifier: Modifier,
+) {
+    val report = remember(status, capabilities) { VehicleHealthDiagnostics.evaluate(status, capabilities) }
     ModuleFrame(
         modifier = modifier,
         title = "车辆健康",

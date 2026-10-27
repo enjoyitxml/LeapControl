@@ -533,7 +533,7 @@ fun HomeScreen(
         }
 
         // 首页入口处的副标题：体检摘要与升级状态（避免为此多请求接口）
-        val healthReport = remember(status) { VehicleHealthDiagnostics.evaluate(status) }
+        val healthReport = remember(status, capabilities) { VehicleHealthDiagnostics.evaluate(status, capabilities) }
         val healthSummary = healthReport.summary +
             (healthReport.issues.takeIf { it.isNotEmpty() }?.let { "（${it.size} 项待处理）" } ?: "")
         val otaSubtitle = otaInfo?.let {
@@ -675,6 +675,7 @@ fun HomeScreen(
         } else if (showVehicleHealth) {
             VehicleHealthScreen(
                 status = status,
+                capabilities = capabilities,
                 busy = controlling,
                 onFix = { runHealthFix(it) },
                 onRefresh = { refresh(force = true) },
