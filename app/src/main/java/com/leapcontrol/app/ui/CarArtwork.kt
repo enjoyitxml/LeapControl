@@ -39,6 +39,109 @@ private fun tireStateColor(tire: TireInfo?): Color = when {
     else -> TireOk
 }
 
+/** 车身俯视轮廓。位置换算由调用方传入的 X/Y 完成，两个俯视图共用同一套坐标。 */
+private fun carBodyPath(X: (Float) -> Float, Y: (Float) -> Float): Path = Path().apply {
+    moveTo(X(60f), Y(10f))
+    cubicTo(X(72f), Y(10f), X(82f), Y(17f), X(87f), Y(29f))
+    lineTo(X(92f), Y(46f))
+    lineTo(X(92f), Y(200f))
+    cubicTo(X(92f), Y(224f), X(86f), Y(236f), X(74f), Y(240f))
+    lineTo(X(46f), Y(240f))
+    cubicTo(X(34f), Y(236f), X(28f), Y(224f), X(28f), Y(200f))
+    lineTo(X(28f), Y(46f))
+    cubicTo(X(33f), Y(17f), X(48f), Y(10f), X(60f), Y(10f))
+    close()
+}
+
+/**
+ * 透明车模（首页胎压卡用）：只留一层极淡的车身轮廓，四轮按状态点亮。
+ *
+ * 和 [TireTopView] 的深色实心车不同，这里刻意去掉填充感 —— 车身按 5% 不透明度铺底、
+ * 边框 22% 描线，卡片底色直接透上来，看起来像一块玻璃模型；真正的信息量全压在四个轮子上。
+ */
+@Composable
+fun TireCarOutline(
+    tires: List<TireInfo>,
+    modifier: Modifier = Modifier,
+) {
+    val C = LocalAppColors.current
+    val ink = C.textPrimary
+    // 正常＝淡绿（深色主题下淡绿发灰，换成系统的亮绿）
+    val okColor = if (C.isDark) Color(0xFF30D158) else Color(0xFF5AD98C)
+    val badColor = Color(0xFFFF5A5F)
+    val unknownColor = ink.copy(alpha = 0.16f)
+
+    Canvas(modifier = modifier) {
+        val scale = minOf(size.width / TOP_W, size.height / TOP_H)
+        val offX = (size.width - TOP_W * scale) / 2f
+        val offY = (size.height - TOP_H * scale) / 2f
+        fun X(v: Float) = offX + v * scale
+        fun Y(v: Float) = offY + v * scale
+        fun S(v: Float) = v * scale
+
+        // ---- 车身：几乎透明的玻璃壳 ----
+        val body = carBodyPath(::X, ::Y)
+        drawPath(body, ink.copy(alpha = 0.05f))
+        drawPath(body, ink.copy(alpha = 0.22f), style = Stroke(width = S(1.2f)))
+
+        // ---- 前风挡 ----
+        drawPath(
+            Path().apply {
+                moveTo(X(40f), Y(64f))
+                lineTo(X(80f), Y(64f))
+                lineTo(X(87f), Y(96f))
+                lineTo(X(33f), Y(96f))
+                close()
+            },
+            ink.copy(alpha = 0.07f),
+        )
+        // ---- 车顶（只描线，不填充，保持通透）----
+        drawRoundRect(
+            color = ink.copy(alpha = 0.16f),
+            topLeft = Offset(X(33f), Y(96f)),
+            size = Size(S(54f), S(62f)),
+            cornerRadius = CornerRadius(S(5f), S(5f)),
+            style = Stroke(width = S(1f)),
+        )
+        // ---- 后风挡 ----
+        drawPath(
+            Path().apply {
+                moveTo(X(33f), Y(158f))
+                lineTo(X(87f), Y(158f))
+                lineTo(X(80f), Y(184f))
+                lineTo(X(40f), Y(184f))
+                close()
+            },
+            ink.copy(alpha = 0.07f),
+        )
+
+        // ---- 四个轮胎 ----
+        TIRE_SLOTS.forEach { (label, slot) ->
+            val tire = tires.firstOrNull { it.position == label }
+            val color = when {
+                tire == null -> unknownColor
+                tire.warning -> badColor
+                else -> okColor
+            }
+            val left = slot[0]
+            val top = slot[1]
+            // 状态光晕：正常时也带一点，四个轮子才有「亮着」的感觉
+            drawRoundRect(
+                color.copy(alpha = 0.20f),
+                topLeft = Offset(X(left - 3.5f), Y(top - 3.5f)),
+                size = Size(S(21f), S(41f)),
+                cornerRadius = CornerRadius(S(7f), S(7f)),
+            )
+            drawRoundRect(
+                color,
+                topLeft = Offset(X(left), Y(top)),
+                size = Size(S(14f), S(34f)),
+                cornerRadius = CornerRadius(S(4f), S(4f)),
+            )
+        }
+    }
+}
+
 /**
  * 胎压俯视示意图：车头朝上，四个轮胎按状态着色
  * （正常绿色 / 异常红色 / 无数据灰色）。
@@ -57,18 +160,7 @@ fun TireTopView(
         fun S(v: Float) = v * scale
 
         // ---- 车身（俯视轮廓） ----
-        val body = Path().apply {
-            moveTo(X(60f), Y(10f))
-            cubicTo(X(72f), Y(10f), X(82f), Y(17f), X(87f), Y(29f))
-            lineTo(X(92f), Y(46f))
-            lineTo(X(92f), Y(200f))
-            cubicTo(X(92f), Y(224f), X(86f), Y(236f), X(74f), Y(240f))
-            lineTo(X(46f), Y(240f))
-            cubicTo(X(34f), Y(236f), X(28f), Y(224f), X(28f), Y(200f))
-            lineTo(X(28f), Y(46f))
-            cubicTo(X(33f), Y(17f), X(48f), Y(10f), X(60f), Y(10f))
-            close()
-        }
+        val body = carBodyPath(::X, ::Y)
         drawPath(body, Color(0xFF2A2D34))
         drawPath(body, Color(0xFF454A55), style = Stroke(width = S(1.4f)))
 

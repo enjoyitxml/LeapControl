@@ -1019,6 +1019,24 @@ fun HomeScreen(
                 },
             )
 
+            // ---- 胎压监测卡（左半）+ 相伴时光卡（右半）----
+            // 胎压卡点进去是胎压详情页（四轮数值 + 温度 + 状态）；
+            // 相伴时光卡的提车天数 / 累计公里都取自里程能耗接口，卡片本身不发指令。
+            Spacer(Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                TireQuickCard(
+                    status = currentStatus,
+                    modifier = Modifier.weight(1f),
+                    onOpen = { showTire = true },
+                )
+                Spacer(Modifier.width(12.dp))
+                OwnershipCard(
+                    status = currentStatus,
+                    energy = energySummary,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
             // ---- 功能模块区（页面最下方）：横向滑动的模块卡 + 指示条 + 自定义按钮 ----
             // 空调 / 座椅 / 胎压 / 里程能耗 / 健康 / 充电 / 定时空调 / 冰箱 / 哨兵 …
             // 全部按「空调卡」的尺寸与圆角渲染，顺序、增删由底部「自定义模块」调整。
