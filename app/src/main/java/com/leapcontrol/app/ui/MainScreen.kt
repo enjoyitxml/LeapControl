@@ -289,18 +289,30 @@ fun MainScreen(
                     animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
                     label = "sceneAlpha",
                 )
-                if (season.scene != SceneKind.NONE) {
-                    // ---- 雾化遮罩：以车模正中心为圆心，向外圆弧发散 ----
-                    // 圆心处完全通透（车模不被压灰），越往四周越浓，屏幕顶端最浓。
-                    // 取主题渐变的最顶色，场景是「淡出进背景」而不是被压上一块别的颜色。
-                    val veilColor = season.gradient(dark).first()
-                    val veilRadiusY = with(density) { HEADER_VEIL_RADIUS_Y.toPx() }
-                    val veilCenterY = statusBarTopPx + with(density) {
-                        (HEADER_VEIL_CONTENT_HEIGHT + CAR_ARTWORK_HEIGHT / 2).toPx()
-                    }
-                    val veilBrush = remember(veilColor, veilRadiusY, veilCenterY, season.veilAlphaScale) {
-                        radialVeilBrush(veilColor, veilCenterY, veilRadiusY, season.veilAlphaScale)
-                    }
+                // ---- 雾化遮罩：以车模正中心为圆心，向外圆弧发散 ----
+                // 圆心处完全通透（车模不被压灰），越往四周越浓，屏幕顶端最浓。
+                // 取主题渐变的最顶色，画面是「淡出进背景」而不是被压上一块别的颜色。
+                val veilColor = season.gradient(dark).first()
+                val veilRadiusY = with(density) { HEADER_VEIL_RADIUS_Y.toPx() }
+                val veilCenterY = statusBarTopPx + with(density) {
+                    (HEADER_VEIL_CONTENT_HEIGHT + CAR_ARTWORK_HEIGHT / 2).toPx()
+                }
+                val veilBrush = remember(veilColor, veilRadiusY, veilCenterY, season.veilAlphaScale) {
+                    radialVeilBrush(veilColor, veilCenterY, veilRadiusY, season.veilAlphaScale)
+                }
+
+                if (season.video) {
+                    // ---- 视频主题（旧版四季 / 星空实拍视频，排在动态主题之后）----
+                    // 满屏播放，同样用雾化 + 下缘渐隐收到空调卡上沿，
+                    // 和其他主题一样不压住宿主内容。
+                    ThemeVideoBackdrop(
+                        theme = season,
+                        dark = dark,
+                        paused = !resumed || !sceneAnimated,
+                        veilBrush = veilBrush,
+                        modifier = Modifier.alpha(sceneAlpha),
+                    )
+                } else if (season.scene != SceneKind.NONE) {
                     ThemeBackdrop(
                         theme = season,
                         dark = dark,

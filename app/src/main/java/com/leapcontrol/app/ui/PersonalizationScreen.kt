@@ -146,6 +146,31 @@ fun PersonalizationScreen(
 
         Spacer(Modifier.height(18.dp))
 
+        // ---- 视频主题：旧版四季 + 星空实拍视频，排在动态主题之后 ----
+        SettingsSection(title = "视频主题", desc = "5 套 · 旧版四季与星空的实拍视频") {
+            SettingsCard {
+                ThemePickGrid(
+                    themes = SeasonThemes.VIDEO,
+                    selectedId = activeSeasonId,
+                    onPick = { id ->
+                        onSeasonChange(id)
+                        // 星空视频是深色调，选中它同时记成夜间自动切换的目标
+                        if (SeasonThemes.byId(id).night) onNightThemeChange(id)
+                    },
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "最初那 5 套实拍视频背景原样保留，排在动态主题之后；视频只做背景，" +
+                        "静音循环播放，画面同样收到空调控件上沿，不会压住车模和数字。",
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
         // ---- 相伴卡背景 ----
         SettingsSection(title = "相伴卡背景", desc = "首页「我与我的爱车走过」") {
             SettingsCard {
@@ -401,6 +426,21 @@ fun ThemePickGrid(
                             if (theme.animated) {
                                 Text(
                                     "动态",
+                                    color = Color.White,
+                                    fontSize = 8.5.sp,
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(4.dp)
+                                        .background(
+                                            Color.Black.copy(alpha = 0.32f),
+                                            RoundedCornerShape(4.dp),
+                                        )
+                                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                                )
+                            }
+                            if (theme.video) {
+                                Text(
+                                    "视频",
                                     color = Color.White,
                                     fontSize = 8.5.sp,
                                     modifier = Modifier

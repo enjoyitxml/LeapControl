@@ -6,15 +6,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 
 /**
- * 车辆图形素材。
+ * 车辆图形素材（俯视图）。
  *
- * 内置剪影（CarSilhouette）已按需求删除：官方 carpicture 接口拉不到车模图时
- * 首页直接不显示车模，不再用矢量剪影兜底。这里只保留胎压用的俯视图。
+ * 内置侧视剪影已删除：官方 carpicture 接口拉不到车模图时首页直接不显示车模。
+ * 这里只保留胎压用的俯视图 —— 一张图被两处复用：
+ *  - 首页胎压卡：[TireCarOutline]（近乎透明的玻璃壳，信息量全在四个轮子上）；
+ *  - 胎压详情页：[TireTopView]（深色实心车 + 轮毂纹理）。
+ *
+ * 俯视造型要点（改坐标前先读一遍，否则很容易又画成「胶囊」）：
+ *  - 车头接近全宽（78/96），前缘是**很缓的弧**而不是尖鼻子，两侧往前收的过程拉长到
+ *    27 个单位，所以看着像真车的前脸而不是被捏扁的船头；
+ *  - 车头两角各有一个**斜置车灯**（梯形，跟着翼子板往外斜），这是俯视下区分前后最有效的一笔；
+ *  - 车尾比车头更方：只做 ~10 单位的小圆角，并留一块**后备箱盖**（带缝线的面板），
+ *    一眼就能看出哪头是尾；
+ *  - 顶棚是一整块**天幕玻璃**（前风挡 → 后风挡连通的大面板），带竖向渐变和一道斜向反光，
+ *    而不是一个描线的方块 —— 这是新能源车最显著的特征。
  */
 // ---------------- 胎压俯视图 ----------------
 
@@ -53,48 +65,69 @@ private fun tireStateColor(tire: TireInfo?): Color = when {
 /**
  * 车身俯视轮廓。
  *
- * 刻意避免「两头都是大圆角」的胶囊感 —— 那是模型车，不是真车：
- *  - 车头：前缘几乎是平的，只在两端做小圆角，然后由翼子板向前外扩（前窄后宽）；
- *  - 车身：两侧腰线基本笔直，中间几乎没有弧度；
- *  - 车尾：比车头更宽、更方，只做很小的收角。
+ * 车头（上）：前缘是一段很缓的凸弧，两端圆角半径 ~14，翼子板在 27 个单位里慢慢外扩到全宽；
+ * 车身：两侧腰线笔直；
+ * 车尾（下）：几乎是直角收尾（圆角只有 ~10），比车头更方。
  */
 private fun carBodyPath(X: (Float) -> Float, Y: (Float) -> Float): Path = Path().apply {
-    // 车头前缘：几乎是直线，两角只做很小的圆角（大圆角会立刻变成「胶囊」）
-    moveTo(26f, 6.5f)
-    cubicTo(X(40f), Y(5.5f), X(80f), Y(5.5f), X(94f), Y(6.5f))
-    // 右前翼子板：前脸本来就接近全宽，只在一小段里外扩
-    cubicTo(X(101f), Y(8f), X(106f), Y(15f), X(107f), Y(26f))
-    // 右侧腰线：笔直
-    lineTo(X(108f), Y(198f))
-    // 右后：只在最后收一点，圆角比车头更小
-    cubicTo(X(108f), Y(216f), X(107.5f), Y(228f), X(105f), Y(235f))
-    cubicTo(X(103f), Y(240f), X(100f), Y(242.5f), X(94f), Y(243.5f))
-    // 车尾：平直、比车头略宽
-    lineTo(X(26f), Y(243.5f))
-    cubicTo(X(20f), Y(242.5f), X(17f), Y(240f), X(15f), Y(235f))
-    cubicTo(X(12.5f), Y(228f), X(12f), Y(216f), X(12f), Y(198f))
+    // 车头：从左前角起，横穿前脸（中间比两端再往前 6 个单位，形成很缓的鼻梁）
+    moveTo(X(18f), Y(17f))
+    cubicTo(X(29f), Y(10f), X(91f), Y(10f), X(102f), Y(17f))
+    // 右前翼子板：从 84 宽慢慢外扩到 96 宽
+    cubicTo(X(106.5f), Y(22f), X(108f), Y(30f), X(108f), Y(40f))
+    // 右侧腰线
+    lineTo(X(108f), Y(233f))
+    // 右后：小圆角，尾部明显更方
+    cubicTo(X(108f), Y(239f), X(105.5f), Y(243f), X(98f), Y(243f))
+    // 车尾：平直
+    lineTo(X(22f), Y(243f))
+    cubicTo(X(14.5f), Y(243f), X(12f), Y(239f), X(12f), Y(233f))
     // 左侧腰线
-    lineTo(X(13f), Y(26f))
-    cubicTo(X(14f), Y(15f), X(19f), Y(8f), X(26f), Y(6.5f))
+    lineTo(X(12f), Y(40f))
+    cubicTo(X(12f), Y(30f), X(13.5f), Y(22f), X(18f), Y(17f))
     close()
 }
 
-/** 前风挡（上窄下宽的梯形）与后风挡共用一套坐标，两个俯视图一致。 */
+/** 前风挡：上窄下宽的梯形，底边直接接到天幕。 */
 private fun windshieldPath(X: (Float) -> Float, Y: (Float) -> Float): Path = Path().apply {
-    moveTo(X(41f), Y(63f))
-    lineTo(X(79f), Y(63f))
-    lineTo(X(87f), Y(96f))
-    lineTo(X(33f), Y(96f))
+    moveTo(X(40f), Y(64f))
+    lineTo(X(80f), Y(64f))
+    lineTo(X(87f), Y(90f))
+    lineTo(X(33f), Y(90f))
     close()
 }
 
+/** 后风挡：与天幕下沿相接。 */
 private fun rearWindowPath(X: (Float) -> Float, Y: (Float) -> Float): Path = Path().apply {
-    moveTo(X(33f), Y(158f))
-    lineTo(X(87f), Y(158f))
-    lineTo(X(79f), Y(184f))
-    lineTo(X(41f), Y(184f))
+    moveTo(X(33f), Y(164f))
+    lineTo(X(87f), Y(164f))
+    lineTo(X(80f), Y(190f))
+    lineTo(X(40f), Y(190f))
     close()
 }
+
+/** 天幕（整块玻璃车顶）：覆盖车顶并把前后风挡连成一片。 */
+private const val ROOF_LEFT = 32f
+private const val ROOF_RIGHT = 88f
+private const val ROOF_TOP = 84f
+private const val ROOF_BOTTOM = 172f
+
+/** 左前车灯：贴着翼子板斜着放，外宽内窄。右前按 X 镜像。 */
+private fun headlightPath(X: (Float) -> Float, Y: (Float) -> Float, mirror: Boolean): Path =
+    Path().apply {
+        fun px(v: Float) = if (mirror) TOP_W - v else v
+        moveTo(X(px(16.5f)), Y(31f))
+        lineTo(X(px(31f)), Y(21f))
+        lineTo(X(px(33.5f)), Y(26.5f))
+        lineTo(X(px(19f)), Y(36.5f))
+        close()
+    }
+
+/** 后备箱盖：尾部一块带缝线的面板。 */
+private const val TRUNK_LEFT = 18f
+private const val TRUNK_RIGHT = 102f
+private const val TRUNK_TOP = 214f
+private const val TRUNK_BOTTOM = 238f
 
 /**
  * 透明车模（首页胎压卡用）：只留一层极淡的车身轮廓，四轮按状态着色。
@@ -144,22 +177,62 @@ fun TireCarOutline(
         drawPath(body, ink.copy(alpha = 0.05f))
         drawPath(body, ink.copy(alpha = 0.22f), style = Stroke(width = S(1.2f)))
 
-        // ---- 引擎盖缝 / 行李箱缝：两条很淡的横线，轮廓立刻从「圆角板」变成车 ----
-        drawLine(ink.copy(alpha = 0.10f), Offset(X(18f), Y(32f)), Offset(X(102f), Y(32f)), S(1f))
-        drawLine(ink.copy(alpha = 0.10f), Offset(X(19f), Y(216f)), Offset(X(101f), Y(216f)), S(1f))
+        // ---- 前舱盖后缘 / 后备箱前缘：两条很淡的横线，轮廓立刻从「圆角板」变成车 ----
+        drawLine(ink.copy(alpha = 0.09f), Offset(X(19f), Y(57f)), Offset(X(101f), Y(57f)), S(1f))
+        drawLine(ink.copy(alpha = 0.09f), Offset(X(19f), Y(210f)), Offset(X(101f), Y(210f)), S(1f))
 
         // ---- 前风挡 ----
         drawPath(windshieldPath(::X, ::Y), ink.copy(alpha = 0.07f))
-        // ---- 车顶（只描线，不填充，保持通透）----
+
+        // ---- 天幕：一整块玻璃车顶（竖向渐变 + 一道斜向反光）----
         drawRoundRect(
-            color = ink.copy(alpha = 0.16f),
-            topLeft = Offset(X(33f), Y(96f)),
-            size = Size(S(54f), S(62f)),
-            cornerRadius = CornerRadius(S(7f), S(7f)),
-            style = Stroke(width = S(1f)),
+            brush = Brush.verticalGradient(
+                colors = listOf(ink.copy(alpha = 0.15f), ink.copy(alpha = 0.05f)),
+                startY = Y(ROOF_TOP),
+                endY = Y(ROOF_BOTTOM),
+            ),
+            topLeft = Offset(X(ROOF_LEFT), Y(ROOF_TOP)),
+            size = Size(S(ROOF_RIGHT - ROOF_LEFT), S(ROOF_BOTTOM - ROOF_TOP)),
+            cornerRadius = CornerRadius(S(14f), S(14f)),
         )
+        drawRoundRect(
+            color = ink.copy(alpha = 0.18f),
+            topLeft = Offset(X(ROOF_LEFT), Y(ROOF_TOP)),
+            size = Size(S(ROOF_RIGHT - ROOF_LEFT), S(ROOF_BOTTOM - ROOF_TOP)),
+            cornerRadius = CornerRadius(S(14f), S(14f)),
+            style = Stroke(width = S(0.9f)),
+        )
+        // 反光：从左前斜向右后的一道光带，玻璃感全靠它
+        drawLine(
+            color = Color.White.copy(alpha = if (C.isDark) 0.10f else 0.55f),
+            start = Offset(X(42f), Y(100f)),
+            end = Offset(X(58f), Y(130f)),
+            strokeWidth = S(3.2f),
+        )
+
         // ---- 后风挡 ----
         drawPath(rearWindowPath(::X, ::Y), ink.copy(alpha = 0.07f))
+
+        // ---- 后备箱盖：尾部面板 + 中缝，车尾一下就认出来了 ----
+        drawRoundRect(
+            color = ink.copy(alpha = 0.04f),
+            topLeft = Offset(X(TRUNK_LEFT), Y(TRUNK_TOP)),
+            size = Size(S(TRUNK_RIGHT - TRUNK_LEFT), S(TRUNK_BOTTOM - TRUNK_TOP)),
+            cornerRadius = CornerRadius(S(6f), S(6f)),
+        )
+        drawRoundRect(
+            color = ink.copy(alpha = 0.15f),
+            topLeft = Offset(X(TRUNK_LEFT), Y(TRUNK_TOP)),
+            size = Size(S(TRUNK_RIGHT - TRUNK_LEFT), S(TRUNK_BOTTOM - TRUNK_TOP)),
+            cornerRadius = CornerRadius(S(6f), S(6f)),
+            style = Stroke(width = S(0.9f)),
+        )
+
+        // ---- 两个前车灯：俯视下分辨车头最直接的一笔 ----
+        val lampColor = if (C.isDark) Color(0xFFFFE9A8).copy(alpha = 0.55f)
+        else Color(0xFFFFC44D).copy(alpha = 0.70f)
+        drawPath(headlightPath(::X, ::Y, mirror = false), lampColor)
+        drawPath(headlightPath(::X, ::Y, mirror = true), lampColor)
 
         // ---- 四个轮胎 ----
         TIRE_SLOTS.forEach { (label, slot) ->
@@ -216,41 +289,51 @@ fun TireTopView(
 
         // ---- 前后风挡 ----
         drawPath(windshieldPath(::X, ::Y), Color(0xFF23262C))
-        // ---- 车顶 ----
-        drawRoundRect(
-            Color(0xFF32363E),
-            topLeft = Offset(X(33f), Y(96f)),
-            size = Size(S(54f), S(62f)),
-            cornerRadius = CornerRadius(S(7f), S(7f)),
-        )
-        // ---- 后风挡 ----
         drawPath(rearWindowPath(::X, ::Y), Color(0xFF23262C))
 
-        // ---- 前后灯 ----
+        // ---- 天幕：比车漆更亮的深色玻璃 + 斜向反光 ----
         drawRoundRect(
-            Color(0xFFFFF6D6).copy(alpha = 0.55f),
-            topLeft = Offset(X(21f), Y(14f)),
-            size = Size(S(18f), S(6f)),
-            cornerRadius = CornerRadius(S(3f), S(3f)),
+            brush = Brush.verticalGradient(
+                colors = listOf(Color(0xFF3A4356), Color(0xFF242B3A)),
+                startY = Y(ROOF_TOP),
+                endY = Y(ROOF_BOTTOM),
+            ),
+            topLeft = Offset(X(ROOF_LEFT), Y(ROOF_TOP)),
+            size = Size(S(ROOF_RIGHT - ROOF_LEFT), S(ROOF_BOTTOM - ROOF_TOP)),
+            cornerRadius = CornerRadius(S(14f), S(14f)),
         )
         drawRoundRect(
-            Color(0xFFFFF6D6).copy(alpha = 0.55f),
-            topLeft = Offset(X(81f), Y(14f)),
-            size = Size(S(18f), S(6f)),
-            cornerRadius = CornerRadius(S(3f), S(3f)),
+            color = Color(0xFF5A6478).copy(alpha = 0.55f),
+            topLeft = Offset(X(ROOF_LEFT), Y(ROOF_TOP)),
+            size = Size(S(ROOF_RIGHT - ROOF_LEFT), S(ROOF_BOTTOM - ROOF_TOP)),
+            cornerRadius = CornerRadius(S(14f), S(14f)),
+            style = Stroke(width = S(1f)),
+        )
+        drawLine(
+            color = Color(0xFFB9C6E0).copy(alpha = 0.22f),
+            start = Offset(X(42f), Y(98f)),
+            end = Offset(X(60f), Y(132f)),
+            strokeWidth = S(4f),
+        )
+
+        // ---- 后备箱盖 ----
+        drawRoundRect(
+            color = Color(0xFF32363E),
+            topLeft = Offset(X(TRUNK_LEFT), Y(TRUNK_TOP)),
+            size = Size(S(TRUNK_RIGHT - TRUNK_LEFT), S(TRUNK_BOTTOM - TRUNK_TOP)),
+            cornerRadius = CornerRadius(S(6f), S(6f)),
         )
         drawRoundRect(
-            Color(0xFFFF5A5F).copy(alpha = 0.5f),
-            topLeft = Offset(X(19f), Y(231f)),
-            size = Size(S(18f), S(6f)),
-            cornerRadius = CornerRadius(S(3f), S(3f)),
+            color = Color(0xFF454A55).copy(alpha = 0.8f),
+            topLeft = Offset(X(TRUNK_LEFT), Y(TRUNK_TOP)),
+            size = Size(S(TRUNK_RIGHT - TRUNK_LEFT), S(TRUNK_BOTTOM - TRUNK_TOP)),
+            cornerRadius = CornerRadius(S(6f), S(6f)),
+            style = Stroke(width = S(1f)),
         )
-        drawRoundRect(
-            Color(0xFFFF5A5F).copy(alpha = 0.5f),
-            topLeft = Offset(X(83f), Y(231f)),
-            size = Size(S(18f), S(6f)),
-            cornerRadius = CornerRadius(S(3f), S(3f)),
-        )
+
+        // ---- 两个前车灯 ----
+        drawPath(headlightPath(::X, ::Y, mirror = false), Color(0xFFFFF6D6).copy(alpha = 0.85f))
+        drawPath(headlightPath(::X, ::Y, mirror = true), Color(0xFFFFF6D6).copy(alpha = 0.85f))
 
         // ---- 四个轮胎 ----
         TIRE_SLOTS.forEach { (label, slot) ->

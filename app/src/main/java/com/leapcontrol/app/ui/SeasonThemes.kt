@@ -6,10 +6,11 @@ import java.util.Calendar
 /**
  * 背景主题。
  *
- * 共 20 套：日间 10 套、夜间 10 套，各含 6 套静态 + 4 套动态。
+ * 共 25 套：日间 10 套、夜间 10 套（各含 6 套静态 + 4 套动态），外加 5 套视频主题。
  *
- * 一套主题 = 整页基础渐变 + 上半屏的场景画面（[scene]，由 [paintScene] 实时绘制）+
+ * 实时绘制的 20 套 = 整页基础渐变 + 上半屏的场景画面（[scene]，由 [paintScene] 实时绘制）+
  * 一个主题色（[accent]，作用于卡片底色、柱状图、强调元素）。
+ * 另外 5 套（[VIDEO]）保留最初那批实拍视频背景，排在动态主题之后，`video = true`。
  *
  * 场景画面上限固定在上半屏，并做了两重衰减（场景自身淡出 + 顶部雾化），
  * 所以车名 / 续航 / 车模 / 快捷控车都压在很淡的画面上，不会被「糊住」。
@@ -29,6 +30,13 @@ data class SeasonTheme(
     val accentDark: Color,
     /** 上半屏画什么 */
     val scene: SceneKind,
+    /**
+     * 视频主题：播放打包在 res/raw 里的自带视频，不再绘制 [scene]。
+     *
+     * 这是最初那 5 套「四季 + 星空」的实拍视频背景，改版后作为独立分类保留在
+     * 动态主题之后 —— 喜欢旧版的用户可以继续用，新用户默认走实时绘制的 20 套。
+     */
+    val video: Boolean = false,
     /** 是否属于夜间主题（夜间自动切换只会选这一类） */
     val night: Boolean = false,
     /**
@@ -427,6 +435,82 @@ object SeasonThemes {
     )
 
     // ========================================================================
+    // 视频主题 5 套（旧版「四季 + 星空」实拍视频，改版后原样保留）
+    // ========================================================================
+
+    /** 春日花枝：视频主景在屏幕上部，需要较浓的雾把文字底下压干净 */
+    val VIDEO_SPRING = SeasonTheme(
+        id = "video_spring",
+        label = "春日",
+        mood = "视频 · 花枝",
+        gradient = listOf(Color(0xFFD9F0E0), Color(0xFFEDF7EF), Color(0xFFF9FBF9)),
+        gradientDark = listOf(Color(0xFF11251A), Color(0xFF0D1410), Color(0xFF0B0E0C)),
+        accent = Color(0xFF2FA85C),
+        accentDark = Color(0xFF46D27C),
+        scene = SceneKind.NONE,
+        video = true,
+        veilAlphaScale = 1f,
+    )
+
+    /** 夏日晴空 */
+    val VIDEO_SUMMER = SeasonTheme(
+        id = "video_summer",
+        label = "夏日",
+        mood = "视频 · 晴空",
+        gradient = listOf(Color(0xFFD3E9FB), Color(0xFFE7F3FC), Color(0xFFF8FBFE)),
+        gradientDark = listOf(Color(0xFF0E2030), Color(0xFF0C141C), Color(0xFF0B0E11)),
+        accent = Color(0xFF2C7BE5),
+        accentDark = Color(0xFF5AA0F5),
+        scene = SceneKind.NONE,
+        video = true,
+        veilAlphaScale = 1f,
+    )
+
+    /** 秋日暖叶 */
+    val VIDEO_AUTUMN = SeasonTheme(
+        id = "video_autumn",
+        label = "秋日",
+        mood = "视频 · 暖叶",
+        gradient = listOf(Color(0xFFFAE7CF), Color(0xFFFCF2E4), Color(0xFFFDF9F3)),
+        gradientDark = listOf(Color(0xFF2A1E11), Color(0xFF16110C), Color(0xFF0D0B09)),
+        accent = Color(0xFFCE6E28),
+        accentDark = Color(0xFFF0924A),
+        scene = SceneKind.NONE,
+        video = true,
+        veilAlphaScale = 1f,
+    )
+
+    /** 冬日飘雪 */
+    val VIDEO_WINTER = SeasonTheme(
+        id = "video_winter",
+        label = "冬日",
+        mood = "视频 · 飘雪",
+        gradient = listOf(Color(0xFFE3E8F0), Color(0xFFEFF2F7), Color(0xFFFAFBFD)),
+        gradientDark = listOf(Color(0xFF1A222E), Color(0xFF12161D), Color(0xFF0C0E11)),
+        accent = Color(0xFF52779F),
+        accentDark = Color(0xFF8AAFCB),
+        scene = SceneKind.NONE,
+        video = true,
+        veilAlphaScale = 1f,
+    )
+
+    /** 星空夜幕：视频本身够暗，雾只压住文字底下的星点，不能把星星糊掉 */
+    val VIDEO_STARS = SeasonTheme(
+        id = "video_stars",
+        label = "星空",
+        mood = "视频 · 夜空",
+        gradient = listOf(Color(0xFF0B1226), Color(0xFF070C18), Color(0xFF04060C)),
+        gradientDark = listOf(Color(0xFF070C1A), Color(0xFF04070F), Color(0xFF020408)),
+        accent = Color(0xFF6C8CFF),
+        accentDark = Color(0xFF8AA4FF),
+        scene = SceneKind.NONE,
+        video = true,
+        night = true,
+        veilAlphaScale = 0.35f,
+        scrimAlphaScale = 0.85f,
+    )
+
+    // ========================================================================
 
     /** 日间 10 套（6 静态 + 4 动态） */
     val DAY = listOf(
@@ -440,15 +524,21 @@ object SeasonThemes {
         AURORA, METEOR, FIREFLY, NIGHT_RAIN,
     )
 
-    val ALL = DAY + NIGHT_ALL
+    /** 视频主题 5 套（旧版四季 + 星空，排在动态主题之后） */
+    val VIDEO = listOf(VIDEO_SPRING, VIDEO_SUMMER, VIDEO_AUTUMN, VIDEO_WINTER, VIDEO_STARS)
+
+    val ALL = DAY + NIGHT_ALL + VIDEO
 
     /**
      * 老版本存下来的主题 id。
      * 改名后旧偏好还要能落到对应主题上，不能让用户升级后主题突然被重置。
+     *
+     * spring / summer 当初对应的是**视频**四季，所以直接落回视频版，
+     * 升级后画面跟之前一模一样；autumn / winter / stars 的 id 没变，天然兼容。
      */
     private val LEGACY_IDS = mapOf(
-        "spring" to MIST_HILLS.id,
-        "summer" to CLEAR_SKY.id,
+        "spring" to VIDEO_SPRING.id,
+        "summer" to VIDEO_SUMMER.id,
     )
 
     fun byId(id: String?): SeasonTheme {

@@ -18,10 +18,27 @@ import org.junit.Test
 class SeasonThemesTest {
 
     @Test
-    fun `日间夜间各十套`() {
+    fun `日间夜间各十套外加五套视频`() {
         assertEquals(10, SeasonThemes.DAY.size)
         assertEquals(10, SeasonThemes.NIGHT_ALL.size)
-        assertEquals(20, SeasonThemes.ALL.size)
+        assertEquals(5, SeasonThemes.VIDEO.size)
+        assertEquals(25, SeasonThemes.ALL.size)
+    }
+
+    @Test
+    fun `视频主题排在动态主题之后`() {
+        // 页面按 DAY → NIGHT_ALL → VIDEO 渲染，视频主题必须落在整个列表末尾
+        assertEquals(SeasonThemes.VIDEO, SeasonThemes.ALL.takeLast(SeasonThemes.VIDEO.size))
+        assertTrue(SeasonThemes.VIDEO.all { it.video })
+        assertTrue((SeasonThemes.DAY + SeasonThemes.NIGHT_ALL).none { it.video })
+    }
+
+    @Test
+    fun `视频主题不画场景`() {
+        SeasonThemes.VIDEO.forEach { theme ->
+            assertEquals(theme.label, SceneKind.NONE, theme.scene)
+            assertFalse(theme.label, theme.animated)
+        }
     }
 
     @Test
@@ -50,13 +67,13 @@ class SeasonThemesTest {
     }
 
     @Test
-    fun `每套主题都有场景`() {
-        assertTrue(SeasonThemes.ALL.all { it.scene != SceneKind.NONE })
+    fun `每套实时绘制的主题都有场景`() {
+        assertTrue(SeasonThemes.ALL.filter { !it.video }.all { it.scene != SceneKind.NONE })
     }
 
     @Test
     fun `同一个场景不会被两套主题复用`() {
-        val scenes = SeasonThemes.ALL.map { it.scene }
+        val scenes = SeasonThemes.ALL.filter { !it.video }.map { it.scene }
         assertEquals(scenes.size, scenes.toSet().size)
     }
 
@@ -89,8 +106,9 @@ class SeasonThemesTest {
 
     @Test
     fun `旧版本主题 id 仍能解析`() {
-        assertEquals(SeasonThemes.MIST_HILLS.id, SeasonThemes.byId("spring").id)
-        assertEquals(SeasonThemes.CLEAR_SKY.id, SeasonThemes.byId("summer").id)
+        // 旧版 spring / summer 本来就是视频四季，升级后应落回视频版（画面一致）
+        assertEquals(SeasonThemes.VIDEO_SPRING.id, SeasonThemes.byId("spring").id)
+        assertEquals(SeasonThemes.VIDEO_SUMMER.id, SeasonThemes.byId("summer").id)
         assertEquals(SeasonThemes.AUTUMN.id, SeasonThemes.byId("autumn").id)
         assertEquals(SeasonThemes.WINTER.id, SeasonThemes.byId("winter").id)
         assertEquals(SeasonThemes.STARRY.id, SeasonThemes.byId("stars").id)

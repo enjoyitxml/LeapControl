@@ -12,11 +12,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
@@ -34,7 +39,7 @@ import androidx.compose.ui.unit.dp
  * 首页到空调卡之前的内容大致是：状态栏 + 车名/续航/充电中心 176dp + 车模 200dp +
  * 快捷控车 ~80dp，再留一点余量。场景在这个高度上画完，往下已经淡到看不见。
  */
-private val SCENE_HEIGHT = 508.dp
+internal val SCENE_HEIGHT = 508.dp
 
 /** 动态场景的循环周期：慢一点才有氛围，快了像故障。 */
 private const val SCENE_CYCLE_MS = 24_000
@@ -115,8 +120,26 @@ fun ThemeSwatch(
             .clip(RoundedCornerShape(8.dp))
             .background(Brush.verticalGradient(theme.gradient(dark))),
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            paintScene(theme.scene, STATIC_PHASE, palette)
+        if (theme.scene != SceneKind.NONE) {
+            Canvas(Modifier.fillMaxSize()) {
+                paintScene(theme.scene, STATIC_PHASE, palette)
+            }
+        }
+        // 视频主题缩略图看不到画面（视频只在首页播），放一个播放角标表明它是视频
+        if (theme.video) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }
