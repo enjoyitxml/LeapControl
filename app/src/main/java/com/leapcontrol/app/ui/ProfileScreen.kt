@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.R
@@ -178,6 +179,16 @@ fun ProfileScreen(
                 "关于",
                 "版本信息、免责声明与隐私条款",
             ) { onOpenPage(SettingsPage.ABOUT) }
+
+            // 页脚：交流群（放在所有入口之下，居中的小字，不抢主内容的视觉）
+            Spacer(Modifier.height(26.dp))
+            Text(
+                text = "QQ交流群：179731222",
+                color = LocalAppColors.current.textSecondary.copy(alpha = 0.75f),
+                fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+            )
 
             Spacer(Modifier.height(24.dp))
         }
