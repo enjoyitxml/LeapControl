@@ -48,14 +48,14 @@ fun UpdateDialog(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
+            .background(Color.Black.copy(alpha = DIALOG_SCRIM))
             .clickable(onClick = onDismiss),
         contentAlignment = Alignment.Center,
     ) {
         Surface(
             shape = RoundedCornerShape(20.dp),
-            color = C.cardBg,
-            shadowElevation = 18.dp,
+            color = C.dialogBg,
+            shadowElevation = 20.dp,
             // 卡片自身消费点击，避免穿透到遮罩误关
             modifier = Modifier
                 .fillMaxWidth(0.84f)

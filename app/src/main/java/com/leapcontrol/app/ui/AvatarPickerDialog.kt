@@ -71,14 +71,14 @@ fun AvatarPickerDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.45f))
+                .background(Color.Black.copy(alpha = DIALOG_SCRIM))
                 .clickable(onClick = onDismiss),
             contentAlignment = Alignment.Center,
         ) {
             Surface(
                 shape = RoundedCornerShape(22.dp),
-                color = C.cardBg,
-                shadowElevation = 18.dp,
+                color = C.dialogBg,
+                shadowElevation = 20.dp,
                 // 卡片自身吃掉点击，避免穿透到遮罩把弹窗关掉
                 modifier = Modifier
                     .fillMaxWidth()

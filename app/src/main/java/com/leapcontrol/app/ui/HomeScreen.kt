@@ -1116,7 +1116,7 @@ fun HomeScreen(
             var nameInput by remember { mutableStateOf(runtime.customName().ifEmpty { runtime.displayName() }) }
             AlertDialog(
                 onDismissRequest = { showRenameDialog = false },
-                containerColor = LocalAppColors.current.cardBg,
+                containerColor = LocalAppColors.current.dialogBg,
                 title = { Text("自定义车名", color = LocalAppColors.current.textPrimary) },
                 text = {
                     Column {
@@ -1177,7 +1177,7 @@ fun HomeScreen(
             var pin by remember { mutableStateOf("") }
             AlertDialog(
                 onDismissRequest = { showPinDialog = false },
-                containerColor = LocalAppColors.current.cardBg,
+                containerColor = LocalAppColors.current.dialogBg,
                 title = { Text("输入控车密码", color = LocalAppColors.current.textPrimary) },
                 text = {
                     Column {
@@ -1281,7 +1281,7 @@ private fun VehicleDropdown(
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
-        containerColor = LocalAppColors.current.cardBg,
+        containerColor = LocalAppColors.current.dialogBg,
     ) {
         vehicles.forEach { vehicle ->
             val selected = vehicle.vin == selectedVin
@@ -1318,7 +1318,7 @@ private fun VehicleDropdown(
 private fun HealthDialog(status: CarStatus?, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = LocalAppColors.current.cardBg,
+        containerColor = LocalAppColors.current.dialogBg,
         title = { Text("车辆健康", color = LocalAppColors.current.textPrimary, fontSize = 17.sp) },
         text = {
             if (status == null || status.tires.isEmpty()) {
@@ -1563,7 +1563,7 @@ private fun ActionBanner(
             modifier = Modifier
                 .widthIn(max = 320.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(if (isError) Color(0xFFFDECEA) else C.cardBg)
+                .background(if (isError) Color(0xFFFDECEA) else C.dialogBg)
                 .shadow(elevation = 12.dp, shape = RoundedCornerShape(16.dp))
                 .clickable(onClick = onDismiss)
                 .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -1602,14 +1602,14 @@ private fun ConfirmDialog(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
+            .background(Color.Black.copy(alpha = DIALOG_SCRIM))
             .clickable(onClick = onDismiss),
         contentAlignment = Alignment.Center,
     ) {
         Surface(
             shape = RoundedCornerShape(20.dp),
-            color = C.cardBg,
-            shadowElevation = 18.dp,
+            color = C.dialogBg,
+            shadowElevation = 20.dp,
             // 卡片自身消费点击，避免穿透到遮罩误关
             modifier = Modifier
                 .fillMaxWidth(0.84f)
@@ -1906,7 +1906,7 @@ private fun ControlEditorDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = LocalAppColors.current.cardBg,
+        containerColor = LocalAppColors.current.dialogBg,
         title = { Text("自定义控车按钮", color = LocalAppColors.current.textPrimary) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {

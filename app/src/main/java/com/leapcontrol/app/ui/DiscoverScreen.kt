@@ -151,7 +151,7 @@ private fun DestinationPickerDialog(
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = LocalAppColors.current.cardBg,
+        containerColor = LocalAppColors.current.dialogBg,
         title = {
             Text("搜索目的地", color = LocalAppColors.current.textPrimary, fontSize = 16.sp)
         },
