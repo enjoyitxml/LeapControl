@@ -116,8 +116,15 @@ object MileageEnergyParser {
     private val cumulativeEnergyKeys = setOf(
         "cumulativeenergy", "totalenergy", "totalenergyconsumption", "energytotal",
     )
+    /**
+     * 提车天数的候选字段名。
+     * 服务端没有公开这套命名，所以尽量把「同一个意思的常见写法」都列上：
+     * 只要界面显示成「--」，基本就是这里没命中，补一个别名即可。
+     */
     private val ownershipDaysKeys = setOf(
         "ownershipdays", "dayssincepurchase", "pickupdays", "deliverydays", "carage",
+        "takecardays", "usagedays", "holddays", "owneddays", "ownerdays",
+        "drivingdays", "purchasedays", "daysowned", "useday",
     )
     /** 只认这几个字段，其余（含位置/身份类）一律不读。 */
     private val sensitiveKey = Regex(
@@ -143,11 +150,21 @@ object MileageEnergyParser {
         val summary = MileageEnergySummary(
             totalMileageKm = firstNumber(data, totalMileageKeys),
             cumulativeEnergyKwh = firstNumber(data, setOf("totalenergy", "totalEnergy")),
-            ownershipDays = firstNumber(data, ownershipDaysKeys)?.toInt(),
+            // 先看 data 第一层，取不到再在嵌套里找一次：
+            // 部分车型把提车天数塞在 data.vehicleInfo / data.summary 之类的子对象里。
+            ownershipDays = firstNumber(data, ownershipDaysKeys)?.toInt()
+                ?: nestedOwnershipDays(data),
             recentDays = days.takeLast(7),
             capturedAt = System.currentTimeMillis(),
         )
         return summary.takeIf { it.hasAny }
+    }
+
+    /** 在 data 的嵌套对象里找提车天数（只认 [ownershipDaysKeys] 里的明确别名）。 */
+    private fun nestedOwnershipDays(data: JSONObject): Int? {
+        val leaves = mutableListOf<Pair<String, String>>()
+        collectLeaves(data, "", leaves)
+        return pick(leaves, ownershipDaysKeys)?.toInt()
     }
 
     /** 累计里程 / 能耗：字段不固定，按别名在整棵 JSON 里找标量。 */
