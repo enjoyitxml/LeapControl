@@ -311,8 +311,8 @@ fun OwnershipBackdropGrid(runtime: AppRuntime, selectedId: String) {
                                 .height(46.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .border(
-                                    if (selected) 2.dp else 0.5.dp,
-                                    if (selected) C.accent else C.border,
+                                    if (selected) 2.dp else 0.dp,
+                                    if (selected) C.accent else Color.Transparent,
                                     RoundedCornerShape(8.dp),
                                 )
                                 .clickable { runtime.setOwnershipBackdropId(backdrop.id) },
@@ -387,8 +387,8 @@ fun ThemePickGrid(
                                 .height(58.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .border(
-                                    if (selected) 2.dp else 0.5.dp,
-                                    if (selected) C.accent else C.border,
+                                    if (selected) 2.dp else 0.dp,
+                                    if (selected) C.accent else Color.Transparent,
                                     RoundedCornerShape(8.dp),
                                 )
                                 .clickable { onPick(theme.id) },

@@ -494,7 +494,6 @@ fun SettingsCard(
         modifier = Modifier
             .fillMaxWidth()
             .background(C.panelBg, shape)
-            .border(1.dp, C.border, shape)
             .padding(16.dp),
     ) {
         if (title != null) {
@@ -538,7 +537,7 @@ fun OptionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
-            .border(1.5.dp, if (selected) C.accent else C.border, shape)
+            .border(1.5.dp, if (selected) C.accent else Color.Transparent, shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -211,7 +211,7 @@ private fun QrTab(
         modifier = modifier
             .clip(shape)
             .background(if (selected) C.chipBgActive else C.chipBg, shape)
-            .border(1.dp, if (selected) C.accent.copy(alpha = 0.5f) else C.border, shape)
+            .border(1.dp, if (selected) C.accent.copy(alpha = 0.5f) else Color.Transparent, shape)
             .clickable(onClick = onClick)
             .padding(vertical = 9.dp),
         contentAlignment = Alignment.Center,

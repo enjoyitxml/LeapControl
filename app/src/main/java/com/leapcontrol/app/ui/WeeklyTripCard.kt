@@ -1,7 +1,6 @@
 package com.leapcontrol.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,7 +55,6 @@ fun WeeklyTripCard(
             .height(172.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(C.panelBg, RoundedCornerShape(8.dp))
-            .border(1.dp, C.border, RoundedCornerShape(8.dp))
             .padding(horizontal = 12.dp, vertical = 11.dp),
     ) {
         Text(

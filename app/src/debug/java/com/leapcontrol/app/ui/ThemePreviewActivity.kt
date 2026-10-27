@@ -31,6 +31,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leapcontrol.app.DailyMileage
+import com.leapcontrol.app.MileageEnergySummary
+import com.leapcontrol.app.R
 
 /**
  * 仅 debug 包的主题预览页：把 20 套背景按真实尺寸画出来，用来核对观感与文字可读性。
@@ -44,7 +47,98 @@ class ThemePreviewActivity : ComponentActivity() {
         val mode = intent.getStringExtra("mode") ?: "grid"
         setContent {
             Box(Modifier.fillMaxSize().background(Color(0xFF101114))) {
-                if (mode == "full") FullSizePreview() else GridPreview()
+                when (mode) {
+                    "full" -> FullSizePreview()
+                    "cards" -> CardsPreview()
+                    else -> GridPreview()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 「卡片观感」预览：按「我的」页与首页右列的真实版式渲染实体卡片，
+ * 用来确认描边已全部去掉、卡片只靠底色与圆角分层。
+ *
+ * `adb shell am start -n com.leapcontrol.app/.ui.ThemePreviewActivity -e mode cards`
+ */
+@Composable
+private fun CardsPreview() {
+    val fakeEnergy = MileageEnergySummary(
+        recentDays = listOf(
+            DailyMileage("周一", 12.4),
+            DailyMileage("周二", 31.8),
+            DailyMileage("周三", 0.0),
+            DailyMileage("周四", 8.6),
+            DailyMileage("周五", 44.2),
+            DailyMileage("周六", 23.1),
+            DailyMileage("今天", 5.5),
+        ),
+    )
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        listOf(false, true).forEach { dark ->
+            ProvideAppColors(dark = dark, accent = SeasonThemes.MIST_HILLS.accent(dark)) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Brush.verticalGradient(SeasonThemes.MIST_HILLS.gradient(dark)))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = if (dark) "深色 · 卡片（无描边）" else "浅色 · 卡片（无描边）",
+                        color = LocalAppColors.current.textPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    SettingsCard(title = "车辆与账号") {
+                        Text(
+                            "零跑 C11 · VIN 8F3K2A",
+                            color = LocalAppColors.current.textPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                    ProfileItem(
+                        R.drawable.ic_settings,
+                        "设置",
+                        "控车密码、高德 Web Key、车模与系统磁贴",
+                    ) {}
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(Modifier.weight(1f)) { TireQuickCard(status = null) }
+                        Box(Modifier.weight(1f)) { WeeklyTripCard(energy = fakeEnergy) }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(Modifier.weight(1f)) {
+                            OptionSurface(selected = false) {
+                                Text(
+                                    "未选中项",
+                                    color = LocalAppColors.current.textSecondary,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp),
+                                )
+                            }
+                        }
+                        Box(Modifier.weight(1f)) {
+                            OptionSurface(selected = true) {
+                                Text(
+                                    "选中项",
+                                    color = LocalAppColors.current.accent,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp),
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
