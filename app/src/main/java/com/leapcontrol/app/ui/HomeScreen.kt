@@ -143,8 +143,12 @@ fun HomeScreen(
     onLogout: () -> Unit,
     /** 顶部「皮肤」按钮：打开个性化页（外观模式 / 四季主题 / 动态背景） */
     onOpenSkin: () -> Unit,
-    /** 车模 / 相伴卡右上角的「呼吸小白点」：在当前壁纸所属的池子里随机换一套 */
+    /** 车模右上角的「呼吸小白点」：在当前壁纸所属的池子里随机换一套主题 */
     onRandomTheme: () -> Unit = {},
+    /** 相伴卡右上角的「呼吸小白点」：随机换这张卡的背景，与主题无关 */
+    onRandomBackdrop: () -> Unit = {},
+    /** 小白点总开关（设置里可关）。关掉后车模与相伴卡都不再显示这个点 */
+    showQuickDot: Boolean = true,
     /** 向上汇报「当前是否在零控首页主界面」—— 视频背景只在首页主界面播放 */
     onMainPageChange: (Boolean) -> Unit,
     /** 向上汇报「车模是否已滚出可视区」—— 滚出后视频背景切换为纯色背景，提高可读性 */
@@ -954,13 +958,16 @@ fun HomeScreen(
                         contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    // 快捷换壁纸：小白点放在车模右上角，正好落在车顶右侧的空画面上
-                    QuickThemeButton(
-                        onClick = onRandomTheme,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 4.dp, end = 2.dp),
-                    )
+                    // 快捷换壁纸：小白点放在车模右上角，正好落在车顶右侧的空画面上。
+                    // 车模上的点换的是「主题壁纸」，相伴卡上的点换的是「相伴卡背景」，两者互不影响。
+                    if (showQuickDot) {
+                        QuickThemeButton(
+                            onClick = onRandomTheme,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 4.dp, end = 2.dp),
+                        )
+                    }
                 }
             }
 
@@ -1040,7 +1047,7 @@ fun HomeScreen(
                 status = currentStatus,
                 energy = energySummary,
                 backdropId = ownershipBackdropId,
-                onRandomTheme = onRandomTheme,
+                onRandomBackdrop = if (showQuickDot) onRandomBackdrop else null,
             )
 
             // ---- 功能模块区（页面最下方）：横向滑动的模块卡 + 指示条 + 自定义按钮 ----

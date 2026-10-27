@@ -207,6 +207,18 @@ class AppRuntime(context: Context) {
     )
     val ownershipBackdrop: State<String> get() = _ownershipBackdrop
 
+    /**
+     * 首页「呼吸小白点」是否显示（默认开）。
+     *
+     * 用 State 而不是每次读盘：设置里一关，退回首页立刻消失，不用等重建。
+     * 关掉之后车模与相伴卡右上角都不再出现这个点——两个点都是同一个开关，
+     * 因为它们属于同一种"点缀"，用户不想看到时不希望只剩一半。
+     */
+    private val _quickDotEnabled = mutableStateOf(
+        namingPrefs.getBoolean("quick_dot_enabled", true),
+    )
+    val quickDotEnabled: State<Boolean> get() = _quickDotEnabled
+
     fun customName(): String =
         namingPrefs.getString("name_${session.selectedVin}", "")?.trim().orEmpty()
 
@@ -1100,6 +1112,21 @@ class AppRuntime(context: Context) {
         val safe = OwnershipBackdrops.byId(id).id
         _ownershipBackdrop.value = safe
         namingPrefs.edit().putString("ownership_backdrop", safe).apply()
+    }
+
+    /**
+     * 相伴卡小白点：随机换一张相伴卡背景。
+     *
+     * 和主题那套随机（ThemeResolver.randomSwitch）是两条独立的线：
+     * 点这张卡上的点只换这张卡的图，不改外观模式、不改主题。
+     */
+    fun randomizeOwnershipBackdrop() {
+        setOwnershipBackdropId(OwnershipBackdrops.randomOther(_ownershipBackdrop.value))
+    }
+
+    fun setQuickDotEnabled(enabled: Boolean) {
+        _quickDotEnabled.value = enabled
+        namingPrefs.edit().putBoolean("quick_dot_enabled", enabled).apply()
     }
 
     // ---------------- 外观模式（跟随系统 / 浅色 / 深色） ----------------

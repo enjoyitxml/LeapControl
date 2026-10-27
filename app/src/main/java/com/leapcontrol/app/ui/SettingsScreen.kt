@@ -78,6 +78,8 @@ fun SettingsScreen(
     var showAmapKey by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmGate by remember { mutableStateOf(runtime.biometricConfirmEnabled()) }
+    // 呼吸小白点：车模右上角换主题、相伴卡右上角换背景，共用这一个开关
+    var quickDot by remember { mutableStateOf(runtime.quickDotEnabled.value) }
 
     Column(
         modifier = Modifier
@@ -132,6 +134,27 @@ fun SettingsScreen(
                 onCheckedChange = {
                     confirmGate = it
                     runtime.setBiometricConfirmEnabled(it)
+                },
+            )
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 首页装饰：呼吸小白点 ----
+        // 单独成卡而不是塞进上面那张：上面全是"功能/安全"项，这个纯属观感偏好，
+        // 混在一起会让用户以为关掉它会影响控车。
+        SettingsCard("首页") {
+            SwitchRow(
+                label = "呼吸小白点",
+                desc = if (quickDot) {
+                    "车模右上角点击换主题壁纸，相伴卡右上角点击换卡片背景"
+                } else {
+                    "已关闭，首页不再显示这个提示点"
+                },
+                checked = quickDot,
+                onCheckedChange = {
+                    quickDot = it
+                    runtime.setQuickDotEnabled(it)
                 },
             )
         }

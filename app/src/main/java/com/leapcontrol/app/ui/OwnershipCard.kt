@@ -52,8 +52,11 @@ fun OwnershipCard(
     status: CarStatus?,
     energy: MileageEnergySummary?,
     backdropId: String? = null,
-    /** 右上角「呼吸小白点」：点一下随机换壁纸；传 null 则不显示按钮 */
-    onRandomTheme: (() -> Unit)? = null,
+    /**
+     * 右上角「呼吸小白点」：点一下随机换**这张卡的背景**（不换主题）。
+     * 传 null 则不显示按钮（设置里关掉小白点，或这一侧不需要）。
+     */
+    onRandomBackdrop: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // 图片内容不可控（换图/裁切位置都会变），所以文字统一带一层柔和投影兜底
@@ -162,8 +165,9 @@ fun OwnershipCard(
             }
         }
 
-        // 快捷换壁纸：小白点压在卡片右上角的天空/雪山上，半透明不抢画面
-        onRandomTheme?.let { onClick ->
+        // 快捷换背景：小白点压在卡片右上角的天空/雪山上，半透明不抢画面。
+        // 点它只换这张相伴卡的图（6 套内置背景里随机，不与当前重复），主题不受影响。
+        onRandomBackdrop?.let { onClick ->
             QuickThemeButton(
                 onClick = onClick,
                 modifier = Modifier
