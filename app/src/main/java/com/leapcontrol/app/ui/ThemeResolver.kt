@@ -1,6 +1,7 @@
 package com.leapcontrol.app.ui
 
 import com.leapcontrol.app.AppearanceMode
+import kotlin.random.Random
 
 /**
  * 主题解析：把「外观模式 + 手机明暗 + 两个槽位里存的主题」推导成
@@ -145,6 +146,57 @@ object ThemeResolver {
                     PickHint.NONE
                 },
             )
+        }
+    }
+
+    // ========================================================================
+    // 首页「快捷换壁纸」：在当前壁纸所属的池子里随机换一套
+    // ========================================================================
+
+    /**
+     * 当前壁纸属于哪个池子 —— 决定随机换壁纸时可以换成哪些。
+     *
+     * 判据是「现在生效的这套主题」而不是外观模式：用户眼睛看到的是哪一类壁纸，
+     * 就只在这一类里换，所以永远不会出现「浅色界面上随机到一套深色主题」的黑底黑字。
+     *
+     *  - 视频主题：浅色侧是春夏秋冬四支视频，深色侧只有星空一套（池子只有一个元素，
+     *    换不动，等于原地不动；这是视频「自带深浅搭配」的直接结果）；
+     *  - 日间 / 夜间主题：各自 10 套里换。
+     */
+    fun poolOf(theme: SeasonTheme): List<SeasonTheme> = when {
+        theme.video && theme.night -> listOf(SeasonThemes.VIDEO_DARK)
+        theme.video -> SeasonThemes.VIDEO_LIGHT
+        theme.night -> SeasonThemes.NIGHT_ALL
+        else -> SeasonThemes.DAY
+    }
+
+    /**
+     * 快捷换壁纸：在当前池子里随机挑一套**不同**的主题，只改「正在显示的那一侧槽位」。
+     *
+     * 与 [pick] 的区别（有意为之）：
+     *  - 不改外观模式。用户点的是「换张壁纸」，不是「换个模式」，所以「始终浅色」
+     *    不会因为随机到视频主题就被悄悄改成「跟随系统」；
+     *  - 不动另一侧槽位。浅色时只写浅色槽，白天换壁纸不该顺手改掉夜里那套。
+     *
+     * 池子只有一个元素时（深色侧的视频主题），返回的就是原地不动。
+     */
+    fun randomSwitch(
+        mode: AppearanceMode,
+        systemDark: Boolean,
+        lightThemeId: String?,
+        darkThemeId: String?,
+        random: Random = Random.Default,
+    ): Pick {
+        val dark = isDark(mode, systemDark)
+        val current = activeTheme(mode, dark, lightThemeId, darkThemeId)
+        val pool = poolOf(current)
+        // 先排掉当前这套：点一下必须能看出变化，随机到「还是这套」等于没点
+        val candidates = pool.filter { it.id != current.id }.ifEmpty { pool }
+        val next = candidates[random.nextInt(candidates.size)]
+        return if (dark) {
+            Pick(mode = mode, lightThemeId = safeLight(lightThemeId).id, darkThemeId = next.id)
+        } else {
+            Pick(mode = mode, lightThemeId = next.id, darkThemeId = safeDark(darkThemeId).id)
         }
     }
 }

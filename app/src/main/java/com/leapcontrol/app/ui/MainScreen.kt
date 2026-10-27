@@ -136,6 +136,21 @@ fun MainScreen(
     // 生效主题：按明暗取对应槽位，槽里类型不对时自动回落到该类型默认主题
     val season = ThemeResolver.activeTheme(appearance, dark, lightThemeId, darkThemeId)
     val activeSeasonId = season.id
+    // ---- 快捷换壁纸（车模 / 相伴卡右上角的呼吸小白点）----
+    // 在当前壁纸所属的池子里随机换一套：浅色只在日间池、深色只在夜间池、
+    // 视频只在视频池，规则见 ThemeResolver.randomSwitch。
+    // 只写「正在显示的那一侧槽位」，也不改外观模式 —— 用户点的是换张壁纸，不是换模式。
+    val randomizeTheme = {
+        val pick = ThemeResolver.randomSwitch(appearance, systemInDark, lightThemeId, darkThemeId)
+        if (pick.lightThemeId != lightThemeId) {
+            runtime.setLightThemeId(pick.lightThemeId)
+            lightThemeId = pick.lightThemeId
+        }
+        if (pick.darkThemeId != darkThemeId) {
+            runtime.setDarkThemeId(pick.darkThemeId)
+            darkThemeId = pick.darkThemeId
+        }
+    }
     // 主题色跟着季节走：卡片描边、柱状图、强调元素都用它
     val themeAccent = season.accent(dark)
     val colors = remember(dark, themeAccent) { appColors(dark, themeAccent) }
@@ -347,6 +362,8 @@ fun MainScreen(
                                 runtime = runtime,
                                 onLogout = onLogout,
                                 onOpenSkin = { settingsPage = SettingsPage.PERSONALIZATION },
+                                // 车模 / 相伴卡右上角的呼吸小白点：随机换壁纸
+                                onRandomTheme = randomizeTheme,
                                 onMainPageChange = { homeOnMainPage = it },
                                 onCarModelGoneChange = { carModelGone = it },
                                 onScrollingChange = { homeScrolling = it },
