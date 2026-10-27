@@ -16,6 +16,8 @@ import com.leapcontrol.app.FridgeControlCommand
 import com.leapcontrol.app.FridgeMode
 import com.leapcontrol.app.FridgeStyle
 import com.leapcontrol.app.LeapmotorApi
+import com.leapcontrol.app.MileageEnergyParser
+import com.leapcontrol.app.MileageEnergySummary
 import com.leapcontrol.app.ScheduledAcPlan
 import com.leapcontrol.app.ScheduledAcState
 import com.leapcontrol.app.ObfuscatedSecrets
@@ -30,6 +32,7 @@ import com.leapcontrol.app.VehicleLocationDomain
 import com.leapcontrol.app.VehicleOtaInfo
 import com.leapcontrol.app.VehicleCapabilityDetector
 import com.leapcontrol.app.VehicleCapabilities
+import com.leapcontrol.app.VehicleHomeStatus
 import com.leapcontrol.app.VehicleStatusMapper
 import com.leapcontrol.app.WidgetStatusMapper
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +53,9 @@ class NeedPinException : Exception("需要先设置 4 位控车密码")
  * 官方抓包文档同样给出最长 24 秒的窗口。
  */
 private const val CONTROL_RESULT_MAX_WAIT_MS = 20_000L
+
+/** 里程 / 能耗缓存有效期：15 分钟。老服务限频，不必每次进首页都打一次。 */
+private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
 
 /** 单个车轮的胎压状态。 */
 data class TireInfo(
@@ -109,6 +115,11 @@ data class CarStatus(
     val fuelRange: String?,
     val fuelSoc: Int?,
     val isRangeExtender: Boolean,
+    /**
+     * 续航工况标签：服务端 rangeMode = 0 → CLTC（标准工况），1 → WLTC（动态工况）。
+     * 取不到就不显示徽标，不猜。
+     */
+    val rangeStandard: String? = null,
     val totalMileage: String?,
     val interiorTemp: String?,
     val locked: Boolean?,
@@ -125,8 +136,16 @@ data class CarStatus(
     val windowOpen: Boolean? = null,
     /** 天幕遮阳帘是否开启（信号缺失时为 null）。 */
     val sunshadeOpen: Boolean? = null,
-    /** 行车状态文本：行驶中 / 已驻车（信号缺失为 null）。 */
+    /** 行车状态文本：D挡 · 60km/h / R挡 / N挡 / 已驻车 / 行驶中（信号缺失为 null）。 */
     val drivingStatus: String? = null,
+    /** 车速原始值（1319，可能是数字或带单位的文本）。 */
+    val speed: String? = null,
+    /** 当前挡位：P / R / N / D（1010）。 */
+    val gearStatus: String? = null,
+    /** 是否行驶中（速度 > 0，或处于 D / R 挡）。 */
+    val isDriving: Boolean? = null,
+    /** 整车是否已下电 / 离车驻车（闭锁、电源 OFF、EPB 拉起任一成立）。 */
+    val isShutDown: Boolean = false,
     /** 充电中心相关（信号缺失均为 null，UI 显示「--」） */
     val chargingPower: String? = null, // 充电功率，如 "7.2 kW"
     val chargeTimeLeft: String? = null, // 剩余充电时间，如 "1 小时 23 分"
@@ -180,29 +199,31 @@ class AppRuntime(context: Context) {
         .ifEmpty { session.selectedNickname.trim() }
         .ifEmpty { "我的零跑" }
 
+    // 控车二次确认（指纹 / 密码防误触）：默认开启
+    private val securityPrefs = appContext.getSharedPreferences("leapcontrol_security", Context.MODE_PRIVATE)
+
+    /** 主界面向车端下发控车指令前，是否需要指纹 / 密码二次确认（默认开启）。 */
+    fun biometricConfirmEnabled(): Boolean =
+        securityPrefs.getBoolean("biometric_confirm", true)
+
+    fun setBiometricConfirmEnabled(enabled: Boolean) {
+        securityPrefs.edit().putBoolean("biometric_confirm", enabled).apply()
+    }
+
     /**
      * 车模展示方式：
      * - "auto"：优先用官方 carpicture 下发的车图，取不到时用内置剪影
      * - "builtin"：始终用内置矢量剪影（官方图不准时可强制走这条）
      */
     /**
-     * 车模展示方式："auto" = 拉取官方车模图（拉不到就不显示）；"off" = 完全关闭车模。
-     * 历史值 "builtin"（内置剪影）已废弃，一律按 "off" 处理。
+     * 车模展示方式。车模显示开关已移除 —— 车模默认常开，恒为 "auto"
+     * （拉取官方 carpicture 车图，拉不到则首页不占位）。
+     * 历史遗留值 "builtin" / "off" 一律按 "auto" 处理，老版本关掉过的用户升级后也会恢复显示。
      */
-    fun carArtworkMode(): String = when (namingPrefs.getString("car_artwork_mode", "auto") ?: "auto") {
-        "builtin" -> "off"
-        else -> namingPrefs.getString("car_artwork_mode", "auto") ?: "auto"
-    }
+    fun carArtworkMode(): String = "auto"
 
     fun setCarArtworkMode(mode: String) {
         namingPrefs.edit().putString("car_artwork_mode", mode).apply()
-    }
-
-    /** 车模显示开关：true = 自动拉取官方车模，false = 不显示车模。 */
-    fun carArtworkEnabled(): Boolean = carArtworkMode() != "off"
-
-    fun setCarArtworkEnabled(enabled: Boolean) {
-        setCarArtworkMode(if (enabled) "auto" else "off")
     }
 
     // ---------------- 目的地搜索（高德 Web 服务） ----------------
@@ -225,6 +246,13 @@ class AppRuntime(context: Context) {
         runCatching { AmapWebApi.searchPoi(key, keyword.trim()) }.getOrDefault(emptyList())
     }
 
+    /** 逆地理编码：车端经纬度（GCJ-02）→ 中文地址。无 Key 时返回 null。开源接口 23。 */
+    suspend fun reverseGeocodeLocation(latitude: Double, longitude: Double): String? =
+        withContext(Dispatchers.IO) {
+            if (!hasAmapKey()) return@withContext null
+            runCatching { AmapWebApi.reverseGeocode(amapKey(), latitude, longitude) }.getOrDefault(null)
+        }
+
     /** 首页控车按钮顺序（按 VIN 独立存储）。 */
     fun controlLayout(): List<String> {
         val raw = namingPrefs.getString("control_layout_${session.selectedVin}", "") ?: ""
@@ -235,6 +263,21 @@ class AppRuntime(context: Context) {
     fun setControlLayout(ids: List<String>) {
         val clean = ControlActions.sanitize(ids).take(ControlActions.MaxSelectable)
         namingPrefs.edit().putString("control_layout_${session.selectedVin}", clean.joinToString(",")).apply()
+    }
+
+    // ---------------- 首页功能模块（顺序 / 增删） ----------------
+
+    /** 首页横向模块区的模块顺序（按 VIN 独立存储）。 */
+    fun homeModules(): List<String> {
+        val raw = namingPrefs.getString("home_modules_${session.selectedVin}", "") ?: ""
+        return if (raw.isBlank()) HomeModules.DEFAULT_ORDER
+        else HomeModules.sanitize(raw.split(",").map { it.trim() }.filter { it.isNotEmpty() })
+    }
+
+    fun setHomeModules(ids: List<String>) {
+        namingPrefs.edit()
+            .putString("home_modules_${session.selectedVin}", HomeModules.sanitize(ids).joinToString(","))
+            .apply()
     }
 
     val isLoggedIn: Boolean get() = session.oldAuth != null
@@ -416,10 +459,23 @@ class AppRuntime(context: Context) {
     /** 已加载能力所对应的 VIN，用于切换车辆时判断是否需要重新加载。 */
     private var capabilityVin: String? = null
 
+    // ---- 里程 / 能耗 ----
+    // ⚠️ 这两个必须声明在 init 块**之前**：Kotlin 的属性与 init 块按书写顺序执行，
+    //    放到后面时 init{} 里的 loadCachedMileageEnergy() 会拿到一个还没赋值的
+    //    _mileageEnergy → 冷启动必崩（MutableStateFlow.setValue on a null object）。
+    private val energyPrefs =
+        appContext.getSharedPreferences("leapcontrol_mileage_energy", Context.MODE_PRIVATE)
+
+    private val _mileageEnergy = MutableStateFlow<MileageEnergySummary?>(null)
+    /** 最近一次成功拉取的里程 / 能耗汇总（进程内保持，冷启动由磁盘缓存预填）。 */
+    val mileageEnergyFlow: StateFlow<MileageEnergySummary?> = _mileageEnergy.asStateFlow()
+
     init {
         syncCapabilities()
         // 冷启动先用上一次的车况把界面填上，联网刷新再覆盖（不留空白帧）
         loadCachedStatus()
+        // 里程 / 能耗同样先上缓存，联网拉取在首页进入时触发
+        loadCachedMileageEnergy()
     }
 
     /** 让 [_capabilities] 跟随当前选中车辆；VIN 没变则不重复读取。 */
@@ -468,6 +524,62 @@ class AppRuntime(context: Context) {
         status
     }
 
+    // ---------------- 行驶里程 / 能耗 ----------------
+    //
+    // 老服务的 drivingrecord/mileage/energy/detail 接口：累计口径 + 近 7 日口径。
+    // 这个接口与车况轮询完全独立，**失败时静默保留上一次结果**，
+    // 绝不因为拿不到能耗就把车况卡片一起拖垮。
+
+    private fun energyCacheKey(vin: String) = "energy_$vin"
+
+    /** 用磁盘缓存预填 [mileageEnergyFlow]，避免冷启动时模块先空一帧。 */
+    fun loadCachedMileageEnergy(vin: String = session.selectedVin) {
+        val raw = runCatching { energyPrefs.getString(energyCacheKey(vin), null) }.getOrNull()
+        if (raw.isNullOrBlank()) {
+            _mileageEnergy.value = null
+            return
+        }
+        _mileageEnergy.value = runCatching { MileageEnergySummary.fromJson(JSONObject(raw)) }.getOrNull()
+    }
+
+    /**
+     * 拉取里程 / 能耗（15 分钟内不重复请求）。
+     * 两个口径都拿不到时返回上一次的缓存（可能为 null），由 UI 显示「--」。
+     */
+    suspend fun refreshMileageEnergy(force: Boolean = false): MileageEnergySummary? =
+        withContext(Dispatchers.IO) {
+            val vin = session.selectedVin
+            if (vin.isBlank()) return@withContext null
+            val cached = _mileageEnergy.value
+            val now = System.currentTimeMillis()
+            if (!force && cached != null && now - cached.capturedAt < MILEAGE_ENERGY_TTL_MS) {
+                return@withContext cached
+            }
+            if (!isNetworkAvailable()) return@withContext cached
+            val api = LeapmotorApi(session)
+            var summary = cached
+            runCatching { withNetworkRetry { api.getMileageEnergy() } }
+                .onSuccess { resp ->
+                    MileageEnergyParser.parseLifetime(resp)?.let { parsed ->
+                        summary = summary?.merge(parsed) ?: parsed
+                    }
+                }
+            runCatching { withNetworkRetry { api.getRecentMileageEnergy() } }
+                .onSuccess { resp ->
+                    MileageEnergyParser.parseRecent(resp)?.let { parsed ->
+                        summary = summary?.merge(parsed) ?: parsed
+                    }
+                }
+            val result = summary
+            if (result != null && result.hasAny) {
+                _mileageEnergy.value = result
+                runCatching {
+                    energyPrefs.edit().putString(energyCacheKey(vin), result.toJson().toString()).apply()
+                }
+            }
+            result
+        }
+
     /**
      * 原始报文 → [CarStatus]。
      *
@@ -492,6 +604,11 @@ class AppRuntime(context: Context) {
             fuelRange = fuel,
             fuelSoc = VehicleStatusMapper.fuelSocPercent(st),
             isRangeExtender = isRev,
+            rangeStandard = when (st.opt("rangeMode")?.toString()?.trim()) {
+                "0" -> "CLTC"
+                "1" -> "WLTC"
+                else -> null
+            },
             totalMileage = st.opt("totalMileage")?.toString()?.takeIf { it.isNotEmpty() },
             interiorTemp = st.opt("interiorTemp")?.toString()?.takeIf { it.isNotEmpty() },
             locked = WidgetStatusMapper.locked(st),
@@ -508,6 +625,15 @@ class AppRuntime(context: Context) {
             windowOpen = parseWindowOpen(st, session.selectedCarType),
             sunshadeOpen = parseSunshadeOpen(st),
             drivingStatus = parseDrivingStatus(st),
+            speed = st.opt("speed")?.toString()?.trim()?.takeIf { it.isNotEmpty() },
+            gearStatus = formatGear(st.opt("gearStatus")),
+            isDriving = runCatching { WidgetStatusMapper.isDriving(st) }.getOrNull(),
+            isShutDown = VehicleHomeStatus.isVehicleShutDown(
+                bcmKeyPositionOn3 = st.opt("bcmKeyPositionOn3"),
+                vehicleState = st.opt("vehicleState"),
+                parkingBrakeState = st.opt("parkingBrakeState"),
+                locked = WidgetStatusMapper.locked(st),
+            ),
             chargingPower = formatValue(pick(st, "chargingPower", "chargePower", "chargePowerKw"), "kW"),
             chargeTimeLeft = parseChargeTimeLeft(st),
             chargeVoltage = formatValue(pick(st, "chargeVoltage", "voltage", "bmsVoltage"), "V"),
@@ -676,17 +802,44 @@ class AppRuntime(context: Context) {
         )
     }
 
-    /** 行车状态：优先取文本字段，否则用速度推算（>0 行驶中，==0 已驻车）。 */
+    /**
+     * 行车状态：挡位（1010）+ 车速（1319）为准，再由整车状态 / EPB / 闭锁判断是否已下电驻车。
+     *
+     * 之前只看 speed 推算，车端不发速度信号时恒为「已驻车」，界面永远停在驻车中；
+     * 现在 D / R 挡直接显示「D挡 · 60km/h」，P 挡与已下电显示「已驻车」。
+     */
     private fun parseDrivingStatus(st: JSONObject): String? {
-        val text = listOf("drivingStatus", "vehicleStatus", "runStatus", "carStatus")
-            .firstNotNullOfOrNull { st.opt(it)?.toString()?.trim()?.takeIf { t -> t.isNotEmpty() } }
-        if (text != null) return text
-        val speed = (st.opt("speed") ?: st.opt("velocity") ?: st.opt("vehicleSpeed"))
-            ?.toString()?.toDoubleOrNull()
-        return when {
-            speed == null -> null
-            speed > 0.0 -> "行驶中"
-            else -> "已驻车"
+        val shutDown = VehicleHomeStatus.isVehicleShutDown(
+            bcmKeyPositionOn3 = st.opt("bcmKeyPositionOn3"),
+            vehicleState = st.opt("vehicleState"),
+            parkingBrakeState = st.opt("parkingBrakeState"),
+            locked = WidgetStatusMapper.locked(st),
+        )
+        VehicleHomeStatus.resolveDetailedDrivingState(
+            gearStatus = formatGear(st.opt("gearStatus")),
+            speed = st.opt("speed")?.toString(),
+            isDriving = runCatching { WidgetStatusMapper.isDriving(st) }.getOrNull(),
+            isShutDown = shutDown,
+        )?.let { return it.label }
+        // 既没有挡位也没有车速：退回整车运行状态（1944：1=Ready 行车就绪）
+        return when (st.opt("vehicleState")?.toString()?.trim()?.toIntOrNull()) {
+            1 -> "已启动"
+            0 -> "已驻车"
+            else -> null
+        }
+    }
+
+    /** 挡位归一化：P / R / N / D（服务端可能下发字母、中文或数字编码）。 */
+    private fun formatGear(v: Any?): String? {
+        if (v == null || v == JSONObject.NULL) return null
+        val raw = v.toString().trim()
+        if (raw.isEmpty()) return null
+        return when (raw.uppercase()) {
+            "P", "PARK", "驻车", "停车", "0" -> "P"
+            "R", "REVERSE", "倒车", "1" -> "R"
+            "N", "NEUTRAL", "空挡", "2" -> "N"
+            "D", "DRIVE", "前进", "3" -> "D"
+            else -> raw
         }
     }
 
@@ -795,6 +948,36 @@ class AppRuntime(context: Context) {
 
     fun setSeasonThemeId(id: String) {
         namingPrefs.edit().putString("season_theme", id).apply()
+    }
+
+    /** 动态背景开关：true = 播放对应季节的背景视频，false = 只用静态渐变。 */
+    fun seasonVideoEnabled(): Boolean = namingPrefs.getBoolean("season_video", true)
+
+    fun setSeasonVideoEnabled(enabled: Boolean) {
+        namingPrefs.edit().putBoolean("season_video", enabled).apply()
+    }
+
+    /**
+     * 背景视频的声音开关，默认关。
+     *
+     * 控车类 App 打开即出声太打扰，默认静音；想听配乐的用户自己在设置里打开。
+     */
+    fun seasonVideoSoundEnabled(): Boolean = namingPrefs.getBoolean("season_video_sound", false)
+
+    fun setSeasonVideoSoundEnabled(enabled: Boolean) {
+        namingPrefs.edit().putBoolean("season_video_sound", enabled).apply()
+    }
+
+    /**
+     * 夜间自动切换到星空主题，默认开。
+     *
+     * 每天 22:00 – 次日 06:00 自动生效星空主题，白天自动还原用户自己选的季节
+     * —— 用户的季节偏好本身不会被覆盖，只是夜间被临时顶替。
+     */
+    fun nightThemeAuto(): Boolean = namingPrefs.getBoolean("night_theme_auto", true)
+
+    fun setNightThemeAuto(enabled: Boolean) {
+        namingPrefs.edit().putBoolean("night_theme_auto", enabled).apply()
     }
 
     // ---------------- 外观模式（跟随系统 / 浅色 / 深色） ----------------
