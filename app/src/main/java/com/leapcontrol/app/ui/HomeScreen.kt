@@ -194,6 +194,9 @@ fun HomeScreen(
         var pendingAcTemp by remember { mutableStateOf<Int?>(null) }
         // 空调开/关指令在 PIN 验证完成后重放（记录要重放的指令名）
         var pendingAcCommand by remember { mutableStateOf<String?>(null) }
+        // 开启空调时随指令下发的设定温度（PIN 弹窗关掉后要能原样补发，
+        // 不能退回「用默认温度开」）
+        var pendingAcOnTemp by remember { mutableStateOf<Int?>(null) }
         var controlLayout by remember { mutableStateOf(runtime.controlLayout()) }
         var showControlEditor by remember { mutableStateOf(false) }
         // 车辆配置（冰箱/天窗/哨兵/座椅…）：已持久化的识别结果，不依赖当次车况
@@ -406,15 +409,19 @@ fun HomeScreen(
          *
          * 与之前「按推断状态取反」的做法不同：这里**不做状态推断**，点哪个按钮就发哪条指令，
          * 因此不会出现「因为状态读不到而一直发 acOn」的问题。
+         *
+         * [temperature] 是界面上当前的设定温度。车端没有单独的调温指令，温度只是「开空调」
+         * 指令里的一个字段（[Commands.buildAc]），所以只有开启时才有意义——关闭指令一律不带。
          * 指令返回后强制回拉车况（refresh），把真实的 acSwitch / acSetting 状态刷回界面。
          */
-        fun runAcCommand(turnOn: Boolean) {
+        fun runAcCommand(turnOn: Boolean, temperature: Int? = null) {
             scope.launch {
                 val command = if (turnOn) "acOn" else "acOff"
+                val preset = if (turnOn) temperature else null
                 controlling = command
                 actionMessage = null
                 try {
-                    actionMessage = runtime.control(command)
+                    actionMessage = runtime.control(command, presetAcTemperature = preset)
                     // 关键：回拉真实车况，刷新首页空调状态展示
                     refresh(force = true)
                     // 车端上报 acSwitch / acSetting 通常滞后几秒，再拉一次让状态收敛，
@@ -423,6 +430,7 @@ fun HomeScreen(
                     refresh(force = true)
                 } catch (e: NeedPinException) {
                     pendingAcCommand = command
+                    pendingAcOnTemp = preset
                     showPinDialog = true
                 } catch (e: Exception) {
                     actionMessage = friendlyError(e)
@@ -625,6 +633,12 @@ fun HomeScreen(
                 onTempChange = { runAcTemperature(it) },
                 busyOn = controlling == "acOn",
                 busyOff = controlling == "acOff",
+                // 「开启空调」按页面上的设定温度下发（关机态调温只改草稿，不再顺手开空调）
+                onAcPower = { turnOn, temp ->
+                    ensureConfirmed(
+                        if (turnOn) "开启空调（${temp}℃）" else "关闭空调",
+                    ) { runAcCommand(turnOn, temp) }
+                },
                 // 定时空调是同级二级页：必须先收起空调页，否则会被上面的分支挡住不显示
                 onOpenScheduledAc = {
                     showClimate = false
@@ -1036,14 +1050,18 @@ fun HomeScreen(
             Spacer(Modifier.height(12.dp))
             ScrollHintBar(state = listState, itemCount = cells.size, visibleCount = 4)
 
-            // ---- 空调概览条：设定温度 / 车内温度 / 风扇开关（风扇可一键开关空调）----
+            // ---- 空调概览条：◀ 设定温度 ▶ / 车内温度 / 风扇开关 ----
+            // 温度箭头在关机态只改界面上的预设值，点右侧风扇开关才带着这个温度下发开启指令
             Spacer(Modifier.height(14.dp))
             AcQuickCard(
                 status = currentStatus,
                 busy = controlling == "acOn" || controlling == "acOff",
-                onToggle = { turnOn ->
-                    ensureConfirmed(if (turnOn) "开启空调" else "关闭空调") { runAcCommand(turnOn) }
+                onToggle = { turnOn, temp ->
+                    ensureConfirmed(
+                        if (turnOn) "开启空调（${temp}℃）" else "关闭空调",
+                    ) { runAcCommand(turnOn, temp) }
                 },
+                onTempChange = { runAcTemperature(it) },
             )
 
             // ---- 胎压监测卡（左半）+ 近 7 天行程卡（右半）；相伴卡整行宽放在下面 ----
@@ -1252,11 +1270,14 @@ fun HomeScreen(
                                     val fix = pendingHealthFix
                                     val otaAction = pendingOtaAction
                                     val acCmd = pendingAcCommand
+                                    // 开启指令要连同用户设定的温度一起补发
+                                    val acOnTemp = pendingAcOnTemp
                                     when {
                                         acCmd != null -> {
                                             val turnOn = acCmd == "acOn"
                                             pendingAcCommand = null
-                                            runAcCommand(turnOn)
+                                            pendingAcOnTemp = null
+                                            runAcCommand(turnOn, acOnTemp)
                                         }
                                         temp != null -> {
                                             pendingAcTemp = null

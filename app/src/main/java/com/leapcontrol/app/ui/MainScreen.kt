@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
@@ -42,6 +43,7 @@ import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.R
 import com.leapcontrol.app.UpdateCheckResult
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 // ============================================================================
 // 雾化遮罩（以车模正中心为圆心的椭圆）—— 调参入口，改这里即可，不用动下面的布局
@@ -132,6 +134,11 @@ fun MainScreen(
     // 版本更新弹窗：检测到 GitHub 新版本且未忽略该版本时，启动后自动弹出
     var showUpdateDialog by remember { mutableStateOf(false) }
     var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    // 更新包下载状态：仓库已私有，浏览器直链打不开，必须在 App 内带令牌下载
+    var updateDownloading by remember { mutableStateOf(false) }
+    var updateProgress by remember { mutableStateOf<Float?>(null) }
+    var updateDownloadError by remember { mutableStateOf<String?>(null) }
+    val updateScope = rememberCoroutineScope()
 
     val systemInDark = isSystemInDarkTheme()
     // 明暗来源只有一处：始终浅色/始终深色由模式锁死，跟随系统看手机
@@ -397,10 +404,35 @@ fun MainScreen(
                 UpdateDialog(
                     info = pendingUpdate!!,
                     currentVersion = runtime.currentVersion(),
+                    downloading = updateDownloading,
+                    progress = updateProgress,
+                    downloadError = updateDownloadError,
                     onOpenDownload = {
-                        // 默认直接下载安装包；无直链时退回发布页
-                        runtime.openExternal(pendingUpdate!!.downloadUrl ?: pendingUpdate!!.htmlUrl)
-                        showUpdateDialog = false
+                        val info = pendingUpdate
+                        if (info != null && !updateDownloading) {
+                            updateDownloading = true
+                            updateProgress = null
+                            updateDownloadError = null
+                            updateScope.launch {
+                                val result = runtime.downloadUpdate(info) { p ->
+                                    updateProgress = p.fraction
+                                }
+                                updateDownloading = false
+                                result.fold(
+                                    onSuccess = { file ->
+                                        if (runtime.installUpdate(file)) {
+                                            showUpdateDialog = false
+                                        } else {
+                                            updateDownloadError =
+                                                "安装包已下载，但需要先在系统里允许「安装未知应用」，授权后回来再点一次"
+                                        }
+                                    },
+                                    onFailure = { e ->
+                                        updateDownloadError = "下载失败：${e.message ?: "网络异常"}"
+                                    },
+                                )
+                            }
+                        }
                     },
                     onOpenGithub = {
                         runtime.openExternal(pendingUpdate!!.htmlUrl)

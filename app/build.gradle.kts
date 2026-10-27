@@ -1,8 +1,30 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+/**
+ * 仓库已改为私有，App 检测更新 / 下载安装包必须带一个只读令牌，
+ * 否则 `api.github.com/repos/.../releases/latest` 与附件直链都会 404。
+ *
+ * 令牌不写进源码，也不提交到仓库：
+ *   - 优先读 `local.properties` 的 `leapcontrol.gh.token`
+ *   - 其次读环境变量 `LEAPCONTROL_GH_TOKEN`
+ * 两者都没有时注入空串，App 会退化成匿名访问（私有仓库下会显示「检测失败」，
+ * 不会崩，也便于在没有令牌的机器上编译）。
+ */
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val ghReleaseToken: String = (
+    localProps.getProperty("leapcontrol.gh.token")
+        ?: System.getenv("LEAPCONTROL_GH_TOKEN")
+        ?: ""
+    ).trim()
 
 android {
     namespace = "com.leapcontrol.app"
@@ -18,6 +40,8 @@ android {
         resourceConfigurations += setOf("zh", "zh-rCN")
         buildConfigField("String", "AMAP_WEB_KEY_ENCRYPTED", "\"\"")
         buildConfigField("String", "PGYER_API_KEY_ENCRYPTED", "\"\"")
+        // 私有仓库的只读令牌（仅用于 Releases 查询与附件下载）
+        buildConfigField("String", "GH_RELEASE_TOKEN", "\"$ghReleaseToken\"")
         ndk {
             abiFilters += setOf("arm64-v8a")
         }

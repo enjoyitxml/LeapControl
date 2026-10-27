@@ -42,6 +42,12 @@ fun UpdateDialog(
     onOpenGithub: () -> Unit,
     onDismiss: () -> Unit,
     onNeverAgain: () -> Unit,
+    /** 正在 App 内下载安装包：按钮锁住，显示进度。 */
+    downloading: Boolean = false,
+    /** 下载进度 0f..1f；null 表示总长未知。 */
+    progress: Float? = null,
+    /** 下载失败的提示文案。 */
+    downloadError: String? = null,
 ) {
     val C = LocalAppColors.current
     // 半透明遮罩 + 居中卡片；点遮罩 = 稍后
@@ -86,18 +92,69 @@ fun UpdateDialog(
                     lineHeight = 20.sp,
                 )
                 Spacer(Modifier.height(22.dp))
-                // 主操作：去下载（默认直接下载安装包）/ GitHub（查看发布页与更新说明）
+                // 下载进度 / 失败提示：只在走 App 内下载时出现
+                if (downloading || downloadError != null) {
+                    if (downloading) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(C.chipBg),
+                        ) {
+                            val fraction = (progress ?: 0f).coerceIn(0f, 1f)
+                            if (fraction > 0f) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(fraction)
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(C.accent),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = if (progress != null) {
+                                "正在下载安装包 ${(progress * 100).toInt()}%"
+                            } else {
+                                "正在下载安装包…"
+                            },
+                            color = C.textSecondary,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    if (downloadError != null) {
+                        Text(
+                            text = downloadError,
+                            color = Color(0xFFD32F2F),
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
+                // 主操作：去下载（App 内下载后直接唤起安装器）/ GitHub（查看发布页与更新说明）
                 Row {
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .height(50.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(C.accent)
-                            .clickable(onClick = onOpenDownload),
+                            .background(if (downloading) C.accent.copy(alpha = 0.55f) else C.accent)
+                            .clickable(enabled = !downloading, onClick = onOpenDownload),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("去下载", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            text = when {
+                                downloading -> "下载中"
+                                downloadError != null -> "重新下载"
+                                else -> "去下载"
+                            },
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
                     }
                     Spacer(Modifier.width(12.dp))
                     Box(

@@ -13,6 +13,8 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- 应用内下载新版本后直接唤起系统安装器（Android 8+ 还需用户在系统里授权一次） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <application
@@ -40,6 +42,17 @@
             android:exported="false"
             android:label="崩溃信息"
             android:theme="@style/Theme.LeapBuddy" />
+
+        <!-- 更新包在 filesDir/update/ 里，安装时要通过 content:// 交给系统安装器 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- 系统控制中心快捷磁贴（ACTIVE_TILE：点击即在应用内执行，不折叠面板） -->
         <service

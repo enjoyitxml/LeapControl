@@ -396,6 +396,10 @@ fun AboutScreen(
     var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
     // 上一次手动检查是否「失败」（网络 / 接口异常），与「已是最新」分开反馈
     var checkFailed by remember { mutableStateOf(false) }
+    // 更新包下载状态：私有仓库必须带令牌在 App 内下载
+    var updateDownloading by remember { mutableStateOf(false) }
+    var updateProgress by remember { mutableStateOf<Float?>(null) }
+    var updateDownloadError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     Column(
@@ -456,9 +460,11 @@ fun AboutScreen(
 
         Spacer(Modifier.height(12.dp))
         // 本项目开源地址：完全免费开源，点击直接用浏览器打开仓库
+        // 仓库已转为私有：这里保留入口给作者自己（手机浏览器已登录 GitHub 时可用），
+        // 文案写清楚「私有」，避免别人点开看到 404 以为软件坏了
         ClickRow(
-            title = "项目开源地址",
-            desc = PROJECT_GITHUB_URL,
+            title = "项目仓库（私有）",
+            desc = "已转为私有仓库，仅作者本人可访问",
             iconRes = R.drawable.ic_github,
             onClick = { runtime.openExternal(PROJECT_GITHUB_URL) },
         )
@@ -486,10 +492,35 @@ fun AboutScreen(
         UpdateDialog(
             info = pendingUpdate!!,
             currentVersion = runtime.currentVersion(),
+            downloading = updateDownloading,
+            progress = updateProgress,
+            downloadError = updateDownloadError,
             onOpenDownload = {
-                // 默认直接下载安装包；无直链时退回发布页
-                runtime.openExternal(pendingUpdate!!.downloadUrl ?: pendingUpdate!!.htmlUrl)
-                showUpdateDialog = false
+                val info = pendingUpdate
+                if (info != null && !updateDownloading) {
+                    updateDownloading = true
+                    updateProgress = null
+                    updateDownloadError = null
+                    scope.launch {
+                        val result = runtime.downloadUpdate(info) { p ->
+                            updateProgress = p.fraction
+                        }
+                        updateDownloading = false
+                        result.fold(
+                            onSuccess = { file ->
+                                if (runtime.installUpdate(file)) {
+                                    showUpdateDialog = false
+                                } else {
+                                    updateDownloadError =
+                                        "安装包已下载，但需要先在系统里允许「安装未知应用」，授权后回来再点一次"
+                                }
+                            },
+                            onFailure = { e ->
+                                updateDownloadError = "下载失败：${e.message ?: "网络异常"}"
+                            },
+                        )
+                    }
+                }
             },
             onOpenGithub = {
                 runtime.openExternal(pendingUpdate!!.htmlUrl)
