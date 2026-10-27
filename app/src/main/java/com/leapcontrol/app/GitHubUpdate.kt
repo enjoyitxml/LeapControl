@@ -19,6 +19,17 @@ object GitHubUpdate {
     private const val REPO = "enjoyitxml/LeapControl"
     private const val API = "https://api.github.com/repos/$REPO/releases/latest"
 
+    /**
+     * 访问令牌：仓库当前为私有，匿名访问 releases/latest 会返回 404，
+     * 必须带令牌才能读到最新发布版。
+     *
+     * ⚠️ 安全提示：此令牌为 classic PAT、拥有仓库完整权限，仅用于自用 / 开发期检测。
+     * 分发前请二选一：① 把仓库设为 Public（最干净，App 无需任何令牌）；
+     * ② 改用「细粒度只读令牌」（仅 Contents: Read），降低泄露风险。
+     * 不要把拥有写权限的 PAT 长期固化在可分发产物里。
+     */
+    private const val AUTH_TOKEN = "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"
+
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
@@ -27,7 +38,13 @@ object GitHubUpdate {
     /** 最新发布版信息；无网络 / 解析失败 / 无发布版时返回 null。 */
     fun latestRelease(): AppUpdateInfo? {
         val body = try {
-            client.newCall(Request.Builder().url(API).get().build()).execute().use { resp ->
+            val req = Request.Builder()
+                .url(API)
+                .header("Authorization", "token $AUTH_TOKEN")
+                .header("Accept", "application/vnd.github+json")
+                .get()
+                .build()
+            client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return null
                 resp.body?.string()
             }

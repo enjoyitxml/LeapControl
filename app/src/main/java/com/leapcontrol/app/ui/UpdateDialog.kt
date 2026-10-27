@@ -39,6 +39,7 @@ fun UpdateDialog(
     info: AppUpdateInfo,
     currentVersion: String,
     onOpenDownload: () -> Unit,
+    onOpenGithub: () -> Unit,
     onDismiss: () -> Unit,
     onNeverAgain: () -> Unit,
 ) {
@@ -85,8 +86,8 @@ fun UpdateDialog(
                     lineHeight = 20.sp,
                 )
                 Spacer(Modifier.height(22.dp))
+                // 主操作：去下载（默认直接下载安装包）/ GitHub（查看发布页与更新说明）
                 Row {
-                    // 去下载（主操作）
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -99,29 +100,43 @@ fun UpdateDialog(
                         Text("去下载", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     }
                     Spacer(Modifier.width(12.dp))
-                    // 稍后
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .height(50.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .background(C.chipBg)
+                            .clickable(onClick = onOpenGithub),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("GitHub", color = C.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                // 次要操作：稍后 / 不再提醒此版本
+                Row {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(C.chipBg)
                             .clickable(onClick = onDismiss),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("稍后", color = C.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Text("稍后", color = C.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                     }
-                }
-                Spacer(Modifier.height(8.dp))
-                // 不再提醒此版本
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onNeverAgain)
-                        .padding(vertical = 10.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("不再提醒此版本", color = C.textSecondary, fontSize = 13.sp)
+                    Spacer(Modifier.width(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable(onClick = onNeverAgain),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("不再提醒此版本", color = C.textSecondary, fontSize = 14.sp)
+                    }
                 }
             }
         }

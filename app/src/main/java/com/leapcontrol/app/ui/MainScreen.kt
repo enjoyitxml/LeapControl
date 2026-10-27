@@ -248,6 +248,7 @@ fun MainScreen(
                         )
 
                         SettingsPage.ABOUT -> AboutScreen(
+                            runtime = runtime,
                             onBack = { settingsPage = null },
                             onOpenDisclaimer = { settingsPage = SettingsPage.DISCLAIMER },
                             onOpenPrivacy = { settingsPage = SettingsPage.PRIVACY },
@@ -416,6 +417,11 @@ fun MainScreen(
                     info = pendingUpdate!!,
                     currentVersion = runtime.currentVersion(),
                     onOpenDownload = {
+                        // 默认直接下载安装包；无直链时退回发布页
+                        runtime.openExternal(pendingUpdate!!.downloadUrl ?: pendingUpdate!!.htmlUrl)
+                        showUpdateDialog = false
+                    },
+                    onOpenGithub = {
                         runtime.openExternal(pendingUpdate!!.htmlUrl)
                         showUpdateDialog = false
                     },
