@@ -2,6 +2,7 @@ package com.leapcontrol.app.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
@@ -14,8 +15,16 @@ data class AppColors(
     /** 页面背景渐变（首页若选中四季主题，则用季节渐变替代） */
     val bgTop: Color,
     val bgBottom: Color,
-    /** 首页沉浸式卡片 / 弹窗底色（半透明磨砂，让季节渐变透出） */
+    /** 首页沉浸式卡片底色（半透明磨砂，让季节渐变透出）。**不要用于弹窗** */
     val cardBg: Color,
+    /**
+     * 弹窗卡片底色：**完全不透明**。
+     *
+     * 弹窗浮在首页车模、四季渐变、视频背景之上，如果沿用半透明的 [cardBg]，
+     * 底下的深色画面会透上来，白底变灰、深底发花，标题与正文糊成一片（实测可读性很差）。
+     * 弹窗是模态的、盖住整屏，本来就不需要透光，统一用实心色。
+     */
+    val dialogBg: Color,
     /**
      * 二级页（设置 / 个性化 / 关于 / 车辆 / 舒适等）的实心面板底色：
      * 不透光、与背景对比清晰，避免半透明白压在浅色渐变上发灰、出现"脏块"。
@@ -73,6 +82,8 @@ private fun lightColors(accent: Color = DefaultAccent) = AppColors(
     bgBottom = Color(0xFFF2F5F3),
     // 磨砂半透明：让四季背景透出来，同时保证文字对比度（仅用于首页沉浸式卡片）
     cardBg = Color(0xD9FFFFFF),
+    // 弹窗实心：只掺一点点主题色，肉眼接近纯白，压在暗下去的遮罩上对比最强
+    dialogBg = mix(Color.White, accent, 0.02f),
     // 二级页实心面板：纯白，与浅色渐变形成清晰对比、不发灰
     panelBg = mix(Color.White, accent, 0.05f),
     textPrimary = Color(0xFF1B1D22),
@@ -97,6 +108,8 @@ private fun darkColors(accent: Color = DefaultAccent) = AppColors(
     bgTop = Color(0xFF0C0D10),
     bgBottom = Color(0xFF181A1F),
     cardBg = Color(0xCC14161B),
+    // 弹窗实心：比 panelBg 再亮一档，在压暗的遮罩上能看出「浮起来」的层次
+    dialogBg = mix(Color(0xFF21242B), accent, 0.08f),
     // 二级页实心面板：中性深灰，压在深绿 / 深蓝等季节背景上清晰可辨
     panelBg = mix(Color(0xFF1B1E24), accent, 0.10f),
     textPrimary = Color(0xFFF2F2F4),
@@ -130,5 +143,17 @@ val LocalAppColors = staticCompositionLocalOf { lightColors() }
  */
 @Composable
 fun ProvideAppColors(dark: Boolean, accent: Color? = null, content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalAppColors provides appColors(dark, accent), content = content)
+    // 配色表是 data class，值不变时读者不会重组；但这里每次重组都重新计算一遍
+    // mix() 加两次对象构造是白费，用 remember 钉住。
+    val colors = remember(dark, accent) { appColors(dark, accent) }
+    CompositionLocalProvider(LocalAppColors provides colors, content = content)
 }
+
+/**
+ * 模态弹窗的遮罩黑度。
+ *
+ * 以前是 0.45，背景压不下去：首页车模、四季渐变、视频背景的亮度跟弹窗正文差不多，
+ * 眼睛会往背景上飘。0.56 把背景明确压成「远景」，弹窗卡片（不透明的 [AppColors.dialogBg]）
+ * 才是唯一的视觉焦点，阅读顺序不再打架。
+ */
+const val DIALOG_SCRIM = 0.56f

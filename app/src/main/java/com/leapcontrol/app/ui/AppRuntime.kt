@@ -15,7 +15,6 @@ import com.leapcontrol.app.GitHubUpdate
 import com.leapcontrol.app.AmapWebApi
 import com.leapcontrol.app.ApiException
 import com.leapcontrol.app.Commands
-import com.leapcontrol.app.ControlCommand
 import com.leapcontrol.app.ControlResultPollingPolicy
 import com.leapcontrol.app.FridgeControlCommand
 import com.leapcontrol.app.FridgeMode
@@ -50,7 +49,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
-import java.util.Locale
 
 /** 未设置 4 位控车密码时抛出，由 UI 层弹出输入框。 */
 class NeedPinException : Exception("需要先设置 4 位控车密码")
@@ -458,15 +456,15 @@ class AppRuntime(context: Context) {
     }
 
     /** 跳转到外部链接（GitHub 发布页 / APK 下载）。 */
-    fun openExternal(url: String) {
-        runCatching {
-            appContext.startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                },
-            )
-        }
-    }
+    /** 用系统浏览器打开外链。返回 false 表示没有 App 能接管（比如设备上没装浏览器）。 */
+    fun openExternal(url: String): Boolean = runCatching {
+        appContext.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+        )
+        true
+    }.getOrDefault(false)
 
     // ---------------- 车况快照（跨页面 / 跨 Tab 保持） ----------------
     //
@@ -1014,7 +1012,7 @@ class AppRuntime(context: Context) {
     // ---------------- 背景主题 ----------------
     //
     // 主题按「明暗」分成两个槽位：浅色槽存浅色主题，深色槽存深色主题。
-    // 外观模式（跟随系统 / 始终浅色 / 始终深色 / 自由）只决定「现在取哪个槽」，
+    // 外观模式（跟随系统 / 始终浅色 / 始终深色）只决定「现在取哪个槽」，
     // 具体取哪套由 ThemeResolver 统一推导，这里只负责读写偏好。
 
     /**
@@ -1048,27 +1046,50 @@ class AppRuntime(context: Context) {
         namingPrefs.edit().putString("dark_theme", safe.id).apply()
     }
 
+    // ---------------- 「我的」页头像 ----------------
+
     /**
-     * 保存用户选的主题：按主题自身的明暗落到对应槽位。
+     * 头像选择，存成 `preset:<下标>` 或 `custom` 的可读字符串。
      *
-     * UI 只调这一个方法，不需要自己判断「这套该进哪个槽」——
-     * 日间主题 / 视频里的春夏秋冬季进浅色槽，夜间主题 / 星空视频进深色槽。
+     * 这里只存「选择」本身；自定义照片的文件由 [AvatarStore] 管，
+     * 所以换头像不改图片文件，删图片也不动偏好——两边各管一件事。
      */
-    fun saveThemeChoice(id: String) {
-        val theme = SeasonThemes.byId(id)
-        if (theme.night) setDarkThemeId(theme.id) else setLightThemeId(theme.id)
+    fun avatarChoiceRaw(): String =
+        namingPrefs.getString("avatar_choice", AvatarChoice.DEFAULT_RAW)
+            ?: AvatarChoice.DEFAULT_RAW
+
+    fun setAvatarChoiceRaw(raw: String) {
+        namingPrefs.edit().putString("avatar_choice", raw).apply()
     }
 
     /**
-     * 夜间时段（22:00–06:00）强制深色，默认开，只在「自由模式」下生效。
+     * 自定义头像的内存热缓存。
      *
-     * 前面几版是「夜间自动切星空」，现在并进外观模式体系：跟随系统时明暗完全交给手机，
-     * 自由模式才提供「到点自动转深色」这一层覆盖。
+     * 和车模图一个道理：MainScreen 用 `when(tab)` 切页，切回「我的」时整棵子树重建、
+     * remember 全丢。只靠页面里的 remember，自定义头像会先闪一下内置头像再跳回来。
+     * 挂到 AppRuntime 上，切页时能同步拿到，第一帧就是对的。
      */
-    fun nightThemeAuto(): Boolean = namingPrefs.getBoolean("night_theme_auto", true)
+    private var customAvatarCache: Bitmap? = null
 
-    fun setNightThemeAuto(enabled: Boolean) {
-        namingPrefs.edit().putBoolean("night_theme_auto", enabled).apply()
+    /** 已解码的自定义头像（同步、可能为 null）。 */
+    fun cachedCustomAvatar(): Bitmap? = customAvatarCache?.takeIf { !it.isRecycled }
+
+    /** 读自定义头像，优先用缓存。 */
+    suspend fun customAvatar(): Bitmap? = withContext(Dispatchers.IO) {
+        cachedCustomAvatar() ?: AvatarStore.load(appContext)?.also { customAvatarCache = it }
+    }
+
+    /** 换过照片后强制重读（缓存里还是旧图）。 */
+    suspend fun reloadCustomAvatar(): Bitmap? = withContext(Dispatchers.IO) {
+        val loaded = AvatarStore.load(appContext)
+        customAvatarCache = loaded
+        loaded
+    }
+
+    /** 删掉自定义头像，连同缓存一起清。 */
+    fun clearCustomAvatar() {
+        customAvatarCache = null
+        AvatarStore.clear(appContext)
     }
 
     // ---------------- 相伴卡背景 ----------------

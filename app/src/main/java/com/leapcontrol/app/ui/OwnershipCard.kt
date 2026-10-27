@@ -52,6 +52,8 @@ fun OwnershipCard(
     status: CarStatus?,
     energy: MileageEnergySummary?,
     backdropId: String? = null,
+    /** 右上角「呼吸小白点」：点一下随机换壁纸；传 null 则不显示按钮 */
+    onRandomTheme: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // 图片内容不可控（换图/裁切位置都会变），所以文字统一带一层柔和投影兜底
@@ -158,6 +160,16 @@ fun OwnershipCard(
                     modifier = Modifier.padding(bottom = 5.dp),
                 )
             }
+        }
+
+        // 快捷换壁纸：小白点压在卡片右上角的天空/雪山上，半透明不抢画面
+        onRandomTheme?.let { onClick ->
+            QuickThemeButton(
+                onClick = onClick,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 2.dp, end = 6.dp),
+            )
         }
     }
 }

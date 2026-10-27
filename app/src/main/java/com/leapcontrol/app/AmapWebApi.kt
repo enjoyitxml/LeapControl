@@ -3,7 +3,6 @@ package com.leapcontrol.app
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
-import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /** POI 搜索结果。 */

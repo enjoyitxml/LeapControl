@@ -7,7 +7,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -35,9 +34,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AcUnit
@@ -46,36 +43,24 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Curtains
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.EvStation
 import androidx.compose.material.icons.filled.Luggage
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.MonitorHeart
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Toys
 import androidx.compose.material.icons.filled.Window
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -95,6 +80,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -102,35 +88,31 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.vector.ImageVector
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.collectAsState
-import androidx.core.view.WindowCompat
 import com.leapcontrol.app.R
 import com.leapcontrol.app.VehicleCapabilities
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 // ============================================================
@@ -161,12 +143,14 @@ fun HomeScreen(
     onLogout: () -> Unit,
     /** 顶部「皮肤」按钮：打开个性化页（外观模式 / 四季主题 / 动态背景） */
     onOpenSkin: () -> Unit,
-    seasonId: String,
-    onSeasonChange: (String) -> Unit,
+    /** 车模 / 相伴卡右上角的「呼吸小白点」：在当前壁纸所属的池子里随机换一套 */
+    onRandomTheme: () -> Unit = {},
     /** 向上汇报「当前是否在零控首页主界面」—— 视频背景只在首页主界面播放 */
     onMainPageChange: (Boolean) -> Unit,
     /** 向上汇报「车模是否已滚出可视区」—— 滚出后视频背景切换为纯色背景，提高可读性 */
     onCarModelGoneChange: (Boolean) -> Unit,
+    /** 向上汇报「首页是否正在滑动」—— 滑动期间冻结动态背景，把整帧预算都留给滚动 */
+    onScrollingChange: (Boolean) -> Unit = {},
 ) {
     // 配色由 MainScreen 通过 LocalAppColors 下发（跟随系统 / 浅色 / 深色）
     val C = LocalAppColors.current
@@ -195,7 +179,6 @@ fun HomeScreen(
         var controlling by remember { mutableStateOf<String?>(null) }
         // 只在「用户手动下拉刷新」时转圈；来自生命周期的自动刷新全程静默，避免闪动
         var refreshing by remember { mutableStateOf(false) }
-        var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
         var carName by remember { mutableStateOf(runtime.displayName()) }
         var showRenameDialog by remember { mutableStateOf(false) }
         var showPinDialog by remember { mutableStateOf(false) }
@@ -253,8 +236,6 @@ fun HomeScreen(
         var pendingFridgeCommand by remember {
             mutableStateOf<com.leapcontrol.app.FridgeControlCommand?>(null)
         }
-        val season = SeasonThemes.byId(seasonId)
-
         // ---- 控车二次确认（应用内弹窗确认，仅主界面触发；控制中心磁贴绕过）----
         // 指纹 / 设备密码验证已移除：发起控车时只弹应用内确认框，不再要求验证。
         val confirmGate = remember { runtime.biometricConfirmEnabled() }
@@ -281,9 +262,23 @@ fun HomeScreen(
             !showScheduledAc && !showVehicleHealth && !showOta && !showControlEditor &&
             !showTire
         LaunchedEffect(onMainPage) { onMainPageChange(onMainPage) }
-        // 车模滚出可视区 -> 通知 MainScreen 把视频背景切纯色
-        val carModelGone = homeScrollState.value >= carModelBottomY - 2f
-        LaunchedEffect(carModelGone) { onCarModelGoneChange(carModelGone) }
+
+        // ---- 车模滚出可视区 / 正在滑动：两个「滚动派生信号」----
+        // 这里绝对不能在组合期直接读 homeScrollState.value：它在滑动时每帧都会变，
+        // 组合期读它等于让整个首页（近 3000 行的 composable）每帧重组一次，
+        // 真机上就是肉眼可见的掉帧。改用 snapshotFlow —— 只在布尔值真正翻转时回调一次。
+        LaunchedEffect(carModelBottomY) {
+            // 车模还没测量出位置时（初值 0）别急着报「已滑出」，否则首帧场景会被压暗
+            if (carModelBottomY <= 0f) return@LaunchedEffect
+            snapshotFlow { homeScrollState.value >= carModelBottomY - 2f }
+                .distinctUntilChanged()
+                .collect { onCarModelGoneChange(it) }
+        }
+        LaunchedEffect(homeScrollState) {
+            snapshotFlow { homeScrollState.isScrollInProgress }
+                .distinctUntilChanged()
+                .collect { onScrollingChange(it) }
+        }
 
         // 进入首页时拉取一次官方车模图（本地有缓存则直接用）。
         // 车模默认常开（设置里的显示开关已移除），不再有「关闭车模」这条分支；
@@ -346,13 +341,6 @@ fun HomeScreen(
         DisposableEffect(Unit) {
             val unregister = runtime.registerNetworkRestoreListener()
             onDispose { unregister() }
-        }
-        // 每分钟刷新"更新于 x 前"文案（仅刷新文案，不请求数据）
-        LaunchedEffect(Unit) {
-            while (true) {
-                delay(60_000)
-                nowTick = System.currentTimeMillis()
-            }
         }
         // 行驶中提高刷新频率：车在跑时挡位 / 车速变化快，靠「切前台才刷」跟不上，
         // 停在首页主界面时每 12 秒静默回拉一次（不转圈、不改文案）
@@ -741,22 +729,27 @@ fun HomeScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // 车名 + 下拉箭头：多车时点这一块切换车辆
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.clickable(enabled = vehicles.size > 1) { showVehicleMenu = true },
-                        ) {
-                            Text(
-                                text = carName,
-                                color = LocalAppColors.current.textPrimary,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                modifier = Modifier.widthIn(max = 180.dp),
-                            )
-                            // 账号下有多辆车时才显示下拉箭头
-                            if (vehicles.size > 1) {
-                                Spacer(Modifier.width(4.dp))
+                        // 车名：点一下直接改名（原来那个铅笔按钮已去掉，入口合并到车名本身，
+                        // 省一个图标位、也少一次「先找按钮」的判断）
+                        Text(
+                            text = carName,
+                            color = LocalAppColors.current.textPrimary,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .widthIn(max = 180.dp)
+                                .clickable { showRenameDialog = true },
+                        )
+                        // 账号下有多辆车时才有下拉箭头：**箭头单独可点**用于切换车辆，
+                        // 和「点车名改名」分成两个热区，互不抢
+                        if (vehicles.size > 1) {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clickable { showVehicleMenu = true },
+                                contentAlignment = Alignment.Center,
+                            ) {
                                 Icon(
                                     Icons.Filled.KeyboardArrowDown,
                                     contentDescription = "切换车辆",
@@ -765,13 +758,6 @@ fun HomeScreen(
                                 )
                             }
                         }
-                        // 编辑车名：只存本地，清空则回到零跑官方 App 的昵称
-                        HeaderIconButton(
-                            iconRes = R.drawable.ic_edit,
-                            description = "修改车名",
-                            size = 18.dp,
-                            onClick = { showRenameDialog = true },
-                        )
                     }
                     // 车况更新时间：紧贴车名下方，点一下可手动刷新
                     Spacer(Modifier.height(4.dp))
@@ -968,14 +954,24 @@ fun HomeScreen(
                         contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                         modifier = Modifier.fillMaxSize(),
                     )
+                    // 快捷换壁纸：小白点放在车模右上角，正好落在车顶右侧的空画面上
+                    QuickThemeButton(
+                        onClick = onRandomTheme,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 4.dp, end = 2.dp),
+                    )
                 }
             }
 
             // ---- 快捷控车：一行显示 4 个，左右滑动查看其余，下方带横向滚动提示条 ----
             Spacer(Modifier.height(6.dp))
-            // 车不带对应硬件的按钮直接不出现（如无天窗的车不给天窗入口）
-            val cells = ControlActions.available(capabilities, controlLayout)
-                .map { it.id } + listOf(EDIT_CELL)
+            // 车不带对应硬件的按钮直接不出现（如无天窗的车不给天窗入口）。
+            // 可用按钮只跟「车辆能力 + 用户自定义顺序」有关，钉住即可，
+            // 否则每次重组都要把整张指令表按硬件条件过滤一遍。
+            val cells = remember(capabilities, controlLayout) {
+                ControlActions.available(capabilities, controlLayout).map { it.id } + EDIT_CELL
+            }
             val listState = rememberLazyListState()
             BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                 val gap = 12.dp
@@ -1044,6 +1040,7 @@ fun HomeScreen(
                 status = currentStatus,
                 energy = energySummary,
                 backdropId = ownershipBackdropId,
+                onRandomTheme = onRandomTheme,
             )
 
             // ---- 功能模块区（页面最下方）：横向滑动的模块卡 + 指示条 + 自定义按钮 ----
@@ -1119,7 +1116,7 @@ fun HomeScreen(
             var nameInput by remember { mutableStateOf(runtime.customName().ifEmpty { runtime.displayName() }) }
             AlertDialog(
                 onDismissRequest = { showRenameDialog = false },
-                containerColor = LocalAppColors.current.cardBg,
+                containerColor = LocalAppColors.current.dialogBg,
                 title = { Text("自定义车名", color = LocalAppColors.current.textPrimary) },
                 text = {
                     Column {
@@ -1180,7 +1177,7 @@ fun HomeScreen(
             var pin by remember { mutableStateOf("") }
             AlertDialog(
                 onDismissRequest = { showPinDialog = false },
-                containerColor = LocalAppColors.current.cardBg,
+                containerColor = LocalAppColors.current.dialogBg,
                 title = { Text("输入控车密码", color = LocalAppColors.current.textPrimary) },
                 text = {
                     Column {
@@ -1284,7 +1281,7 @@ private fun VehicleDropdown(
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
-        containerColor = LocalAppColors.current.cardBg,
+        containerColor = LocalAppColors.current.dialogBg,
     ) {
         vehicles.forEach { vehicle ->
             val selected = vehicle.vin == selectedVin
@@ -1321,7 +1318,7 @@ private fun VehicleDropdown(
 private fun HealthDialog(status: CarStatus?, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = LocalAppColors.current.cardBg,
+        containerColor = LocalAppColors.current.dialogBg,
         title = { Text("车辆健康", color = LocalAppColors.current.textPrimary, fontSize = 17.sp) },
         text = {
             if (status == null || status.tires.isEmpty()) {
@@ -1332,69 +1329,6 @@ private fun HealthDialog(status: CarStatus?, onDismiss: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("关闭", color = LocalAppColors.current.accent) }
-        },
-    )
-}
-
-/** 四季主题选择弹窗。 */
-@Composable
-private fun ThemePickerDialog(
-    currentId: String,
-    onSelect: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = LocalAppColors.current.cardBg,
-        title = { Text("主题", color = LocalAppColors.current.textPrimary, fontSize = 17.sp) },
-        text = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                SeasonThemes.ALL.forEach { theme ->
-                    val selected = theme.id == currentId
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { onSelect(theme.id) }
-                            .padding(2.dp)
-                            .weight(1f),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(64.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Brush.verticalGradient(theme.gradient(LocalAppColors.current.isDark)))
-                                .then(
-                                    if (selected) {
-                                        Modifier.border(2.dp, LocalAppColors.current.accent, RoundedCornerShape(10.dp))
-                                    } else {
-                                        Modifier.border(0.5.dp, LocalAppColors.current.barTrack, RoundedCornerShape(10.dp))
-                                    }
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (selected) {
-                                Icon(Icons.Filled.Check, null, tint = LocalAppColors.current.accent, modifier = Modifier.size(22.dp))
-                            }
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = theme.label,
-                            color = if (selected) LocalAppColors.current.accent else LocalAppColors.current.textPrimary,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("完成", color = LocalAppColors.current.accent) }
         },
     )
 }
@@ -1629,7 +1563,7 @@ private fun ActionBanner(
             modifier = Modifier
                 .widthIn(max = 320.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(if (isError) Color(0xFFFDECEA) else C.cardBg)
+                .background(if (isError) Color(0xFFFDECEA) else C.dialogBg)
                 .shadow(elevation = 12.dp, shape = RoundedCornerShape(16.dp))
                 .clickable(onClick = onDismiss)
                 .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -1668,14 +1602,14 @@ private fun ConfirmDialog(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
+            .background(Color.Black.copy(alpha = DIALOG_SCRIM))
             .clickable(onClick = onDismiss),
         contentAlignment = Alignment.Center,
     ) {
         Surface(
             shape = RoundedCornerShape(20.dp),
-            color = C.cardBg,
-            shadowElevation = 18.dp,
+            color = C.dialogBg,
+            shadowElevation = 20.dp,
             // 卡片自身消费点击，避免穿透到遮罩误关
             modifier = Modifier
                 .fillMaxWidth(0.84f)
@@ -1972,7 +1906,7 @@ private fun ControlEditorDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = LocalAppColors.current.cardBg,
+        containerColor = LocalAppColors.current.dialogBg,
         title = { Text("自定义控车按钮", color = LocalAppColors.current.textPrimary) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -2071,7 +2005,9 @@ internal fun ScrollHintBar(
     // 滑块宽度与「可见比例」一致；过窄时兜底 9dp，保证始终看得见
     val thumbWidth = (trackWidth * (visibleCount.toFloat() / itemCount)).coerceAtLeast(9.dp)
     // 连续进度 = (首个可见项下标 + 该项已滑出的比例) / 最大可滚动格数，取值 0..1
-    val progress by remember(state, itemCount, visibleCount) {
+    // 这里刻意不 by 解包：进度只在 graphicsLayer 里读，横滑时只更新图层属性，
+    // 不重组、也不重新布局（用 Modifier.offset 的话每帧都要走一遍 measure/place）。
+    val progress = remember(state, itemCount, visibleCount) {
         derivedStateOf {
             val info = state.layoutInfo
             val total = info.totalItemsCount
@@ -2090,6 +2026,9 @@ internal fun ScrollHintBar(
             (scrolled / maxScroll).coerceIn(0f, 1f)
         }
     }
+    val maxOffsetPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+        (trackWidth - thumbWidth).toPx()
+    }
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Box(
             modifier = Modifier
@@ -2100,7 +2039,7 @@ internal fun ScrollHintBar(
         ) {
             Box(
                 modifier = Modifier
-                    .offset(x = (trackWidth - thumbWidth) * progress)
+                    .graphicsLayer { translationX = maxOffsetPx * progress.value }
                     .width(thumbWidth)
                     .fillMaxHeight()
                     .clip(CircleShape)
@@ -2759,10 +2698,16 @@ private fun HeaderIconButton(
  * 车况更新时间：只保留「月-日 时:分」（MM-dd HH:mm）。
  * 放在车名下方，年份与秒钟对当下刷新判断没有意义，去掉后一行能完整显示。
  */
-private fun formatUpdateTime(ts: Long): String {
-    val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
-    return sdf.format(Date(ts))
-}
+private fun formatUpdateTime(ts: Long): String = UPDATE_TIME_FORMAT.format(Date(ts))
+
+/**
+ * 复用一个格式化器。
+ *
+ * 这行文案在首页顶部，重组频率不低；每次 new 一个 `SimpleDateFormat` 要重新解析
+ * 模式串、建 Calendar，属于纯粹的白费。`SimpleDateFormat` 不是线程安全的，
+ * 但这里只在主线程的组合阶段调用，复用是安全的。
+ */
+private val UPDATE_TIME_FORMAT = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
 
 /** 按电量百分比填充的电池图标；percent 为空时只画空心轮廓。 */
 @Composable

@@ -32,17 +32,15 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
-import com.leapcontrol.app.AppearanceMode
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.R
 import com.leapcontrol.app.UpdateCheckResult
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 
 // ============================================================================
@@ -118,41 +116,54 @@ fun MainScreen(
     // 车模是否滑出视口：HomeScreen 通过 onCarModelGoneChange 上报。
     // 车模消失后视频背景也要跟着隐去、换成纯色，避免画面细节干扰下方文字，提高可读性。
     var carModelGone by remember { mutableStateOf(false) }
+    // 首页是否正在滑动：滑动期间冻结动态场景。
+    // 24s 一循环的慢动画在滑动时根本看不清，却要和滚动抢同一帧预算，冻结它最划算。
+    var homeScrolling by remember { mutableStateOf(false) }
     var appearance by remember { mutableStateOf(runtime.appearanceMode()) }
     // 两个主题槽位：浅色槽 / 深色槽。外观模式只决定「现在取哪一格」。
+    // 跟随系统时两格都参与（白天一格、夜里一格），锁定模式只用得到对应那一格。
     var lightThemeId by remember { mutableStateOf(runtime.lightThemeId()) }
     var darkThemeId by remember { mutableStateOf(runtime.darkThemeId()) }
-    // 自由模式下的「夜间时段强制深色」开关
-    var nightAuto by remember { mutableStateOf(runtime.nightThemeAuto()) }
     // App 是否在前台：进后台就暂停解码，别在看不见的时候继续耗电
     var resumed by remember { mutableStateOf(true) }
     // 版本更新弹窗：检测到 GitHub 新版本且未忽略该版本时，启动后自动弹出
     var showUpdateDialog by remember { mutableStateOf(false) }
     var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
 
-    // ---- 夜间时段覆盖（只在自由模式生效）----
-    // 每 30 秒复核一次当前时间，跨过 22:00 / 06:00 时立刻生效，不必等用户重启 App。
-    var nightTick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(30_000)
-            nightTick++
-        }
-    }
-    val nightOverrideActive = remember(appearance, nightAuto, nightTick) {
-        ThemeResolver.supportsNightOverride(appearance) && nightAuto && SeasonThemes.isNight()
-    }
-
     val systemInDark = isSystemInDarkTheme()
-    // 明暗来源：始终浅色/始终深色由模式锁死；跟随系统与自由模式都看手机
-    //（自由模式额外允许「到点强制深色」这一层覆盖）。
-    val dark = ThemeResolver.isDark(appearance, systemInDark, nightOverrideActive)
+    // 明暗来源只有一处：始终浅色/始终深色由模式锁死，跟随系统看手机
+    val dark = ThemeResolver.isDark(appearance, systemInDark)
     // 生效主题：按明暗取对应槽位，槽里类型不对时自动回落到该类型默认主题
     val season = ThemeResolver.activeTheme(appearance, dark, lightThemeId, darkThemeId)
     val activeSeasonId = season.id
+    // ---- 快捷换壁纸（车模 / 相伴卡右上角的呼吸小白点）----
+    // 在当前壁纸所属的池子里随机换一套：浅色只在日间池、深色只在夜间池、
+    // 视频只在视频池，规则见 ThemeResolver.randomSwitch。
+    // 只写「正在显示的那一侧槽位」，也不改外观模式 —— 用户点的是换张壁纸，不是换模式。
+    val randomizeTheme = {
+        val pick = ThemeResolver.randomSwitch(appearance, systemInDark, lightThemeId, darkThemeId)
+        if (pick.lightThemeId != lightThemeId) {
+            runtime.setLightThemeId(pick.lightThemeId)
+            lightThemeId = pick.lightThemeId
+        }
+        if (pick.darkThemeId != darkThemeId) {
+            runtime.setDarkThemeId(pick.darkThemeId)
+            darkThemeId = pick.darkThemeId
+        }
+    }
     // 主题色跟着季节走：卡片描边、柱状图、强调元素都用它
     val themeAccent = season.accent(dark)
-    val colors = appColors(dark, themeAccent)
+    val colors = remember(dark, themeAccent) { appColors(dark, themeAccent) }
+    // 页面底色渐变与 Material 配色只在「主题 / 明暗」变化时重建。
+    // 每次重组都 new 一个 Brush 会让下层所有 draw 缓存失效，等于白做优化。
+    val pageGradient = remember(season.id, dark) { Brush.verticalGradient(season.gradient(dark)) }
+    val materialScheme = remember(dark, themeAccent, colors.bgTop) {
+        if (dark) {
+            darkColorScheme(primary = themeAccent, background = colors.bgTop)
+        } else {
+            lightColorScheme(primary = themeAccent, background = colors.bgTop)
+        }
+    }
 
     // 状态栏/导航栏透明，图标颜色随主题；关闭手势条对比度蒙层，让渐变一直透到底
     // 前后台事件：回前台恢复播放，进后台暂停
@@ -196,11 +207,7 @@ fun MainScreen(
 
     ProvideAppColors(dark = dark, accent = themeAccent) {
         MaterialTheme(
-            colorScheme = if (dark) {
-                darkColorScheme(primary = colors.accent, background = colors.bgTop)
-            } else {
-                lightColorScheme(primary = colors.accent, background = colors.bgTop)
-            },
+            colorScheme = materialScheme,
         ) {
             // 二级页（设置 / 个性化 / 支持开发者 / 开源协议与致谢 / 关于；
             // 关于内嵌 免责声明 与 隐私条款 两个子页）：不播视频，统一铺当前季节的主题色渐变
@@ -208,7 +215,7 @@ fun MainScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Brush.verticalGradient(season.gradient(dark))),
+                        .background(pageGradient),
                 ) {
                     when (settingsPage) {
                         SettingsPage.SETTINGS -> SettingsScreen(
@@ -227,16 +234,17 @@ fun MainScreen(
                             darkThemeId = darkThemeId,
                             activeThemeId = activeSeasonId,
                             systemDark = systemInDark,
-                            darkNow = dark,
-                            onPickTheme = { id ->
-                                runtime.saveThemeChoice(id)
-                                val picked = SeasonThemes.byId(id)
-                                if (picked.night) darkThemeId = picked.id else lightThemeId = picked.id
-                            },
-                            nightAuto = nightAuto,
-                            onNightAutoChange = {
-                                runtime.setNightThemeAuto(it)
-                                nightAuto = it
+                            // 选完主题由 ThemeResolver 统一算出「模式 + 两槽」，
+                            // 这里只负责落盘并同步内存状态，不做第二套判断
+                            onApplyPick = { pick ->
+                                if (pick.mode != appearance) {
+                                    runtime.setAppearanceMode(pick.mode)
+                                    appearance = pick.mode
+                                }
+                                runtime.setLightThemeId(pick.lightThemeId)
+                                runtime.setDarkThemeId(pick.darkThemeId)
+                                lightThemeId = pick.lightThemeId
+                                darkThemeId = pick.darkThemeId
                             },
                             onBack = { settingsPage = null },
                         )
@@ -275,14 +283,18 @@ fun MainScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Brush.verticalGradient(season.gradient(dark))),
+                    .background(pageGradient),
             ) {
                 // ---- 主题场景：只画在页面上半部分，往下淡出到看不见 ----
                 // 场景覆盖「屏幕顶端 → 空调控件上沿」，车模与快捷控车压在已经淡化的画面上；
-                // 不在首页主界面 / 进后台时改用固定相位，完全静止、省电。
-                val sceneAnimated = tab == 0 && homeOnMainPage && resumed
-                // 车模滑出视口后画面已经没有承托，场景跟着淡下去，让下方卡片落在干净底色上
-                val sceneAlpha by animateFloatAsState(
+                // 不在首页主界面 / 进后台 / 正在滑动时都改用固定相位，完全静止、省电、也省帧。
+                val sceneAnimated = tab == 0 && homeOnMainPage && resumed && !homeScrolling
+                // 车模滑出视口后画面已经没有承托，场景跟着淡下去，让下方卡片落在干净底色上。
+                // 注意这里【不能】用 by 解包：alpha 在 420ms 动画里每帧都在变，
+                // 组合期读它会让整个 MainScreen（含首页近 3000 行）每帧重组，
+                // 而这段动画恰好发生在用户向上滑动的那一刻。改成 graphicsLayer 里读，
+                // 只更新图层属性，零重组、零重新布局。
+                val sceneAlpha = animateFloatAsState(
                     targetValue = if (carModelGone) 0.30f else 1f,
                     animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
                     label = "sceneAlpha",
@@ -298,6 +310,8 @@ fun MainScreen(
                 val veilBrush = remember(veilColor, veilRadiusY, veilCenterY, season.veilAlphaScale) {
                     radialVeilBrush(veilColor, veilCenterY, veilRadiusY, season.veilAlphaScale)
                 }
+                // 场景层统一用 graphicsLayer 做透明度，动画期间不触发重组
+                val sceneModifier = Modifier.graphicsLayer { alpha = sceneAlpha.value }
 
                 if (season.video) {
                     // ---- 视频主题（旧版四季 / 星空实拍视频，排在动态主题之后）----
@@ -308,7 +322,7 @@ fun MainScreen(
                         dark = dark,
                         paused = !resumed || !sceneAnimated,
                         veilBrush = veilBrush,
-                        modifier = Modifier.alpha(sceneAlpha),
+                        modifier = sceneModifier,
                     )
                 } else if (season.scene != SceneKind.NONE) {
                     ThemeBackdrop(
@@ -316,7 +330,7 @@ fun MainScreen(
                         dark = dark,
                         animate = sceneAnimated,
                         veilBrush = veilBrush,
-                        modifier = Modifier.alpha(sceneAlpha),
+                        modifier = sceneModifier,
                     )
                 }
                 Scaffold(
@@ -348,15 +362,11 @@ fun MainScreen(
                                 runtime = runtime,
                                 onLogout = onLogout,
                                 onOpenSkin = { settingsPage = SettingsPage.PERSONALIZATION },
-                                seasonId = activeSeasonId,
-                                onSeasonChange = { id ->
-                                    // 首页若做快捷换肤，同样按主题明暗落到对应槽位
-                                    runtime.saveThemeChoice(id)
-                                    val picked = SeasonThemes.byId(id)
-                                    if (picked.night) darkThemeId = picked.id else lightThemeId = picked.id
-                                },
+                                // 车模 / 相伴卡右上角的呼吸小白点：随机换壁纸
+                                onRandomTheme = randomizeTheme,
                                 onMainPageChange = { homeOnMainPage = it },
                                 onCarModelGoneChange = { carModelGone = it },
+                                onScrollingChange = { homeScrolling = it },
                             )
 
                             else -> ProfileScreen(
