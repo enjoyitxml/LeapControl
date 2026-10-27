@@ -64,7 +64,7 @@ fun OwnershipCard(
         modifier = modifier
             .fillMaxWidth()
             .height(116.dp)
-            .clip(RoundedCornerShape(16.dp)),
+            .clip(RoundedCornerShape(8.dp)),
     ) {
         // 竖构图原图 Crop 到 3:1 后正好取到「天空 + 山脊」这一段，不裁峰尖
         Image(

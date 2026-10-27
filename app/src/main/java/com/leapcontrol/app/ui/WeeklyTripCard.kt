@@ -48,9 +48,9 @@ fun WeeklyTripCard(
     Column(
         modifier = modifier
             .height(172.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(C.panelBg, RoundedCornerShape(16.dp))
-            .border(1.dp, C.border, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(8.dp))
+            .background(C.panelBg, RoundedCornerShape(8.dp))
+            .border(1.dp, C.border, RoundedCornerShape(8.dp))
             .padding(horizontal = 12.dp, vertical = 11.dp),
     ) {
         Text(
