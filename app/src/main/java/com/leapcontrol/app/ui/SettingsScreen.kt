@@ -131,8 +131,8 @@ fun SettingsScreen(
             }
             Spacer(Modifier.height(10.dp))
             SwitchRow(
-                label = "指纹/密码二次确认",
-                desc = "主界面下发控车指令前需验证，防误触（控制中心磁贴不受限）",
+                label = "控车二次确认",
+                desc = "主界面下发控车指令前弹窗确认，防误触（控制中心磁贴不受限）",
                 checked = confirmGate,
                 onCheckedChange = {
                     confirmGate = it

@@ -1,7 +1,5 @@
 package com.leapcontrol.app.ui
 
-import android.app.Activity
-import androidx.fragment.app.FragmentActivity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -113,7 +111,6 @@ import java.util.Date
 import java.util.Locale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -246,33 +243,22 @@ fun HomeScreen(
         }
         val season = SeasonThemes.byId(seasonId)
 
-        // ---- 控车二次确认（指纹 / 密码防误触，仅主界面触发；控制中心磁贴绕过）----
-        val activity = LocalContext.current as? FragmentActivity
+        // ---- 控车二次确认（应用内弹窗确认，仅主界面触发；控制中心磁贴绕过）----
+        // 指纹 / 设备密码验证已移除：发起控车时只弹应用内确认框，不再要求验证。
         val confirmGate = remember { runtime.biometricConfirmEnabled() }
         var pendingConfirm by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
 
         /**
          * 下发控车指令前的二次确认闸门：
-         * - 开关关闭：直接执行。
-         * - 开关开启且设备支持生物识别 / 设备凭据：弹出系统指纹或密码确认框，通过后才执行。
-         * - 开关开启但设备既无指纹也无锁屏凭据：回退到应用内确认弹窗，避免无法确认。
+         * - 开关关闭：直接执行，不再弹窗。
+         * - 开关开启：弹出应用内确认弹窗（取消 / 确认两个大按钮），点确认后才执行；
+         *   点取消或点遮罩放弃本次操作。
          * 注：本函数只包裹「用户主动点击」的入口；PIN 弹窗重放指令时直接调用底层执行函数，
-         * 不再重复触发本闸门，避免「指纹 + 密码」双重确认。
+         * 不再重复触发本闸门。
          */
         fun ensureConfirmed(label: String, action: () -> Unit) {
             if (!confirmGate) { action(); return }
-            val act = activity
-            if (act != null && BiometricAuth.canAuthenticate(act)) {
-                BiometricAuth.authenticate(
-                    activity = act,
-                    title = "确认操作",
-                    subtitle = "请验证指纹或密码以发送「$label」",
-                    onSuccess = action,
-                    onError = { /* 用户取消，放弃本次操作 */ },
-                )
-            } else {
-                pendingConfirm = label to action
-            }
+            pendingConfirm = label to action
         }
 
         LaunchedEffect(Unit) { vehicles = runCatching { runtime.vehicles() }.getOrDefault(emptyList()) }
@@ -909,32 +895,34 @@ fun HomeScreen(
                     modifier = Modifier.wrapContentWidth(),
                     horizontalAlignment = Alignment.End,
                 ) {
-                    // 车辆状态：闭锁始终显示；车窗/后备箱/遮阳帘仅开启时红色高亮；同一行、可横向滚动
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        val locked = currentStatus?.locked
-                        StatusItem(
-                            icon = if (locked == true) Icons.Filled.Lock else Icons.Filled.LockOpen,
-                            label = when (locked) {
-                                true -> "车辆已闭锁"
-                                false -> "车辆未闭锁"
-                                null -> "闭锁状态未知"
-                            },
-                            alert = locked == false,
-                        )
-                        if (currentStatus?.windowOpen == true) {
-                            Spacer(Modifier.width(16.dp))
-                            StatusItem(Icons.Filled.Window, "车窗未关", alert = true)
-                        }
-                        if (currentStatus?.trunkOpen == true) {
-                            Spacer(Modifier.width(16.dp))
-                            StatusItem(Icons.Filled.Luggage, "后备箱未关", alert = true)
-                        }
-                        if (currentStatus?.sunshadeOpen == true) {
-                            Spacer(Modifier.width(16.dp))
-                            StatusItem(Icons.Filled.Curtains, "遮阳帘开启", alert = true)
+                    val locked = currentStatus?.locked
+                    // 闭锁状态始终显示
+                    StatusItem(
+                        icon = if (locked == true) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                        label = when (locked) {
+                            true -> "车辆已闭锁"
+                            false -> "车辆未闭锁"
+                            null -> "闭锁状态未知"
+                        },
+                        alert = locked == false,
+                    )
+                    // 已开启提醒：排在「车辆已闭锁」正下方、纵向排列；未开启不提示
+                    val openHints = buildList {
+                        if (currentStatus?.windowOpen == true) add(Icons.Filled.Window to "车窗已开启")
+                        if (currentStatus?.trunkOpen == true) add(Icons.Filled.Luggage to "后备箱已开启")
+                        if (currentStatus?.sunshadeOpen == true) add(Icons.Filled.Curtains to "遮阳帘已开启")
+                        if (currentStatus?.acOn == true) add(Icons.Filled.AcUnit to "空调已开启")
+                    }
+                    if (openHints.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Column(
+                            modifier = Modifier.wrapContentWidth(),
+                            horizontalAlignment = Alignment.End,
+                        ) {
+                            openHints.forEachIndexed { index, (icon, text) ->
+                                if (index > 0) Spacer(Modifier.height(8.dp))
+                                StatusItem(icon, text, alert = true)
+                            }
                         }
                     }
                 }
@@ -1047,6 +1035,15 @@ fun HomeScreen(
                 isError = refreshError != null,
                 onDismiss = { actionMessage = null; refreshError = null },
             )
+            // 控车二次确认弹窗（应用内确认，无指纹 / 密码验证）
+            pendingConfirm?.let { (label, action) ->
+                ConfirmDialog(
+                    title = "确认操作",
+                    message = "确定要向车辆发送「$label」指令吗？",
+                    onConfirm = { pendingConfirm = null; action() },
+                    onDismiss = { pendingConfirm = null },
+                )
+            }
             }
         }
 
@@ -1205,34 +1202,6 @@ fun HomeScreen(
             )
         }
 
-        // ---- 控车二次确认（设备无指纹 / 凭据时的应用内回退确认）----
-        if (pendingConfirm != null) {
-            val (confirmLabel, confirmAction) = pendingConfirm!!
-            AlertDialog(
-                onDismissRequest = { pendingConfirm = null },
-                containerColor = LocalAppColors.current.panelBg,
-                title = { Text("确认操作", color = LocalAppColors.current.textPrimary) },
-                text = {
-                    Text(
-                        "请确认是否向车辆发送「$confirmLabel」指令？",
-                        color = LocalAppColors.current.textSecondary,
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
-                    )
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        pendingConfirm = null
-                        confirmAction()
-                    }) { Text("确认", color = LocalAppColors.current.accent) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { pendingConfirm = null }) {
-                        Text("取消", color = LocalAppColors.current.textSecondary)
-                    }
-                },
-            )
-        }
     }
 }
 
@@ -1568,10 +1537,10 @@ private fun TempStepButton(symbol: String, enabled: Boolean, onClick: () -> Unit
 
 
 /**
- * 控车/刷新结果悬浮条：固定在屏幕底部居中，6 秒后自动消失，带关闭按钮。
+ * 控车 / 刷新结果通知：屏幕正中、系统通知样式，6 秒后自动消失，点击可关闭。
  *
  * 之前这条反馈是滚动列表最后一行——用户根本滚不到那里，
- * 于是「指令发出但 nothing changed」就被感知成“点了没反应”。
+ * 于是「指令发出但 nothing changed」就被感知成“点了没反应”；改成居中浮层后始终可见。
  */
 @Composable
 private fun ActionBanner(
@@ -1587,27 +1556,107 @@ private fun ActionBanner(
     }
     Box(
         modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.BottomCenter,
+        contentAlignment = Alignment.Center,
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 22.dp)
-                .padding(bottom = 108.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(if (isError) Color(0xFFFFEBEE) else C.cardBg)
-                .shadow(elevation = 8.dp, shape = RoundedCornerShape(14.dp))
+                .widthIn(max = 320.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (isError) Color(0xFFFDECEA) else C.cardBg)
+                .shadow(elevation = 12.dp, shape = RoundedCornerShape(16.dp))
                 .clickable(onClick = onDismiss)
-                .padding(horizontal = 14.dp, vertical = 11.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Icon(
+                imageVector = if (isError) Icons.Filled.Close else Icons.Filled.Check,
+                contentDescription = null,
+                tint = if (isError) Color(0xFFD32F2F) else Color(0xFF2FCC71),
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(12.dp))
             Text(
                 text = message,
                 color = if (isError) Color(0xFFD32F2F) else C.textPrimary,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-                modifier = Modifier.weight(1f),
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
             )
+        }
+    }
+}
+
+/**
+ * 控车二次确认弹窗：应用内确认，不再要求指纹 / 设备密码。
+ * 取消 / 确认两个按钮做得较大（高 50dp、并排等大），便于单手操作。
+ */
+@Composable
+private fun ConfirmDialog(
+    title: String,
+    message: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val C = LocalAppColors.current
+    // 半透明遮罩 + 居中卡片；点遮罩 = 取消
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.45f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = C.cardBg,
+            shadowElevation = 18.dp,
+            // 卡片自身消费点击，避免穿透到遮罩误关
+            modifier = Modifier
+                .fillMaxWidth(0.84f)
+                .clickable(onClick = { }),
+        ) {
+            Column(modifier = Modifier.padding(22.dp)) {
+                Text(
+                    text = title,
+                    color = C.textPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = message,
+                    color = C.textSecondary,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                )
+                Spacer(Modifier.height(22.dp))
+                Row {
+                    // 取消
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(C.chipBg)
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("取消", color = C.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    // 确认
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(C.accent)
+                            .clickable(onClick = onConfirm),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("确认", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
         }
     }
 }

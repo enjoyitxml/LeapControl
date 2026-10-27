@@ -199,10 +199,10 @@ class AppRuntime(context: Context) {
         .ifEmpty { session.selectedNickname.trim() }
         .ifEmpty { "我的零跑" }
 
-    // 控车二次确认（指纹 / 密码防误触）：默认开启
+    // 控车二次确认（应用内弹窗确认，防误触）：默认开启
     private val securityPrefs = appContext.getSharedPreferences("leapcontrol_security", Context.MODE_PRIVATE)
 
-    /** 主界面向车端下发控车指令前，是否需要指纹 / 密码二次确认（默认开启）。 */
+    /** 主界面向车端下发控车指令前，是否需要二次确认（应用内弹窗，默认开启）。 */
     fun biometricConfirmEnabled(): Boolean =
         securityPrefs.getBoolean("biometric_confirm", true)
 
