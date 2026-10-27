@@ -17,13 +17,15 @@ data class AmapPoi(
 )
 
 /**
- * 高德 Web 服务 API 封装（关键字搜索）。
+ * 高德 Web 服务 API 封装（关键字搜索 + 逆地理编码）。
  *
- * 说明：车辆定位功能已下线，逆地理编码（经纬度 → 中文地址）随之一并移除；
- * 这里只保留「发送到车机」需要的目的地关键字搜索。
+ * - 关键字搜索：用于「发送到车机」目的地检索；
+ * - 逆地理编码（经纬度 → 中文地址）：开源接口 23，车辆位置页「寻车」展示所在地址用。
+ *   高德要求 GCJ-02 坐标，而车端上报的 GPS（信号 2/3）正是火星坐标系，可直接传入。
  */
 object AmapWebApi {
     private const val SEARCH_URL = "https://restapi.amap.com/v3/place/text"
+    private const val REGEO_URL = "https://restapi.amap.com/v3/geocode/regeo"
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
@@ -76,5 +78,21 @@ object AmapWebApi {
         }
         if (body.isNullOrBlank()) return null
         return runCatching { JSONObject(body) }.getOrNull()
+    }
+
+    /**
+     * 逆地理编码：经纬度 → 中文地址。
+     * @param latitude 纬度（GCJ-02）
+     * @param longitude 经度（GCJ-02）
+     * @return 格式化地址，失败或参数缺失返回 null
+     */
+    fun reverseGeocode(key: String, latitude: Double, longitude: Double): String? {
+        if (key.isBlank()) return null
+        val loc = "${longitude},${latitude}"
+        val url = "$REGEO_URL?key=$key&location=$loc&output=JSON&radius=1000&extensions=base"
+        val root = jsonOf(url) ?: return null
+        if (root.optString("status") != "1") return null
+        val regeo = root.optJSONObject("regeocode") ?: return null
+        return regeo.optString("formatted_address").takeIf { it.isNotBlank() }
     }
 }

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 续航分项 · 燃油：加油机（机身+显示屏+油枪），官方同款 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M6.22 2.95 H13.20"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.91"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M3.82 5.45 H11.89 A1.64 1.64 0.00 0.00 1.00 13.53 7.09 V17.67 A1.64 1.64 0.00 0.00 1.00 11.89 19.31 H3.82 A1.64 1.64 0.00 0.00 1.00 2.18 17.67 V7.09 A1.64 1.64 0.00 0.00 1.00 3.82 5.45 Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.91"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M3.82 10.69 H17.35"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.91"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M13.85 5.02 H17.78 A1.42 1.42 0.00 0.00 1.00 19.20 6.44 V9.38"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.91"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M19.20 9.38 L19.75 14.62"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.91"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M19.75 14.62 H16.25"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.91"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M13.85 16.80 H19.31"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.91"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M2.95 19.53 H16.25"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.91"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

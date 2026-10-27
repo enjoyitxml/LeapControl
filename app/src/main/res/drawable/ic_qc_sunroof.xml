@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 同风格补画：天窗玻璃 + 开启的遮阳板。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M 5.796 9.388 H 16.898 A 1.306 1.306 0 0 1 18.204 10.694 V 14.612 A 1.306 1.306 0 0 1 16.898 15.918 H 5.796 A 1.306 1.306 0 0 1 4.490 14.612 V 10.694 A 1.306 1.306 0 0 1 5.796 9.388 Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 8.408 6.122 H 17.551 A 1.306 1.306 0 0 1 18.857 7.429 V 11.347 A 1.306 1.306 0 0 1 17.551 12.653 H 8.408 A 1.306 1.306 0 0 1 7.102 11.347 V 7.429 A 1.306 1.306 0 0 1 8.408 6.122 Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

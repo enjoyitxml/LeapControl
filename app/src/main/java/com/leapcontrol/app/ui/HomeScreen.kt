@@ -1,6 +1,7 @@
 package com.leapcontrol.app.ui
 
 import android.app.Activity
+import androidx.fragment.app.FragmentActivity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -112,6 +113,7 @@ import java.util.Locale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -125,6 +127,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.collectAsState
 import androidx.core.view.WindowCompat
+import com.leapcontrol.app.R
 import com.leapcontrol.app.VehicleCapabilities
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -148,9 +151,12 @@ private const val AC_SETTLE_DELAY_MS = 3_000L
 fun HomeScreen(
     runtime: AppRuntime,
     onLogout: () -> Unit,
-    onOpenSettings: () -> Unit,
+    /** 顶部「皮肤」按钮：打开个性化页（外观模式 / 四季主题 / 动态背景） */
+    onOpenSkin: () -> Unit,
     seasonId: String,
     onSeasonChange: (String) -> Unit,
+    /** 向上汇报「当前是否在零控首页主界面」—— 视频背景只在首页主界面播放 */
+    onMainPageChange: (Boolean) -> Unit,
 ) {
     // 配色由 MainScreen 通过 LocalAppColors 下发（跟随系统 / 浅色 / 深色）
     val C = LocalAppColors.current
@@ -168,6 +174,8 @@ fun HomeScreen(
         // 这里只订阅，不再用 remember 存 —— 切到「我的」再回来不会先变成 null 而闪一下。
         val status by runtime.statusFlow.collectAsState()
         val lastUpdated by runtime.lastUpdatedFlow.collectAsState()
+        // 行驶里程 / 能耗（独立接口，拿不到就静默保持上一次结果）
+        val energySummary by runtime.mileageEnergyFlow.collectAsState()
         var refreshError by remember { mutableStateOf<String?>(null) }
         var actionMessage by remember { mutableStateOf<String?>(null) }
         var controlling by remember { mutableStateOf<String?>(null) }
@@ -214,6 +222,9 @@ fun HomeScreen(
         var showScheduledAc by remember { mutableStateOf(false) }
         var showVehicleHealth by remember { mutableStateOf(false) }
         var showOta by remember { mutableStateOf(false) }
+        // 胎压监测 / 车辆位置（寻车）独立页
+        var showTire by remember { mutableStateOf(false) }
+        var showFindCar by remember { mutableStateOf(false) }
         var acPlan by remember { mutableStateOf(com.leapcontrol.app.ScheduledAcPlan()) }
         var acPlanLoading by remember { mutableStateOf(false) }
         var acPlanLoadFailed by remember { mutableStateOf(false) }
@@ -231,18 +242,55 @@ fun HomeScreen(
         }
         val season = SeasonThemes.byId(seasonId)
 
+        // ---- 控车二次确认（指纹 / 密码防误触，仅主界面触发；控制中心磁贴绕过）----
+        val activity = LocalContext.current as? FragmentActivity
+        val confirmGate = remember { runtime.biometricConfirmEnabled() }
+        var pendingConfirm by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+
+        /**
+         * 下发控车指令前的二次确认闸门：
+         * - 开关关闭：直接执行。
+         * - 开关开启且设备支持生物识别 / 设备凭据：弹出系统指纹或密码确认框，通过后才执行。
+         * - 开关开启但设备既无指纹也无锁屏凭据：回退到应用内确认弹窗，避免无法确认。
+         * 注：本函数只包裹「用户主动点击」的入口；PIN 弹窗重放指令时直接调用底层执行函数，
+         * 不再重复触发本闸门，避免「指纹 + 密码」双重确认。
+         */
+        fun ensureConfirmed(label: String, action: () -> Unit) {
+            if (!confirmGate) { action(); return }
+            val act = activity
+            if (act != null && BiometricAuth.canAuthenticate(act)) {
+                BiometricAuth.authenticate(
+                    activity = act,
+                    title = "确认操作",
+                    subtitle = "请验证指纹或密码以发送「$label」",
+                    onSuccess = action,
+                    onError = { /* 用户取消，放弃本次操作 */ },
+                )
+            } else {
+                pendingConfirm = label to action
+            }
+        }
+
         LaunchedEffect(Unit) { vehicles = runCatching { runtime.vehicles() }.getOrDefault(emptyList()) }
 
-        // 进入首页时拉取一次官方车模图（本地有缓存则直接用）；
-        // 若用户在设置里关闭了车模显示，则完全不请求官方图。
+        // 二级页（充电中心 / 座椅 / 空调 / 体检 / OTA…）不属于「首页」，
+        // 打开时向 MainScreen 汇报，让背景视频只在首页主界面播放
+        val onMainPage = !showChargingCenter && !showSeatComfort && !showFridge && !showClimate &&
+            !showScheduledAc && !showVehicleHealth && !showOta && !showControlEditor &&
+            !showTire && !showFindCar
+        LaunchedEffect(onMainPage) { onMainPageChange(onMainPage) }
+
+        // 进入首页时拉取一次官方车模图（本地有缓存则直接用）。
+        // 车模默认常开（设置里的显示开关已移除），不再有「关闭车模」这条分支；
         // 依赖 vinKey：切换车辆后自动重新拉取
-        val artworkMode = runtime.carArtworkMode()
-        LaunchedEffect(artworkMode, vinKey) {
-            carBitmap = if (artworkMode == "off") {
-                null
-            } else {
-                runCatching { runtime.fetchCarImage() }.getOrNull()
-            }
+        LaunchedEffect(vinKey) {
+            carBitmap = runCatching { runtime.fetchCarImage() }.getOrNull()
+        }
+
+        // 进入首页（或切换车辆）时拉一次里程 / 能耗；15 分钟内不重复请求，
+        // 失败也不打扰用户 —— 模块卡保持上一次结果或显示「--」。
+        LaunchedEffect(vinKey) {
+            runCatching { runtime.refreshMileageEnergy() }
         }
 
         // 去重：2 秒内的重复请求忽略（避免冷启动时启动刷新与前台事件叠加）
@@ -299,6 +347,15 @@ fun HomeScreen(
             while (true) {
                 delay(60_000)
                 nowTick = System.currentTimeMillis()
+            }
+        }
+        // 行驶中提高刷新频率：车在跑时挡位 / 车速变化快，靠「切前台才刷」跟不上，
+        // 停在首页主界面时每 12 秒静默回拉一次（不转圈、不改文案）
+        val drivingNow = status?.isDriving == true
+        LaunchedEffect(drivingNow, onMainPage) {
+            while (drivingNow && onMainPage) {
+                delay(12_000)
+                refresh()
             }
         }
 
@@ -646,75 +703,106 @@ fun HomeScreen(
                 },
                 onBack = { showOta = false },
             )
+        } else if (showTire) {
+            TirePressureScreen(
+                status = status,
+                onBack = { showTire = false },
+            )
+        } else if (showFindCar) {
+            FindCarScreen(
+                runtime = runtime,
+                status = status,
+                onHorn = { ensureConfirmed("鸣笛闪灯") { runControl("horn") } },
+                onBack = { showFindCar = false },
+            )
         } else {
             // 外层 Box：承载悬浮反馈条（指令结果必须让用户看到，放在滚动列表底部等于看不见）
             Box(modifier = Modifier.fillMaxSize()) {
-            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-                isRefreshing = refreshing,
-                // 用户主动下拉：显示指示器（这是唯一会显示转圈的刷新路径）
-                onRefresh = { refresh(force = true, silent = false) },
-                modifier = Modifier.fillMaxSize(),
+            // 固定顶栏：车名 / 更新时间 / 车辆健康 / 皮肤，不随内容滚动
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding(),
             ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                // 用 rememberSaveable + ScrollState.Saver：切 Tab / 进二级页再回来，
-                // 列表停在同一处，不会突然跳回顶部（这也是「闪一下」的一部分观感）
-                .verticalScroll(homeScrollState)
-                .statusBarsPadding()
-                .padding(horizontal = 22.dp),
-        ) {
-            // ---- 顶部（参考设计图）：左 车名 · 右 更新时间（带转圈） ----
             Box(modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 6.dp)) {
-                // 右上：刷新状态 + 更新时间
+                .padding(top = 6.dp, start = 22.dp, end = 22.dp)) {
+                // 右侧两个图标按钮：车辆健康 + 皮肤（只显示图标，顶边与左侧车名顶端对齐）
                 Row(
-                    modifier = Modifier.align(Alignment.CenterEnd),
+                    modifier = Modifier.align(Alignment.TopEnd),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (refreshing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(15.dp),
-                            strokeWidth = 1.8.dp,
-                            color = LocalAppColors.current.textSecondary,
-                        )
-                        Spacer(Modifier.width(7.dp))
-                    }
-                    Text(
-                        text = when {
-                            refreshing -> "更新中…"
-                            lastUpdated == 0L -> "尚未更新"
-                            else -> "车况更新于 ${formatUpdateTime(lastUpdated)}"
-                        },
-                        color = LocalAppColors.current.textSecondary,
-                        fontSize = 12.sp,
-                        modifier = Modifier.clickable(enabled = !refreshing) { refresh() },
+                    HeaderIconButton(
+                        iconRes = R.drawable.ic_health,
+                        description = "车辆健康",
+                        onClick = { showVehicleHealth = true },
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    HeaderIconButton(
+                        iconRes = R.drawable.ic_skin,
+                        description = "皮肤",
+                        onClick = onOpenSkin,
                     )
                 }
                 Column(modifier = Modifier.align(Alignment.CenterStart)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable(enabled = vehicles.size > 1) { showVehicleMenu = true },
                     ) {
-                        Text(
-                            text = carName,
-                            color = LocalAppColors.current.textPrimary,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            modifier = Modifier.widthIn(max = 230.dp),
-                        )
-                        // 账号下有多辆车时才显示下拉箭头
-                        if (vehicles.size > 1) {
-                            Spacer(Modifier.width(4.dp))
-                            Icon(
-                                Icons.Filled.KeyboardArrowDown,
-                                contentDescription = "切换车辆",
-                                tint = LocalAppColors.current.textSecondary,
-                                modifier = Modifier.size(20.dp),
+                        // 车名 + 下拉箭头：多车时点这一块切换车辆
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable(enabled = vehicles.size > 1) { showVehicleMenu = true },
+                        ) {
+                            Text(
+                                text = carName,
+                                color = LocalAppColors.current.textPrimary,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                modifier = Modifier.widthIn(max = 180.dp),
                             )
+                            // 账号下有多辆车时才显示下拉箭头
+                            if (vehicles.size > 1) {
+                                Spacer(Modifier.width(4.dp))
+                                Icon(
+                                    Icons.Filled.KeyboardArrowDown,
+                                    contentDescription = "切换车辆",
+                                    tint = LocalAppColors.current.textPrimary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
                         }
+                        // 编辑车名：只存本地，清空则回到零跑官方 App 的昵称
+                        HeaderIconButton(
+                            iconRes = R.drawable.ic_edit,
+                            description = "修改车名",
+                            size = 18.dp,
+                            onClick = { showRenameDialog = true },
+                        )
+                    }
+                    // 更新时间：日期 + 时分（去掉年份与秒钟），点一下可手动刷新
+                    Spacer(Modifier.height(2.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable(enabled = !refreshing) { refresh() },
+                    ) {
+                        if (refreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(11.dp),
+                                strokeWidth = 1.6.dp,
+                                color = LocalAppColors.current.textPrimary,
+                            )
+                            Spacer(Modifier.width(5.dp))
+                        }
+                        Text(
+                            text = when {
+                                refreshing -> "更新中…"
+                                lastUpdated == 0L -> "尚未更新"
+                                else -> "更新于 ${formatUpdateTime(lastUpdated)}"
+                            },
+                            color = LocalAppColors.current.textPrimary,
+                            fontSize = 11.5.sp,
+                        )
                     }
                     VehicleDropdown(
                         expanded = showVehicleMenu,
@@ -729,8 +817,6 @@ fun HomeScreen(
                                     vinKey = vehicle.vin
                                     carName = runtime.displayName()
                                     controlLayout = runtime.controlLayout()
-                                    // 先把这台车上次缓存的车况顶上去（没有缓存自然为 null），
-                                    // 再联网刷新覆盖 —— 不再清空成空白帧
                                     runtime.loadCachedStatus()
                                     refreshError = null
                                     refresh(force = true)
@@ -740,6 +826,21 @@ fun HomeScreen(
                     )
                 }
             }
+
+            // ---- 可滚动内容区（续航 / 充电中心 / 车模 / 快捷控车 / 模块）----
+            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = { refresh(force = true, silent = false) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(homeScrollState)
+                    .padding(horizontal = 22.dp),
+            ) {
 
             // ---- 续航区：左半（大字续航 + 电/油里程行），右半（车辆状态面板）----
             Spacer(Modifier.height(16.dp))
@@ -764,8 +865,9 @@ fun HomeScreen(
                         Spacer(Modifier.width(4.dp))
                         Text(
                             text = "km",
-                            color = LocalAppColors.current.textSecondary,
+                            color = LocalAppColors.current.textPrimary,
                             fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(bottom = 6.dp),
                         )
                     }
@@ -841,9 +943,9 @@ fun HomeScreen(
             // ---- 充电中心入口（胶囊按钮，续航下方，样式参考官网 App）----
             ChargingCenterEntry(onClick = { showChargingCenter = true })
 
-            // ---- 车模：只显示官方接口图；拉不到（或已关闭）就不占位置 ----
+            // ---- 车模：显示官方接口图（默认常开，不再提供关闭开关）----
             if (carBitmap != null) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(4.dp))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -859,18 +961,8 @@ fun HomeScreen(
                 }
             }
 
-            // ---- 行车状态（车模下方居中，灰色无图标，靠车模更近）----
-            // （无占位间距，负位移再向上贴近车模）
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .offset(y = (-4).dp),
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                DrivingStatusItem(currentStatus?.drivingStatus)
-            }
             // ---- 快捷控车：一行显示 4 个，左右滑动查看其余，下方带横向滚动提示条 ----
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(6.dp))
             // 车不带对应硬件的按钮直接不出现（如无天窗的车不给天窗入口）
             val cells = ControlActions.available(capabilities, controlLayout)
                 .map { it.id } + listOf(EDIT_CELL)
@@ -895,10 +987,10 @@ fun HomeScreen(
                                     val active = if (action.toggle) ControlActions.isActive(cellId, status) else null
                                     QuickButton(
                                         label = action.label,
-                                        icon = action.icon,
+                                        iconRes = action.iconRes,
                                         busy = controlling == cellId,
                                         active = active,
-                                        onClick = { runControl(cellId) },
+                                        onClick = { ensureConfirmed(action.label) { runControl(cellId) } },
                                     )
                                 }
                             }
@@ -909,54 +1001,38 @@ fun HomeScreen(
             Spacer(Modifier.height(12.dp))
             ScrollHintBar(state = listState, itemCount = cells.size, visibleCount = 4)
 
-            // ---- 快捷控车下方：座椅舒适 + 空调，两卡并排各占半屏 ----
-            // 座椅是非全系配置：车上一个座椅能力都没有时，空调卡片自动占满整行。
+            // ---- 功能模块区（页面最下方）：横向滑动的模块卡 + 指示条 + 自定义按钮 ----
+            // 空调 / 座椅 / 胎压 / 里程能耗 / 健康 / 充电 / 定时空调 / 冰箱 / 哨兵 …
+            // 全部按「空调卡」的尺寸与圆角渲染，顺序、增删由底部「自定义模块」调整。
             Spacer(Modifier.height(14.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // IntrinsicSize.Max：两卡等高（以内容更高的一张为准），不会出现一高一矮
-                    .height(IntrinsicSize.Max),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (capabilities.hasSeatComfort) {
-                    SeatComfortTile(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                        status = currentStatus,
-                        onClick = { showSeatComfort = true },
-                    )
-                }
-                AcTile(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(20.dp))
-                        .clickable { showClimate = true },
-                    status = currentStatus,
-                    busy = controlling == "acOn" || controlling == "acOff" || controlling == "acTemp",
-                    busyOn = controlling == "acOn",
-                    busyOff = controlling == "acOff",
-                    onAcOn = { runAcCommand(true) },
-                    onAcOff = { runAcCommand(false) },
-                    onTempChange = { runAcTemperature(it) },
-                    // 半屏宽度下按钮收窄，标签用「开启 / 关闭」两字避免挤成两行
-                    compact = true,
-                )
-            }
-
-            // ---- 车载冰箱：非全系标配，按已识别到的配置决定是否给入口 ----
-            if (capabilities.fridge) {
-                Spacer(Modifier.height(12.dp))
-                FridgeTile(
-                    modifier = Modifier.fillMaxWidth(),
-                    status = currentStatus,
-                    onClick = { showFridge = true },
-                )
-            }
+            HomeModuleSection(
+                runtime = runtime,
+                status = currentStatus,
+                capabilities = capabilities,
+                energy = energySummary,
+                acPlan = acPlan,
+                callbacks = ModuleCallbacks(
+                    onOpenClimate = { showClimate = true },
+                    onOpenSeat = { showSeatComfort = true },
+                    onOpenFridge = { showFridge = true },
+                    onOpenHealth = { showVehicleHealth = true },
+                    onOpenScheduledAc = { showScheduledAc = true },
+                    onOpenCharging = { showChargingCenter = true },
+                    onOpenTire = { showTire = true },
+                    onOpenFindCar = { showFindCar = true },
+                    onToggleSentry = { ensureConfirmed("哨兵模式") { runControl("sentry") } },
+                    onAcOn = { ensureConfirmed("开启空调") { runAcCommand(true) } },
+                    onAcOff = { ensureConfirmed("关闭空调") { runAcCommand(false) } },
+                    onAcTempChange = { temp -> ensureConfirmed("空调调温") { runAcTemperature(temp) } },
+                    acBusy = controlling == "acOn" || controlling == "acOff" || controlling == "acTemp",
+                    onRefreshEnergy = {
+                        scope.launch { runCatching { runtime.refreshMileageEnergy(force = true) } }
+                    },
+                ),
+            )
 
             Spacer(Modifier.height(20.dp))
+            }
             }
             }
             ActionBanner(
@@ -975,19 +1051,27 @@ fun HomeScreen(
                 containerColor = LocalAppColors.current.cardBg,
                 title = { Text("自定义车名", color = LocalAppColors.current.textPrimary) },
                 text = {
-                    OutlinedTextField(
-                        value = nameInput,
-                        onValueChange = { nameInput = it.take(12) },
-                        placeholder = { Text("如：小7", color = LocalAppColors.current.textSecondary) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = LocalAppColors.current.textPrimary,
-                            unfocusedTextColor = LocalAppColors.current.textPrimary,
-                            cursorColor = LocalAppColors.current.accent,
-                            focusedBorderColor = LocalAppColors.current.accent,
-                            unfocusedBorderColor = LocalAppColors.current.barTrack,
-                        ),
-                    )
+                    Column {
+                        Text(
+                            "车名只保存在本机；留空则恢复为零跑官方 App 的昵称。",
+                            color = LocalAppColors.current.textSecondary,
+                            fontSize = 11.sp,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = nameInput,
+                            onValueChange = { nameInput = it.take(12) },
+                            placeholder = { Text("如：小7", color = LocalAppColors.current.textSecondary) },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = LocalAppColors.current.textPrimary,
+                                unfocusedTextColor = LocalAppColors.current.textPrimary,
+                                cursorColor = LocalAppColors.current.accent,
+                                focusedBorderColor = LocalAppColors.current.accent,
+                                unfocusedBorderColor = LocalAppColors.current.barTrack,
+                            ),
+                        )
+                    }
                 },
                 confirmButton = {
                     TextButton(onClick = {
@@ -1113,6 +1197,35 @@ fun HomeScreen(
                 },
             )
         }
+
+        // ---- 控车二次确认（设备无指纹 / 凭据时的应用内回退确认）----
+        if (pendingConfirm != null) {
+            val (confirmLabel, confirmAction) = pendingConfirm!!
+            AlertDialog(
+                onDismissRequest = { pendingConfirm = null },
+                containerColor = LocalAppColors.current.panelBg,
+                title = { Text("确认操作", color = LocalAppColors.current.textPrimary) },
+                text = {
+                    Text(
+                        "请确认是否向车辆发送「$confirmLabel」指令？",
+                        color = LocalAppColors.current.textSecondary,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pendingConfirm = null
+                        confirmAction()
+                    }) { Text("确认", color = LocalAppColors.current.accent) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingConfirm = null }) {
+                        Text("取消", color = LocalAppColors.current.textSecondary)
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -1194,7 +1307,7 @@ private fun ThemePickerDialog(
         text = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SeasonThemes.ALL.forEach { theme ->
                     val selected = theme.id == currentId
@@ -1203,13 +1316,13 @@ private fun ThemePickerDialog(
                         modifier = Modifier
                             .clip(RoundedCornerShape(12.dp))
                             .clickable { onSelect(theme.id) }
-                            .padding(4.dp)
+                            .padding(2.dp)
                             .weight(1f),
                     ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(72.dp)
+                                .height(64.dp)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(Brush.verticalGradient(theme.gradient(LocalAppColors.current.isDark)))
                                 .then(
@@ -1229,7 +1342,8 @@ private fun ThemePickerDialog(
                         Text(
                             text = theme.label,
                             color = if (selected) LocalAppColors.current.accent else LocalAppColors.current.textPrimary,
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
+                            maxLines = 1,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                         )
                     }
@@ -1341,15 +1455,16 @@ private fun ModuleTile(
     }
 }
 
+/** 空调卡 / 位置卡等并排小卡的官方圆角：实测 6dp，卡片宽 158dp、高 142dp */
+internal fun officialCardShape() = RoundedCornerShape(OFFICIAL_CARD_RADIUS)
+
 /**
- * 空调模块：独立的「开启空调 / 关闭空调」两个按钮（点哪个就发哪条指令，不做状态推断），
- * 中间「− 温度 +」调温，底部显示实际拉取到的空调状态与车内温度。
- *
- * 之所以拆成两个显式按钮：部分车型不下发 acSwitch 信号，导致 acOn 读到 null，
- * 「按当前状态取反」的写法会把每一次点击都判成“现在是关闭”从而重复下发 acOn，空调关不掉。
+ * 空调卡（官方 1:1）：
+ * 标题行「空调」+ 右上 28dp 浅灰圆底里的风扇图标（圆底 #F3F4F6、图标 #9A9C9B，兼作开关）
+ * → 中部「− 24° +」（温度 26sp，− / + 贴左右两端）→ 底部灰字「车内温度 26.5℃」。
  */
 @Composable
-private fun AcTile(
+internal fun AcTile(
     modifier: Modifier = Modifier,
     status: CarStatus?,
     busy: Boolean,
@@ -1364,105 +1479,143 @@ private fun AcTile(
     val C = LocalAppColors.current
     val target = status?.acTargetTemp?.toIntOrNull() ?: 24
     val acOn = status?.acOn
-    ModuleTile(
-        modifier = modifier,
-        title = "空调",
-        cornerIcon = {
-            // 状态指示灯：运行中高亮，已关闭灰色，未知半透明
-            Surface(
-                shape = CircleShape,
-                color = if (acOn == true) C.accent.copy(alpha = 0.16f) else C.iconBg,
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.Toys,
-                        contentDescription = "空调状态",
-                        tint = if (acOn == true) C.accent else C.textSecondary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-        },
+    val shape = officialCardShape()
+    Column(
+        modifier = modifier
+            .background(C.cardBg, shape)
+            .padding(horizontal = 14.dp, vertical = 15.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            AcActionChip(
-                text = when {
-                    busyOn -> "…"
-                    compact -> "开启"
-                    else -> "开启空调"
-                },
-                enabled = !busy,
-                highlight = acOn == true,
-                modifier = Modifier.weight(1f),
-                onClick = onAcOn,
-            )
-            AcActionChip(
-                text = when {
-                    busyOff -> "…"
-                    compact -> "关闭"
-                    else -> "关闭空调"
-                },
-                enabled = !busy,
-                highlight = acOn == false,
-                modifier = Modifier.weight(1f),
-                onClick = onAcOff,
-            )
+        // 标题行：左标题 + 右上风扇圆钮（兼作空调开关，官方同款）
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("空调", color = C.textPrimary, fontSize = 13.sp)
+            Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(if (acOn == true) C.accent.copy(alpha = 0.16f) else FAN_CIRCLE_BG)
+                    .clickable(enabled = !busy) { if (acOn == true) onAcOff() else onAcOn() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_ac_fan),
+                    contentDescription = "空调开关",
+                    tint = if (busy) FAN_ICON_TINT.copy(alpha = 0.45f)
+                    else if (acOn == true) C.accent else FAN_ICON_TINT,
+                    modifier = Modifier.size(12.dp),
+                )
+            }
         }
-        Spacer(Modifier.height(8.dp))
-        // 实际拉取到的空调状态（刷新时通过 signalMap 的 acSwitch / acSetting 更新）
-        Text(
-            text = when (acOn) {
-                true -> "空调运行中"
-                false -> "空调已关闭"
-                null -> "空调状态未知"
-            },
-            color = if (acOn == true) C.accent else C.textSecondary,
-            fontSize = 12.sp,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(10.dp))
+        // 官方版式：标题与大温度之间是留白（约占卡高 37%），− / + 贴左右两端
+        // 放进首页模块区（固定卡高 150dp）时留白收一档，避免内容顶出卡片
+        Spacer(Modifier.height(if (compact) 38.dp else 46.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "−",
-                color = C.textPrimary,
-                fontSize = if (compact) 24.sp else 28.sp,
-                fontWeight = FontWeight.Light,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable(enabled = !busy) { onTempChange((target - 1).coerceIn(16, 32)) }
-                    .padding(horizontal = 6.dp),
-            )
+            TempStepButton(symbol = "−", enabled = !busy && target > 16) {
+                onTempChange((target - 1).coerceIn(16, 32))
+            }
             Spacer(Modifier.weight(1f))
             Text(
                 text = "${target}°",
                 color = C.textPrimary,
                 fontSize = if (compact) 26.sp else 30.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.Normal,
             )
             Spacer(Modifier.weight(1f))
-            Text(
-                text = "+",
-                color = C.textPrimary,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Light,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable(enabled = !busy) { onTempChange((target + 1).coerceIn(16, 32)) }
-                    .padding(horizontal = 6.dp),
+            TempStepButton(symbol = "+", enabled = !busy && target < 32) {
+                onTempChange((target + 1).coerceIn(16, 32))
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "车内温度 ${status?.interiorTemp ?: "--"}℃",
+            color = C.textSecondary,
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** 空调温度步进：官方是细横杠「−」与十字「+」，居左右两端。 */
+@Composable
+private fun TempStepButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
+    val C = LocalAppColors.current
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = symbol,
+            color = if (enabled) C.textPrimary else C.textSecondary.copy(alpha = 0.4f),
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Light,
+        )
+    }
+}
+
+/**
+ * 车辆位置卡（官方 1:1）：标题「位置」+ 右上绿色定位图钉（14×17.8dp，#34D37F）
+ * → 中部大号距离「39」+ 单位「m」→ 底部灰字「已驻车」。
+ *
+ * 车端基本不上报经纬度，所以距离恒为占位「--」；要显示真实距离需要申请设备定位
+ * 权限并用手机坐标与车辆坐标求距离，本版不做，避免给一个永远为空的卡片。
+ */
+@Composable
+private fun LocationTile(
+    modifier: Modifier = Modifier,
+    status: CarStatus?,
+) {
+    val C = LocalAppColors.current
+    val shape = officialCardShape()
+    val hasFix = status?.latitude != null && status?.longitude != null
+    Column(
+        modifier = modifier
+            .background(C.cardBg, shape)
+            .padding(horizontal = 14.dp, vertical = 15.dp),
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("位置", color = C.textPrimary, fontSize = 13.sp)
+            Spacer(Modifier.weight(1f))
+            Icon(
+                painter = painterResource(R.drawable.ic_loc_pin),
+                contentDescription = "车辆位置",
+                tint = if (hasFix) LOC_PIN_GREEN else C.textSecondary.copy(alpha = 0.45f),
+                modifier = Modifier.size(14.dp, 18.dp),
             )
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(46.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.weight(1f))
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    text = "--",
+                    color = C.textPrimary,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Normal,
+                )
+                Text(
+                    text = if (hasFix) "m" else "",
+                    color = C.textPrimary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(bottom = 3.dp),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(12.dp))
         Text(
-            text = "车内温度 ${status?.interiorTemp ?: "--"}°C",
+            text = if (hasFix) status?.drivingStatus ?: "已驻车" else "位置未知",
             color = C.textSecondary,
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -1557,6 +1710,15 @@ private fun ClimateModule(status: CarStatus) {
     }
 }
 
+/** 位置卡定位图钉的官方绿 #34D37F */
+private val LOC_PIN_GREEN = Color(0xFF34D37F)
+/** 空调卡右上风扇圆底的官方浅灰 #F3F4F6（图标 #9A9C9B） */
+private val FAN_CIRCLE_BG = Color(0xFFF3F4F6)
+private val FAN_ICON_TINT = Color(0xFF9A9C9B)
+/** 官方空调 / 位置卡圆角：实测约 6dp（卡片宽 158dp 时半径 / 宽 ≈ 0.037）。
+ *  首页功能模块区（HomeModules.kt）复用同一圆角，保证所有模块卡与空调卡一致。 */
+internal val OFFICIAL_CARD_RADIUS = 6.dp
+
 /** 总里程模块 */
 @Composable
 private fun MileageModule(status: CarStatus) {
@@ -1618,14 +1780,15 @@ private fun friendlyError(e: Throwable): String {
  */
 private fun QuickButton(
     label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconRes: Int,
     busy: Boolean,
     onClick: () -> Unit,
     active: Boolean? = null,
 ) {
     val on = active == true
-    val iconTint = if (on) LocalAppColors.current.accent else LocalAppColors.current.textPrimary
-    val labelColor = if (on) LocalAppColors.current.accent else LocalAppColors.current.textSecondary
+    val c = LocalAppColors.current
+    val iconTint = if (on) c.accent else c.textPrimary
+    val labelColor = if (on) c.accent else c.textSecondary
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     Column(
@@ -1640,22 +1803,31 @@ private fun QuickButton(
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // 官方样式：纯白实心正圆 + 轻微下投影，常规态不描边；
+        // 开启态保留零控的绿色反馈（淡绿底 + 绿色描边 + 绿色图标）。
         Box(
             modifier = Modifier
                 .size(58.dp)
+                .shadow(
+                    elevation = if (pressed) 1.dp else 3.dp,
+                    shape = CircleShape,
+                    clip = false,
+                    ambientColor = Color.Black.copy(alpha = 0.10f),
+                    spotColor = Color.Black.copy(alpha = 0.10f),
+                )
                 .background(
                     color = when {
-                        on -> LocalAppColors.current.iconBgActive
-                        pressed -> LocalAppColors.current.chipBgActive
-                        else -> LocalAppColors.current.iconBg
+                        on -> c.iconBgActive
+                        pressed -> c.quickButtonPressed
+                        else -> c.quickButtonBg
                     },
                     shape = CircleShape,
                 )
                 .then(
                     if (on) {
-                        Modifier.border(1.5.dp, LocalAppColors.current.accent.copy(alpha = 0.55f), CircleShape)
+                        Modifier.border(1.5.dp, c.accent.copy(alpha = 0.55f), CircleShape)
                     } else {
-                        Modifier.border(1.dp, LocalAppColors.current.border, CircleShape)
+                        Modifier
                     },
                 ),
             contentAlignment = Alignment.Center,
@@ -1663,11 +1835,16 @@ private fun QuickButton(
             if (busy) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(22.dp),
-                    color = LocalAppColors.current.accent,
+                    color = c.accent,
                     strokeWidth = 2.dp,
                 )
             } else {
-                Icon(icon, contentDescription = label, tint = iconTint, modifier = Modifier.size(24.dp))
+                Icon(
+                    painter = painterResource(iconRes),
+                    contentDescription = label,
+                    tint = iconTint,
+                    modifier = Modifier.size(30.dp),
+                )
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -1681,9 +1858,10 @@ private fun QuickButton(
     }
 }
 
-/** 末尾的「编辑」按钮 */
+/** 末尾的「编辑」按钮：沿用官方「自定义」槽位的三点图标。 */
 @Composable
 private fun EditButton(onClick: () -> Unit) {
+    val c = LocalAppColors.current
     Column(
         modifier = Modifier
             .clip(RoundedCornerShape(14.dp))
@@ -1694,19 +1872,25 @@ private fun EditButton(onClick: () -> Unit) {
         Box(
             modifier = Modifier
                 .size(58.dp)
-                .background(LocalAppColors.current.iconBg, CircleShape)
-                .border(1.dp, LocalAppColors.current.border, CircleShape),
+                .shadow(
+                    elevation = 3.dp,
+                    shape = CircleShape,
+                    clip = false,
+                    ambientColor = Color.Black.copy(alpha = 0.10f),
+                    spotColor = Color.Black.copy(alpha = 0.10f),
+                )
+                .background(c.quickButtonBg, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                Icons.Filled.Edit,
+                painterResource(R.drawable.ic_qc_custom),
                 contentDescription = "编辑控车按钮",
-                tint = LocalAppColors.current.textSecondary,
-                modifier = Modifier.size(22.dp),
+                tint = c.textPrimary,
+                modifier = Modifier.size(30.dp),
             )
         }
         Spacer(Modifier.height(8.dp))
-        Text("编辑", color = LocalAppColors.current.textSecondary, fontSize = 12.sp)
+        Text("编辑", color = c.textSecondary, fontSize = 12.sp)
     }
 }
 
@@ -1747,7 +1931,12 @@ private fun ControlEditorDialog(
                             .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(action.icon, null, tint = LocalAppColors.current.textPrimary, modifier = Modifier.size(20.dp))
+                        Icon(
+                            painterResource(action.iconRes),
+                            null,
+                            tint = LocalAppColors.current.textPrimary,
+                            modifier = Modifier.size(20.dp),
+                        )
                         Spacer(Modifier.width(10.dp))
                         Text(action.label, color = LocalAppColors.current.textPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f))
                         IconButton(
@@ -1786,7 +1975,7 @@ private fun ControlEditorDialog(
                                 enabled = canAdd,
                                 label = { Text(action.label, fontSize = 12.sp) },
                                 leadingIcon = {
-                                    Icon(action.icon, null, modifier = Modifier.size(16.dp))
+                                    Icon(painterResource(action.iconRes), null, modifier = Modifier.size(16.dp))
                                 },
                             )
                         }
@@ -1808,51 +1997,48 @@ private fun ControlEditorDialog(
  * 滑块宽度 = 可见数 / 总数，位置随 LazyListState 实时跟随。
  */
 @Composable
-private fun ScrollHintBar(
+internal fun ScrollHintBar(
     state: androidx.compose.foundation.lazy.LazyListState,
     itemCount: Int,
     visibleCount: Int,
 ) {
     if (itemCount <= visibleCount) return
     val C = LocalAppColors.current
-    val progress by remember {
+    // 官方：提示条按「页」分段，当前页深色、其余浅灰，段宽与该页格子数成正比。
+    // 实测总宽约为快捷圆钮直径的 0.46、高约为 0.037（58dp 圆钮 → 约 27dp × 2.1dp），
+    // 段间仅 1px 缝隙，整体居中。
+    val pages = (itemCount + visibleCount - 1) / visibleCount
+    if (pages < 2) return
+    val perPage = (0 until pages).map { i ->
+        minOf(visibleCount, itemCount - i * visibleCount)
+    }
+    val current by remember {
         derivedStateOf {
-            val info = state.layoutInfo
-            val total = info.totalItemsCount
-            val visible = info.visibleItemsInfo.size.coerceAtLeast(1)
-            if (total <= visible) {
-                0f
-            } else {
-                val span = info.visibleItemsInfo.firstOrNull()?.size?.coerceAtLeast(1) ?: 1
-                val raw = state.firstVisibleItemIndex +
-                    state.firstVisibleItemScrollOffset.toFloat() / span
-                (raw / (total - visible)).coerceIn(0f, 1f)
+            val first = state.layoutInfo.visibleItemsInfo.firstOrNull()?.index ?: 0
+            (first / visibleCount).coerceIn(0, pages - 1)
+        }
+    }
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(1.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            perPage.forEachIndexed { index, count ->
+                Box(
+                    modifier = Modifier
+                        .width(26.dp * count / itemCount)
+                        .height(2.5.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (index == current) C.textPrimary else Color(0xFFBEBEBE)
+                        ),
+                )
             }
         }
     }
-    Box(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center,
-    ) {
-        BoxWithConstraints(
-            modifier = Modifier
-                .width(56.dp)
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(C.barTrack),
-        ) {
-            val thumbWidth = maxWidth * (visibleCount.toFloat() / itemCount).coerceIn(0.25f, 1f)
-            Box(
-                modifier = Modifier
-                    .offset(x = (maxWidth - thumbWidth) * progress)
-                    .width(thumbWidth)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(C.textSecondary.copy(alpha = 0.55f)),
-            )
-        }
-    }
 }
+
+private val STATUS_ALERT_RED = Color(0xFFE5484D)
 
 /**
  * 里程行（手绘稿样式）：从左至右依次是 图标 · 里程 · 进度条（撑满剩余）· 百分比。
@@ -1880,7 +2066,8 @@ private fun MileageRow(
             text = label,
             color = C.textPrimary,
             fontSize = 13.sp,
-            modifier = Modifier.width(44.dp),
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.width(46.dp),
         )
         Spacer(Modifier.width(6.dp))
         Box(
@@ -1888,7 +2075,8 @@ private fun MileageRow(
                 .width(barWidth)
                 .height(8.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(C.barTrack),
+                // 滑槽用「强」档：透明度更低（约 55%），压在动态背景上也看得清边界
+                .background(C.barTrackStrong),
         ) {
             Box(
                 modifier = Modifier
@@ -1900,82 +2088,68 @@ private fun MileageRow(
         Spacer(Modifier.width(6.dp))
         Text(
             text = percent,
-            color = C.textSecondary,
+            color = C.textPrimary,
             fontSize = 12.sp,
-        textAlign = TextAlign.End,
-        modifier = Modifier.width(36.dp),
-        )
-    }
-}
-
-/** 车辆状态面板里的单行状态：左图标 + 右文字。
- *  [alert]=true 表示需要警示（红色高亮），否则用次级灰。 */
-private val STATUS_ALERT_RED = Color(0xFFE5484D)
-
-@Composable
-private fun StatusItem(icon: ImageVector, label: String, alert: Boolean) {
-    val C = LocalAppColors.current
-    val tint = if (alert) STATUS_ALERT_RED else C.textSecondary
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(16.dp),
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = label,
-            color = tint,
-            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(38.dp),
         )
     }
 }
 
 /**
- * 行车状态（在闭锁上方一行）：行驶中（蓝）/ 已驻车（主色）/ 未知（次要色）。
- * status 为 null 时显示「行车状态未知」。
+ * 车辆状态面板里的单行状态：左图标 + 右文字。
+ * 文字统一用主色（浅色模式黑、深色模式白）—— 状态提示压在动态背景上时，
+ * 灰色或红色小字会糊掉；警示信息改由图标颜色承担（[alert]=true 时图标转红）。
  */
-/** 行车状态（车模下方居中显示）：行驶中 / 已驻车 / 行车状态未知。灰色文字，无图标。 */
 @Composable
-private fun DrivingStatusItem(status: String?) {
+private fun StatusItem(icon: ImageVector, label: String, alert: Boolean) {
     val C = LocalAppColors.current
-    Text(
-        text = status ?: "行车状态未知",
-        color = C.textSecondary,
-        fontSize = 13.sp,
-        lineHeight = 14.sp,
-    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (alert) STATUS_ALERT_RED else C.textPrimary,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            color = C.textPrimary,
+            fontSize = 15.sp,
+        )
+    }
 }
 
 /** 充电中心入口：胶囊按钮（文字 + 右箭头），样式参考官网 App。 */
 @Composable
 private fun ChargingCenterEntry(onClick: () -> Unit) {
     val C = LocalAppColors.current
-    Spacer(Modifier.height(14.dp))
-    // 小胶囊入口：整体比上一版缩小约 1/3，内容（文字 + 箭头）严格居中
+    Spacer(Modifier.height(8.dp))
+    // 胶囊入口：比上一版收一档（左右 14/8 → 10/6，上下 7 → 4，字号 13 → 12sp，箭头 16 → 14dp）；
+    // 左右内边距仍不对称，文字整体略微靠右，不贴着左侧圆弧。
     Surface(
         shape = RoundedCornerShape(50),
         color = C.chipBg,
         modifier = Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onClick),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+            modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = "充电中心",
                 color = C.textPrimary,
-                fontSize = 11.sp,
-                lineHeight = 12.sp,
+                fontSize = 12.sp,
+                lineHeight = 13.sp,
                 fontWeight = FontWeight.Medium,
             )
             Spacer(Modifier.width(1.dp))
             Icon(
                 imageVector = Icons.Filled.ChevronRight,
                 contentDescription = null,
-                tint = C.textSecondary,
-                modifier = Modifier.size(12.dp),
+                tint = C.textPrimary,
+                modifier = Modifier.size(14.dp),
             )
         }
     }
@@ -2482,9 +2656,39 @@ private fun ChargingCenterScreen(
     }
 }
 
-/** 把时间戳格式化成「yyyy-MM-dd HH:mm:ss」，用于车况更新时间展示。 */
+/**
+ * 顶部图标按钮：只显示图标（车辆健康 / 皮肤 / 改车名）。
+ * 触控区固定 34dp、图标 22dp，纵向高度与左侧车名那一行对齐。
+ */
+@Composable
+private fun HeaderIconButton(
+    iconRes: Int,
+    description: String,
+    size: androidx.compose.ui.unit.Dp = 22.dp,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = description,
+            tint = LocalAppColors.current.textPrimary,
+            modifier = Modifier.size(size),
+        )
+    }
+}
+
+/**
+ * 车况更新时间：只保留「月-日 时:分」（MM-dd HH:mm）。
+ * 放在车名下方，年份与秒钟对当下刷新判断没有意义，去掉后一行能完整显示。
+ */
 private fun formatUpdateTime(ts: Long): String {
-    val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
+    val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
     return sdf.format(Date(ts))
 }
 

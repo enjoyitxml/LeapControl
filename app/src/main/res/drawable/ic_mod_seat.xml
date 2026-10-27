@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 座椅舒适：头枕 + 靠背 + 坐垫 + 底座（实心，与导航栏图标同画法） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="1024dp"
+    android:height="1024dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M464,128H560A56,56 0 0 1 616,184V208A56,56 0 0 1 560,264H464A56,56 0 0 1 408,208V184A56,56 0 0 1 464,128Z M392,292H632A56,56 0 0 1 688,348V548A56,56 0 0 1 632,604H392A56,56 0 0 1 336,548V348A56,56 0 0 1 392,292Z M332,636H692A76,76 0 0 1 768,712V752A76,76 0 0 1 692,828H332A76,76 0 0 1 256,752V712A76,76 0 0 1 332,636Z M416,852H608A28,28 0 0 1 636,880V880A28,28 0 0 1 608,908H416A28,28 0 0 1 388,880V880A28,28 0 0 1 416,852Z" />
+</vector>

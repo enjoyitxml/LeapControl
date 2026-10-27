@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 同风格补画：盾牌 + 镜头 + 底座横线。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M 12.000 4.163 L 18.531 6.449 V 12.000 C 18.531 15.592 15.592 18.204 12.000 19.837 C 8.408 18.204 5.469 15.592 5.469 12.000 V 6.449 Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 11.984 9.061 A 1.633 1.633 0 0 1 11.984 12.327 A 1.633 1.633 0 0 1 11.984 9.061 Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 9.388 13.959 H 14.612"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

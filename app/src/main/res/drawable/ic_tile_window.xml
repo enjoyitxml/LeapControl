@@ -1,8 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 系统磁贴 · 官方同款车窗（满幅放大版） -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp" android:height="24dp"
-    android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FF000000" android:fillType="evenOdd"
-        android:pathData="M4,3.5h16v17h-16zM6.6,6h10.8v12h-10.8z" />
-    <path android:fillColor="#FF000000"
-        android:pathData="M6.6,11h10.8v7H6.6z" />
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group android:pivotX="12" android:pivotY="12"
+        android:scaleX="1.35" android:scaleY="1.35">
+        <path
+            android:pathData="M 9.878 5.698 H 17.682 A 0.980 0.980 0 0 1 18.661 6.678 V 17.322 A 0.980 0.980 0 0 1 17.682 18.302 H 5.992 A 0.980 0.980 0 0 1 5.012 17.322 V 10.596 Z"
+            android:strokeColor="#FF000000"
+            android:strokeWidth="1.31"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="#00000000" />
+        <path
+            android:pathData="M 5.012 12.000 H 18.661"
+            android:strokeColor="#FF000000"
+            android:strokeWidth="1.31"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="#00000000" />
+        <path
+            android:pathData="M 14.612 14.776 H 15.918"
+            android:strokeColor="#FF000000"
+            android:strokeWidth="1.31"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="#00000000" />
+    </group>
 </vector>

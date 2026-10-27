@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 同风格补画：六角雪花（制冷）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M 12.000 5.469 V 18.531"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 6.547 8.604 L 17.453 15.396"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 6.547 15.396 L 17.453 8.604"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 12.000 5.469 L 10.531 7.265 M 12.000 5.469 L 13.469 7.265"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 12.000 18.531 L 10.531 16.735 M 12.000 18.531 L 13.469 16.735"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

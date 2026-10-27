@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 入口「免责声明」：带折角的文件 + 三行正文，实心填充风格（与导航栏图标同画法）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M288,128 H600 L728,256 V832 C728,867 701,894 666,894 H288 C253,894 226,867 226,832 V192 C226,157 253,128 288,128 Z
+        M340,384 H664 A28,28 0 0 1 692,412 V412 A28,28 0 0 1 664,440 H340 A28,28 0 0 1 312,412 V412 A28,28 0 0 1 340,384 Z
+        M340,512 H664 A28,28 0 0 1 692,540 V540 A28,28 0 0 1 664,568 H340 A28,28 0 0 1 312,540 V540 A28,28 0 0 1 340,512 Z
+        M340,640 H560 A28,28 0 0 1 588,668 V668 A28,28 0 0 1 560,696 H340 A28,28 0 0 1 312,668 V668 A28,28 0 0 1 340,640 Z" />
+</vector>

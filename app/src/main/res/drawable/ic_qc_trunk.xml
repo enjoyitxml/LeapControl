@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 官方同款：侧视车身 + 掀起的尾门 + 车轮。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M 5.143 6.939 H 13.633"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 13.633 6.286 C 13.796 5.469 14.286 5.012 15.592 4.816 C 16.898 4.620 17.878 4.555 19.184 4.490"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 13.633 7.755 C 14.612 10.041 15.918 12.000 16.735 13.306 V 16.571"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 16.245 16.833 H 12.000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 6.776 17.061 H 5.143"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 7.755 13.959 H 11.020"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 9.388 13.796 A 2.612 2.612 0 0 1 9.388 19.020 A 2.612 2.612 0 0 1 9.388 13.796 Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

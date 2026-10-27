@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 官方同款：车身侧窗轮廓 + 腰线 + 门把手。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M 9.878 5.698 H 17.682 A 0.980 0.980 0 0 1 18.661 6.678 V 17.322 A 0.980 0.980 0 0 1 17.682 18.302 H 5.992 A 0.980 0.980 0 0 1 5.012 17.322 V 10.596 Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 5.012 12.000 H 18.661"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 14.612 14.776 H 15.918"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

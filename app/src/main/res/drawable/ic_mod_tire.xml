@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 胎压：轮胎环（evenOdd 挖孔）+ 轮毂 + 四根辐条 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="1024dp"
+    android:height="1024dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <path
+        android:fillType="evenOdd"
+        android:fillColor="#FFFFFF"
+        android:pathData="M92,512A420,420 0 1 0 932,512A420,420 0 1 0 92,512Z M262,512A250,250 0 1 0 762,512A250,250 0 1 0 262,512Z M404,512A108,108 0 1 0 620,512A108,108 0 1 0 404,512Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M512,268H512A18,18 0 0 1 530,286V392A18,18 0 0 1 512,410H512A18,18 0 0 1 494,392V286A18,18 0 0 1 512,268Z M512,614H512A18,18 0 0 1 530,632V738A18,18 0 0 1 512,756H512A18,18 0 0 1 494,738V632A18,18 0 0 1 512,614Z M286,494H392A18,18 0 0 1 410,512V512A18,18 0 0 1 392,530H286A18,18 0 0 1 268,512V512A18,18 0 0 1 286,494Z M632,494H738A18,18 0 0 1 756,512V512A18,18 0 0 1 738,530H632A18,18 0 0 1 614,512V512A18,18 0 0 1 632,494Z" />
+</vector>

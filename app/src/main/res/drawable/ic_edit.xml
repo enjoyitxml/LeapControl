@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通用「编辑 / 改名」：斜置铅笔，实心填充风格。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <group
+        android:pivotX="512"
+        android:pivotY="512"
+        android:rotation="45">
+        <!-- 笔尾橡皮（带一道分割槽） -->
+        <path
+            android:fillColor="#FF000000"
+            android:fillType="evenOdd"
+            android:pathData="M460,192
+            H564 A20,20 0 0 1 584,212
+            V236 A20,20 0 0 1 564,256
+            H460 A20,20 0 0 1 440,236
+            V212 A20,20 0 0 1 460,192 Z
+            M440,216 H584 V236 H440 Z" />
+
+        <!-- 笔杆 -->
+        <path
+            android:fillColor="#FF000000"
+            android:fillType="nonZero"
+            android:pathData="M460,256
+            H564 A20,20 0 0 1 584,276
+            V620 A20,20 0 0 1 564,640
+            H460 A20,20 0 0 1 440,620
+            V276 A20,20 0 0 1 460,256 Z" />
+
+        <!-- 笔尖 -->
+        <path
+            android:fillColor="#FF000000"
+            android:fillType="nonZero"
+            android:pathData="M440,640 H584 L512,800 Z" />
+    </group>
+</vector>

@@ -16,8 +16,16 @@ object ForegroundSignal {
     private val _networkEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val networkEvents: SharedFlow<Unit> = _networkEvents.asSharedFlow()
 
+    /** 进入后台事件（MainActivity.onPause 发出，用于暂停背景视频）。 */
+    private val _pauseEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val pauseEvents: SharedFlow<Unit> = _pauseEvents.asSharedFlow()
+
     fun emitResume() {
         _events.tryEmit(Unit)
+    }
+
+    fun emitPause() {
+        _pauseEvents.tryEmit(Unit)
     }
 
     fun emitNetworkRestored() {

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 行驶里程 / 能耗：仪表半环 + 指针 + 刻度 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="1024dp"
+    android:height="1024dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M152,560A360,360 0 0 1 872,560L784,560A272,272 0 0 0 240,560Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M512,568L372,392L412,356Z M438,568A74,74 0 1 0 586,568A74,74 0 1 0 438,568Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M218,236H214A22,22 0 0 1 236,258V266A22,22 0 0 1 214,288H218A22,22 0 0 1 196,266V258A22,22 0 0 1 218,236Z M810,236H806A22,22 0 0 1 828,258V266A22,22 0 0 1 806,288H810A22,22 0 0 1 788,266V258A22,22 0 0 1 810,236Z" />
+</vector>

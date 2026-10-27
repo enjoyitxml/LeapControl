@@ -1,8 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 系统磁贴 · 官方同款闭合挂锁（满幅放大版） -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp" android:height="24dp"
-    android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FF000000"
-        android:pathData="M8,10L8,7a4,4 0 0 1 8,0L16,10L14,10L14,7a2,2 0 0 0 -4,0L10,10z" />
-    <path android:fillColor="#FF000000"
-        android:pathData="M5,10h14a1,1 0 0 1 1,1v8a1,1 0 0 1 -1,1H5a1,1 0 0 1 -1,-1v-8a1,1 0 0 1 1,-1z" />
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group android:pivotX="12" android:pivotY="12"
+        android:scaleX="1.35" android:scaleY="1.35">
+        <path
+            android:pathData="M 6.776 10.400 H 17.388 A 0.980 0.980 0 0 1 18.367 11.380 V 18.367 A 0.980 0.980 0 0 1 17.388 19.347 H 6.776 A 0.980 0.980 0 0 1 5.796 18.367 V 11.380 A 0.980 0.980 0 0 1 6.776 10.400 Z"
+            android:strokeColor="#FF000000"
+            android:strokeWidth="1.31"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="#00000000" />
+        <path
+            android:pathData="M 12.163 13.600 V 16.147"
+            android:strokeColor="#FF000000"
+            android:strokeWidth="1.31"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="#00000000" />
+        <path
+            android:pathData="M 9.388 10.400 V 7.429 A 2.939 2.939 0 0 1 15.265 7.429 V 10.400"
+            android:strokeColor="#FF000000"
+            android:strokeWidth="1.31"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="#00000000" />
+    </group>
 </vector>

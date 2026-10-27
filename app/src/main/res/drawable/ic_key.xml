@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设置「密钥 / Key」：钥匙，实心填充风格。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <!-- 钥匙环（挖空） -->
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M224,352 a128,128 0 1 0 256,0 a128,128 0 1 0 -256,0 z
+        M296,352 a56,56 0 1 0 112,0 a56,56 0 1 0 -112,0 z" />
+
+    <!-- 钥匙杆 + 两个齿（整体斜置 45°） -->
+    <group
+        android:pivotX="352"
+        android:pivotY="352"
+        android:rotation="45">
+        <path
+            android:fillColor="#FF000000"
+            android:fillType="nonZero"
+            android:pathData="M480,312 H880 V392 H480 Z" />
+        <path
+            android:fillColor="#FF000000"
+            android:fillType="nonZero"
+            android:pathData="M700,392 H740 V472 H700 Z" />
+        <path
+            android:fillColor="#FF000000"
+            android:fillType="nonZero"
+            android:pathData="M780,392 H820 V472 H780 Z" />
+    </group>
+</vector>

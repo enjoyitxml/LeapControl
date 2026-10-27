@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 官方同款：闭合挂锁，细线描边。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M 6.776 10.400 H 17.388 A 0.980 0.980 0 0 1 18.367 11.380 V 18.367 A 0.980 0.980 0 0 1 17.388 19.347 H 6.776 A 0.980 0.980 0 0 1 5.796 18.367 V 11.380 A 0.980 0.980 0 0 1 6.776 10.400 Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 12.163 13.600 V 16.147"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 9.388 10.400 V 7.429 A 2.939 2.939 0 0 1 15.265 7.429 V 10.400"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

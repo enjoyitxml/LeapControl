@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 入口「开源协议」：代码尖括号 &lt; &gt;，实心填充风格（用旋转组画斜臂，避免算错坐标）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <!-- 左尖括号：< 上臂（逆时针 45°）、下臂（顺时针 45°） -->
+    <group android:rotation="-45" android:pivotX="232" android:pivotY="512">
+        <path
+            android:fillColor="#FF000000"
+            android:pathData="M264,480 H424 A32,32 0 0 1 456,512 A32,32 0 0 1 424,544 H264 A32,32 0 0 1 232,512 A32,32 0 0 1 264,480 Z" />
+    </group>
+    <group android:rotation="45" android:pivotX="232" android:pivotY="512">
+        <path
+            android:fillColor="#FF000000"
+            android:pathData="M264,480 H424 A32,32 0 0 1 456,512 A32,32 0 0 1 424,544 H264 A32,32 0 0 1 232,512 A32,32 0 0 1 264,480 Z" />
+    </group>
+
+    <!-- 右尖括号：> 上臂、下臂（镜像，以右侧端点为轴） -->
+    <group android:rotation="45" android:pivotX="792" android:pivotY="512">
+        <path
+            android:fillColor="#FF000000"
+            android:pathData="M568,480 H728 A32,32 0 0 1 760,512 A32,32 0 0 1 728,544 H568 A32,32 0 0 1 536,512 A32,32 0 0 1 568,480 Z" />
+    </group>
+    <group android:rotation="-45" android:pivotX="792" android:pivotY="512">
+        <path
+            android:fillColor="#FF000000"
+            android:pathData="M568,480 H728 A32,32 0 0 1 760,512 A32,32 0 0 1 728,544 H568 A32,32 0 0 1 536,512 A32,32 0 0 1 568,480 Z" />
+    </group>
+</vector>
