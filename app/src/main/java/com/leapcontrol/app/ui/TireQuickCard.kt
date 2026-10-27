@@ -1,7 +1,6 @@
 package com.leapcontrol.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,10 +14,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,7 +32,14 @@ import com.leapcontrol.app.TirePressure
 /**
  * 胎压监测卡（首页空调条下方，只占左半边）。
  *
- * 版式对齐官方俯视图：中间一辆透明车模（车头朝上），四个角各一格「位置 + 数值 + bar」。
+ * 不设标题：四个「位置 / 数值 / bar」+ 中间车模直接把卡片铺满，
+ * 半屏宽的卡再塞一行标题只会把数字挤小。
+ *
+ * 对齐方式：左右两列用 SpaceEvenly 排布，中间车模的前后轴轮胎必须落在
+ * 上排两个数值格的中心线上。格子的实际中心随字号和卡片高度变化，
+ * 所以布局完成后实测一次「左前」格子的中心比例传给 [TireCarOutline]，
+ * 车模据此定纵向比例 —— 换字号、改卡片高度都不用跟着改常量。
+ *
  * 颜色只表达「有没有问题」——正常时轮子是深灰实心轮胎、数字用正文黑（深色主题为白）；
  * 只有胎压不足时，那个轮子和对应数字才变红，另外三个保持原样。
  *
@@ -50,72 +62,63 @@ fun TireQuickCard(
     val tires = status?.tires.orEmpty()
     val clickModifier = onOpen?.let { open -> Modifier.clickable { open() } } ?: Modifier
 
-    Column(
+    var frontFraction by remember { mutableStateOf(0.29f) }
+    var areaTopPx by remember { mutableStateOf(0f) }
+    var areaHeightPx by remember { mutableStateOf(0f) }
+
+    Row(
         modifier = modifier
             .height(172.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(C.panelBg, RoundedCornerShape(8.dp))
-            .border(1.dp, C.border, RoundedCornerShape(8.dp))
             .then(clickModifier)
-            .padding(horizontal = 12.dp, vertical = 11.dp),
+            .padding(horizontal = 10.dp, vertical = 10.dp)
+            .onGloballyPositioned {
+                areaTopPx = it.positionInRoot().y
+                areaHeightPx = it.size.height.toFloat()
+            },
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 标题行：左边「胎压」，右边只在异常时给一句提示（正常时保持安静）
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+        // 左列：左前 / 左后
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceEvenly,
         ) {
-            Text("胎压", color = C.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.weight(1f))
-            val alerts = tires.count { TirePressure.stateOf(it.pressure, it.warning) == TirePressure.State.Low }
-            if (alerts > 0) {
-                Text(
-                    text = if (alerts == 1) "气压偏低" else "${alerts} 个气压偏低",
-                    color = redFor(C),
-                    fontSize = 9.5.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
+            TireValueCell(
+                tire = tires.firstOrNull { it.position == "左前" },
+                position = "左前",
+                modifier = Modifier.onGloballyPositioned { coords ->
+                    if (areaHeightPx > 0f) {
+                        val centerY = coords.positionInRoot().y + coords.size.height / 2f - areaTopPx
+                        frontFraction = (centerY / areaHeightPx).coerceIn(0.15f, 0.45f)
+                    }
+                },
+            )
+            TireValueCell(tires.firstOrNull { it.position == "左后" }, "左后")
         }
 
-        Spacer(Modifier.height(6.dp))
-
-        Row(
+        // 中间：透明车模（前后轴跟着两侧数字走）
+        TireCarOutline(
+            tires = tires,
+            frontFraction = frontFraction,
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            verticalAlignment = Alignment.CenterVertically,
+                .width(60.dp)
+                .fillMaxHeight(),
+        )
+
+        // 右列：右前 / 右后
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceEvenly,
         ) {
-            // 左列：左前 / 左后
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceEvenly,
-            ) {
-                TireValueCell(tires.firstOrNull { it.position == "左前" }, "左前")
-                TireValueCell(tires.firstOrNull { it.position == "左后" }, "左后")
-            }
-
-            // 中间：透明车模
-            TireCarOutline(
-                tires = tires,
-                modifier = Modifier
-                    .width(56.dp)
-                    .fillMaxHeight(),
-            )
-
-            // 右列：右前 / 右后
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceEvenly,
-            ) {
-                TireValueCell(tires.firstOrNull { it.position == "右前" }, "右前")
-                TireValueCell(tires.firstOrNull { it.position == "右后" }, "右后")
-            }
+            TireValueCell(tires.firstOrNull { it.position == "右前" }, "右前")
+            TireValueCell(tires.firstOrNull { it.position == "右后" }, "右后")
         }
     }
 }
@@ -125,7 +128,11 @@ private fun redFor(C: AppColors): Color = if (C.isDark) Color(0xFFFF6B6F) else C
 
 /** 单个轮子的「位置 / 数值 / bar」。正常＝正文色，不足＝红，无数据＝次要灰。 */
 @Composable
-private fun TireValueCell(tire: TireInfo?, position: String) {
+private fun TireValueCell(
+    tire: TireInfo?,
+    position: String,
+    modifier: Modifier = Modifier,
+) {
     val C = LocalAppColors.current
     val state = TirePressure.stateOf(tire?.pressure, tire?.warning == true)
     val valueColor = when (state) {
@@ -135,20 +142,20 @@ private fun TireValueCell(tire: TireInfo?, position: String) {
         TirePressure.State.Unknown -> C.textSecondary
     }
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(position, color = C.textSecondary, fontSize = 9.sp)
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(position, color = C.textSecondary, fontSize = 9.5.sp)
         Spacer(Modifier.height(1.dp))
         Text(
             text = tire?.pressure ?: "--",
             color = valueColor,
-            fontSize = 16.sp,
+            fontSize = 17.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
         Text(
             text = "bar",
             color = if (state == TirePressure.State.Low) redFor(C).copy(alpha = 0.75f) else C.textSecondary,
-            fontSize = 8.sp,
+            fontSize = 8.5.sp,
         )
     }
 }

@@ -142,13 +142,6 @@ fun PersonalizationScreen(
         SettingsSection(title = "相伴卡背景", desc = "首页「我与我的爱车走过」") {
             SettingsCard {
                 OwnershipBackdropGrid(runtime = runtime, selectedId = runtime.ownershipBackdrop.value)
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "6 张都按卡片比例裁好了，文字落在天空区，换哪张都不会挡字。",
-                    color = LocalAppColors.current.textSecondary,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                )
             }
         }
 
