@@ -56,9 +56,13 @@ import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.R
 import kotlinx.coroutines.launch
 
+/** 意见反馈问卷地址（腾讯问卷）。 */
+private const val FEEDBACK_URL = "https://wj.qq.com/s2/28372168/dzhz/"
+
 /**
- * 「我的」页面：入口列表 —— 设置 / 个性化 / 支持开发者 / 开源协议与致谢 / 关于，
- * 其中「关于」内嵌「免责声明」「隐私条款」两个子入口，其余项都下沉到各自的二级页；
+ * 「我的」页面：入口列表 —— 设置 / 个性化 / 意见反馈 / 支持开发者 / 开源协议与致谢 / 关于，
+ * 其中「意见反馈」直接跳外部问卷，「关于」内嵌「免责声明」「隐私条款」两个子入口，
+ * 其余项都下沉到各自的二级页；页面顶部是头像（可换内置卡通头像或相册照片），
  * 页面底部保留退出登录。
  */
 @Composable
@@ -196,7 +200,18 @@ fun ProfileScreen(
                 "外观模式、四季主题与动态背景",
             ) { onOpenPage(SettingsPage.PERSONALIZATION) }
             Spacer(Modifier.height(12.dp))
-            // 支持开发者：固定在「个性化」下方
+            // 意见反馈：腾讯问卷，用系统浏览器打开；设备上没浏览器时会明确提示，而不是点了没反应
+            ProfileItem(
+                R.drawable.ic_feedback,
+                "意见反馈",
+                "填写问卷，反馈问题或提出功能建议",
+            ) {
+                if (!runtime.openExternal(FEEDBACK_URL)) {
+                    Toast.makeText(context, "没有找到可用的浏览器", Toast.LENGTH_SHORT).show()
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            // 支持开发者：紧跟在「意见反馈」之后，两个都是"想帮作者/想吐槽"的入口
             ProfileItem(
                 R.drawable.ic_support,
                 "支持开发者",

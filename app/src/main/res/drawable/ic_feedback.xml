@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  意见反馈：对话气泡 + 三条文字线。
+  线条靠 fillType="evenOdd" 从气泡里挖空，不能叠白色填充——
+  vector 会被 tint 整体染色，白色也会被染成主题色，线条就糊成实心块了。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M200 150 L824 150 A110 110 0 0 1 934 260 L934 580 A110 110 0 0 1 824 690 L470 690 L300 830 L300 690 L200 690 A110 110 0 0 1 90 580 L90 260 A110 110 0 0 1 200 150 Z M258 262 L762 262 A38 38 0 0 1 762 338 L258 338 A38 38 0 0 1 258 262 Z M258 382 L762 382 A38 38 0 0 1 762 458 L258 458 A38 38 0 0 1 258 382 Z M258 502 L582 502 A38 38 0 0 1 582 578 L258 578 A38 38 0 0 1 258 502 Z" />
+</vector>

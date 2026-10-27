@@ -456,15 +456,15 @@ class AppRuntime(context: Context) {
     }
 
     /** 跳转到外部链接（GitHub 发布页 / APK 下载）。 */
-    fun openExternal(url: String) {
-        runCatching {
-            appContext.startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                },
-            )
-        }
-    }
+    /** 用系统浏览器打开外链。返回 false 表示没有 App 能接管（比如设备上没装浏览器）。 */
+    fun openExternal(url: String): Boolean = runCatching {
+        appContext.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+        )
+        true
+    }.getOrDefault(false)
 
     // ---------------- 车况快照（跨页面 / 跨 Tab 保持） ----------------
     //
