@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.AppearanceMode
+import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.R
 import com.leapcontrol.app.tiles.QuickTiles
@@ -83,6 +85,11 @@ fun SettingsScreen(
     var showAmapKey by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmGate by remember { mutableStateOf(runtime.biometricConfirmEnabled()) }
+    // 版本更新：红点 + 手动检查 + 弹窗
+    val updateInfo by runtime.updateInfo.collectAsState()
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
 
     Column(
         modifier = Modifier
@@ -127,6 +134,36 @@ fun SettingsScreen(
                     runtime.clearCarImageCache()
                     val ok = runCatching { runtime.fetchCarImage(force = true) }.getOrNull() != null
                     message = if (ok) "车模已刷新" else "未取到官方车图，首页暂不显示车模"
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            ClickRow(
+                title = "检查更新",
+                desc = if (checkingUpdate) {
+                    "检查中…"
+                } else {
+                    val info = updateInfo
+                    if (info != null) {
+                        "发现新版本 v${info.version}，点击前往下载"
+                    } else {
+                        "当前已是最新版本（v${runtime.currentVersion()}）"
+                    }
+                },
+                iconRes = R.drawable.ic_system_update,
+                showDot = updateInfo != null,
+            ) {
+                if (!checkingUpdate) {
+                    scope.launch {
+                        checkingUpdate = true
+                        val info = runCatching { runtime.checkForUpdate() }.getOrNull()
+                        checkingUpdate = false
+                        if (info != null) {
+                            pendingUpdate = info
+                            showUpdateDialog = true
+                        } else {
+                            message = "已是最新版本（v${runtime.currentVersion()}）"
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -358,6 +395,23 @@ fun SettingsScreen(
             },
         )
     }
+
+    // ---- 版本更新弹窗（手动「检查更新」触发）----
+    if (showUpdateDialog && pendingUpdate != null) {
+        UpdateDialog(
+            info = pendingUpdate!!,
+            currentVersion = runtime.currentVersion(),
+            onOpenDownload = {
+                runtime.openExternal(pendingUpdate!!.htmlUrl)
+                showUpdateDialog = false
+            },
+            onDismiss = { showUpdateDialog = false },
+            onNeverAgain = {
+                runtime.setDismissedVersion(pendingUpdate!!.version)
+                showUpdateDialog = false
+            },
+        )
+    }
 }
 
 // ============================================================================
@@ -416,12 +470,13 @@ fun SwitchRow(
     }
 }
 
-/** 可点击的设置行：左图标（可选）+ 标题 + 说明，右箭头。 */
+/** 可点击的设置行：左图标（可选）+ 标题 + 说明，右箭头；[showDot] 为真时标题右侧显示红点。 */
 @Composable
 fun ClickRow(
     title: String,
     desc: String,
     iconRes: Int? = null,
+    showDot: Boolean = false,
     onClick: () -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -442,8 +497,22 @@ fun ClickRow(
             Spacer(Modifier.width(12.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = C.textPrimary, fontSize = 14.sp)
-            Spacer(Modifier.height(2.dp))
+            if (showDot) {
+                // 红点紧跟标题，提示有更新待处理
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, color = C.textPrimary, fontSize = 14.sp)
+                    Spacer(Modifier.width(7.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(Color(0xFFFF3B30), CircleShape),
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+            } else {
+                Text(title, color = C.textPrimary, fontSize = 14.sp)
+                Spacer(Modifier.height(2.dp))
+            }
             Text(desc, color = C.textSecondary, fontSize = 11.sp, lineHeight = 15.sp)
         }
         Spacer(Modifier.width(10.dp))

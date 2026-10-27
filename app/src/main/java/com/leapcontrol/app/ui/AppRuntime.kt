@@ -1,12 +1,17 @@
 package com.leapcontrol.app.ui
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.Uri
 import com.leapcontrol.app.AmapPoi
+import com.leapcontrol.app.AppUpdateInfo
+import com.leapcontrol.app.BuildConfig
+import com.leapcontrol.app.GitHubUpdate
 import com.leapcontrol.app.AmapWebApi
 import com.leapcontrol.app.ApiException
 import com.leapcontrol.app.Commands
@@ -397,6 +402,53 @@ class AppRuntime(context: Context) {
     private val _capabilities = MutableStateFlow(VehicleCapabilities.EMPTY)
     /** 当前车辆已识别到的可选配置（粘滞 + 持久化）。 */
     val capabilities: StateFlow<VehicleCapabilities> = _capabilities.asStateFlow()
+
+    // ---------------- 版本更新检测（GitHub Releases） ----------------
+
+    private val updatePrefs = appContext.getSharedPreferences("leapcontrol_update", Context.MODE_PRIVATE)
+
+    private val _updateInfo = MutableStateFlow<AppUpdateInfo?>(null)
+    /** 检测到的可用更新（无更新 / 检测失败时为空）。设置页红点据此显示。 */
+    val updateInfo: StateFlow<AppUpdateInfo?> = _updateInfo.asStateFlow()
+
+    /** 当前已安装的版本号（取自构建配置，避免与 build.gradle.kts 脱节）。 */
+    fun currentVersion(): String = BuildConfig.VERSION_NAME
+
+    /** 用户选择「不再提醒」的版本（空表示从未忽略）。 */
+    fun dismissedVersion(): String? = updatePrefs.getString("dismissed_version", null)
+    fun setDismissedVersion(version: String) {
+        updatePrefs.edit().putString("dismissed_version", version).apply()
+    }
+
+    /**
+     * 拉取 GitHub 最新 Release 并与当前版本比较。
+     * 确有更新时填充 [_updateInfo] 并返回；无网络 / 解析失败 / 已是最新都返回 null 并清空。
+     */
+    suspend fun checkForUpdate(): AppUpdateInfo? = withContext(Dispatchers.IO) {
+        val latest = runCatching { GitHubUpdate.latestRelease() }.getOrNull() ?: run {
+            _updateInfo.value = null
+            return@withContext null
+        }
+        val newer = runCatching { GitHubUpdate.isNewer(latest.version, currentVersion()) }.getOrDefault(false)
+        if (newer) {
+            _updateInfo.value = latest
+            latest
+        } else {
+            _updateInfo.value = null
+            null
+        }
+    }
+
+    /** 跳转到外部链接（GitHub 发布页 / APK 下载）。 */
+    fun openExternal(url: String) {
+        runCatching {
+            appContext.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+        }
+    }
 
     // ---------------- 车况快照（跨页面 / 跨 Tab 保持） ----------------
     //

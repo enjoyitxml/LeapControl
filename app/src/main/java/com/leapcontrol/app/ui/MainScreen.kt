@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import com.leapcontrol.app.AppearanceMode
+import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -123,6 +124,9 @@ fun MainScreen(
     var resumed by remember { mutableStateOf(true) }
     // 四季背景提到根布局：状态栏、Dock、导航条区域都透出同一套渐变
     var seasonId by remember { mutableStateOf(runtime.seasonThemeId()) }
+    // 版本更新弹窗：检测到 GitHub 新版本且未忽略该版本时，启动后自动弹出
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
 
     // ---- 夜间自动主题 ----
     // 每 30 秒复核一次当前时间，跨过 22:00 / 06:00 时立刻生效，不必等用户重启 App。
@@ -153,6 +157,14 @@ fun MainScreen(
     }
     LaunchedEffect(Unit) {
         ForegroundSignal.pauseEvents.collect { resumed = false }
+    }
+    // 启动后检测一次 GitHub 更新；确有新版本且未对该版本选择「不再提醒」才弹窗
+    LaunchedEffect(Unit) {
+        val info = runCatching { runtime.checkForUpdate() }.getOrNull()
+        if (info != null && info.version != runtime.dismissedVersion()) {
+            pendingUpdate = info
+            showUpdateDialog = true
+        }
     }
 
     val view = LocalView.current
@@ -379,6 +391,23 @@ fun MainScreen(
                         }
                     }
                 }
+            }
+
+            // ---- 版本更新提醒弹窗（覆盖全局，最高层级）----
+            if (showUpdateDialog && pendingUpdate != null) {
+                UpdateDialog(
+                    info = pendingUpdate!!,
+                    currentVersion = runtime.currentVersion(),
+                    onOpenDownload = {
+                        runtime.openExternal(pendingUpdate!!.htmlUrl)
+                        showUpdateDialog = false
+                    },
+                    onDismiss = { showUpdateDialog = false },
+                    onNeverAgain = {
+                        runtime.setDismissedVersion(pendingUpdate!!.version)
+                        showUpdateDialog = false
+                    },
+                )
             }
         }
     }
