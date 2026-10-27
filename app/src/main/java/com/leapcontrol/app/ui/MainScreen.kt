@@ -95,6 +95,7 @@ private val HEADER_VEIL_STOPS = arrayOf(
 enum class SettingsPage {
     SETTINGS,
     PERSONALIZATION,
+    CAR_APPEARANCE,
     ABOUT,
     DISCLAIMER,
     PRIVACY,
@@ -124,6 +125,8 @@ fun MainScreen(
     // 跟随系统时两格都参与（白天一格、夜里一格），锁定模式只用得到对应那一格。
     var lightThemeId by remember { mutableStateOf(runtime.lightThemeId()) }
     var darkThemeId by remember { mutableStateOf(runtime.darkThemeId()) }
+    // 快捷切换配置（小白点 / 点击切换 / 关闭）：读 State 才能「设置里一改、退回首页立刻生效」
+    val quickSwitch by runtime.quickSwitch
     // App 是否在前台：进后台就暂停解码，别在看不见的时候继续耗电
     var resumed by remember { mutableStateOf(true) }
     // 版本更新弹窗：检测到 GitHub 新版本且未忽略该版本时，启动后自动弹出
@@ -136,10 +139,11 @@ fun MainScreen(
     // 生效主题：按明暗取对应槽位，槽里类型不对时自动回落到该类型默认主题
     val season = ThemeResolver.activeTheme(appearance, dark, lightThemeId, darkThemeId)
     val activeSeasonId = season.id
-    // ---- 快捷换壁纸（车模 / 相伴卡右上角的呼吸小白点）----
+    // ---- 快捷换壁纸（车模右上角的呼吸小白点）----
     // 在当前壁纸所属的池子里随机换一套：浅色只在日间池、深色只在夜间池、
     // 视频只在视频池，规则见 ThemeResolver.randomSwitch。
     // 只写「正在显示的那一侧槽位」，也不改外观模式 —— 用户点的是换张壁纸，不是换模式。
+    // 注意：相伴卡上的那个点是换「卡片背景」，走 runtime.randomizeOwnershipBackdrop，别接到这里。
     val randomizeTheme = {
         val pick = ThemeResolver.randomSwitch(appearance, systemInDark, lightThemeId, darkThemeId)
         if (pick.lightThemeId != lightThemeId) {
@@ -246,7 +250,14 @@ fun MainScreen(
                                 lightThemeId = pick.lightThemeId
                                 darkThemeId = pick.darkThemeId
                             },
+                            onOpenCarAppearance = { settingsPage = SettingsPage.CAR_APPEARANCE },
                             onBack = { settingsPage = null },
+                        )
+
+                        // 车模外观从个性化进，返回也回个性化 —— 别让用户按一次返回直接掉回「我的」
+                        SettingsPage.CAR_APPEARANCE -> CarAppearanceScreen(
+                            runtime = runtime,
+                            onBack = { settingsPage = SettingsPage.PERSONALIZATION },
                         )
 
                         SettingsPage.ABOUT -> AboutScreen(
@@ -362,8 +373,10 @@ fun MainScreen(
                                 runtime = runtime,
                                 onLogout = onLogout,
                                 onOpenSkin = { settingsPage = SettingsPage.PERSONALIZATION },
-                                // 车模 / 相伴卡右上角的呼吸小白点：随机换壁纸
+                                // 两处快捷切换各管一摊：车模换主题壁纸，相伴卡换卡片背景
                                 onRandomTheme = randomizeTheme,
+                                onRandomBackdrop = { runtime.randomizeOwnershipBackdrop() },
+                                quickSwitch = quickSwitch,
                                 onMainPageChange = { homeOnMainPage = it },
                                 onCarModelGoneChange = { carModelGone = it },
                                 onScrollingChange = { homeScrolling = it },

@@ -2,6 +2,8 @@ package com.leapcontrol.app.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.MileageEnergySummary
 import com.leapcontrol.app.OwnershipStats
+import com.leapcontrol.app.QuickTarget
 
 /**
  * 「与爱车相伴」卡（首页整行宽幅，横版）。
@@ -52,8 +56,15 @@ fun OwnershipCard(
     status: CarStatus?,
     energy: MileageEnergySummary?,
     backdropId: String? = null,
-    /** 右上角「呼吸小白点」：点一下随机换壁纸；传 null 则不显示按钮 */
-    onRandomTheme: (() -> Unit)? = null,
+    /**
+     * 快捷换背景的呈现方式（设置 → 首页 → 快速切换）：
+     *  - [QuickTarget.DOT] 右上角呼吸小白点，点白点换图；
+     *  - [QuickTarget.TAP] 不显示白点，点卡片本体换图；
+     *  - [QuickTarget.NONE] 不提供，只能在个性化里手动选。
+     */
+    quickTarget: QuickTarget = QuickTarget.NONE,
+    /** 触发时的动作：随机换一张与本张不同的背景（不改主题） */
+    onRandomBackdrop: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // 图片内容不可控（换图/裁切位置都会变），所以文字统一带一层柔和投影兜底
@@ -62,12 +73,27 @@ fun OwnershipCard(
     val kmText = OwnershipStats.formatKm(energy?.totalMileageKm)
         ?: OwnershipStats.formatKm(OwnershipStats.kmFromText(status?.totalMileage))
     val backdrop = OwnershipBackdrops.byId(backdropId)
+    // 提到外面：避免在 if 分支里 remember（模式切换时那个分支的槽位会被丢弃重建）
+    val interaction = remember { MutableInteractionSource() }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(116.dp)
-            .clip(RoundedCornerShape(8.dp)),
+            .clip(RoundedCornerShape(8.dp))
+            // 「点击切换」模式下整张卡就是按钮。涟漪关掉：卡上压着风景图和两行数字，
+            // 半透明的圆形涟漪扫过去会像"图片被点脏了"
+            .then(
+                if (quickTarget == QuickTarget.TAP) {
+                    Modifier.clickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        onClick = onRandomBackdrop,
+                    )
+                } else {
+                    Modifier
+                },
+            ),
     ) {
         // 竖构图原图 Crop 到 3:1 后正好取到「天空 + 山脊」这一段，不裁峰尖
         Image(
@@ -162,10 +188,11 @@ fun OwnershipCard(
             }
         }
 
-        // 快捷换壁纸：小白点压在卡片右上角的天空/雪山上，半透明不抢画面
-        onRandomTheme?.let { onClick ->
+        // 快捷换背景：小白点压在卡片右上角的天空/雪山上，半透明不抢画面。
+        // 点它只换这张相伴卡的图（6 套内置背景里随机，不与当前重复），主题不受影响。
+        if (quickTarget == QuickTarget.DOT) {
             QuickThemeButton(
-                onClick = onClick,
+                onClick = onRandomBackdrop,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = 2.dp, end = 6.dp),
