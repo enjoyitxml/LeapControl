@@ -729,22 +729,27 @@ fun HomeScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // 车名 + 下拉箭头：多车时点这一块切换车辆
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.clickable(enabled = vehicles.size > 1) { showVehicleMenu = true },
-                        ) {
-                            Text(
-                                text = carName,
-                                color = LocalAppColors.current.textPrimary,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                modifier = Modifier.widthIn(max = 180.dp),
-                            )
-                            // 账号下有多辆车时才显示下拉箭头
-                            if (vehicles.size > 1) {
-                                Spacer(Modifier.width(4.dp))
+                        // 车名：点一下直接改名（原来那个铅笔按钮已去掉，入口合并到车名本身，
+                        // 省一个图标位、也少一次「先找按钮」的判断）
+                        Text(
+                            text = carName,
+                            color = LocalAppColors.current.textPrimary,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .widthIn(max = 180.dp)
+                                .clickable { showRenameDialog = true },
+                        )
+                        // 账号下有多辆车时才有下拉箭头：**箭头单独可点**用于切换车辆，
+                        // 和「点车名改名」分成两个热区，互不抢
+                        if (vehicles.size > 1) {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clickable { showVehicleMenu = true },
+                                contentAlignment = Alignment.Center,
+                            ) {
                                 Icon(
                                     Icons.Filled.KeyboardArrowDown,
                                     contentDescription = "切换车辆",
@@ -753,13 +758,6 @@ fun HomeScreen(
                                 )
                             }
                         }
-                        // 编辑车名：只存本地，清空则回到零跑官方 App 的昵称
-                        HeaderIconButton(
-                            iconRes = R.drawable.ic_edit,
-                            description = "修改车名",
-                            size = 18.dp,
-                            onClick = { showRenameDialog = true },
-                        )
                     }
                     // 车况更新时间：紧贴车名下方，点一下可手动刷新
                     Spacer(Modifier.height(4.dp))

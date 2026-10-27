@@ -88,29 +88,42 @@ private fun carBodyPath(X: (Float) -> Float, Y: (Float) -> Float): Path = Path()
     close()
 }
 
-/** 前风挡：上窄下宽的梯形，底边直接接到天幕。 */
+/**
+ * 前风挡：上窄下宽的梯形，底边直接接到天幕（两边等宽，接缝处不会有台阶）。
+ */
 private fun windshieldPath(X: (Float) -> Float, Y: (Float) -> Float): Path = Path().apply {
-    moveTo(X(40f), Y(64f))
-    lineTo(X(80f), Y(64f))
-    lineTo(X(87f), Y(90f))
-    lineTo(X(33f), Y(90f))
+    moveTo(X(41f), Y(61f))
+    lineTo(X(79f), Y(61f))
+    lineTo(X(87f), Y(88f))
+    lineTo(X(33f), Y(88f))
     close()
 }
 
-/** 后风挡：与天幕下沿相接。 */
+/**
+ * 后风挡：**比天幕窄一圈**，并与天幕之间留出一段车身色（C 柱 / 顶盖后横梁）。
+ *
+ * 之前它上沿是 33~87、几乎和天幕（32~88）等宽，两块玻璃看起来像连成一整块、
+ * 左右还在同一条竖线上，俯视时很像「对称图形」而不是车 —— 收窄到 38~82 之后，
+ * 一眼就能分出「车顶玻璃 / 后窗」两段。梯形继续往下收（45~75），符合车尾收腰。
+ */
 private fun rearWindowPath(X: (Float) -> Float, Y: (Float) -> Float): Path = Path().apply {
-    moveTo(X(33f), Y(164f))
-    lineTo(X(87f), Y(164f))
-    lineTo(X(80f), Y(190f))
-    lineTo(X(40f), Y(190f))
+    moveTo(X(38f), Y(170f))
+    lineTo(X(82f), Y(170f))
+    lineTo(X(75f), Y(192f))
+    lineTo(X(45f), Y(192f))
     close()
 }
 
-/** 天幕（整块玻璃车顶）：覆盖车顶并把前后风挡连成一片。 */
+/**
+ * 天幕（整块玻璃车顶）：盖住车顶，前缘与风挡连成一片。
+ *
+ * 下沿从 172 收到 164：给后风挡让出 6 个单位（约一张卡片上的 5dp）的车身色，
+ * 那是顶盖后横梁的位置，也是「两块玻璃不是同一块」最直接的视觉证据。
+ */
 private const val ROOF_LEFT = 32f
 private const val ROOF_RIGHT = 88f
 private const val ROOF_TOP = 84f
-private const val ROOF_BOTTOM = 172f
+private const val ROOF_BOTTOM = 164f
 
 /** 左前车灯：贴着翼子板斜着放，外宽内窄。右前按 X 镜像。 */
 private fun headlightPath(X: (Float) -> Float, Y: (Float) -> Float, mirror: Boolean): Path =
@@ -205,8 +218,8 @@ fun TireCarOutline(
         // 反光：从左前斜向右后的一道光带，玻璃感全靠它
         drawLine(
             color = Color.White.copy(alpha = if (C.isDark) 0.10f else 0.55f),
-            start = Offset(X(42f), Y(100f)),
-            end = Offset(X(58f), Y(130f)),
+            start = Offset(X(42f), Y(103f)),
+            end = Offset(X(58f), Y(133f)),
             strokeWidth = S(3.2f),
         )
 
@@ -311,8 +324,8 @@ fun TireTopView(
         )
         drawLine(
             color = Color(0xFFB9C6E0).copy(alpha = 0.22f),
-            start = Offset(X(42f), Y(98f)),
-            end = Offset(X(60f), Y(132f)),
+            start = Offset(X(42f), Y(101f)),
+            end = Offset(X(60f), Y(135f)),
             strokeWidth = S(4f),
         )
 
