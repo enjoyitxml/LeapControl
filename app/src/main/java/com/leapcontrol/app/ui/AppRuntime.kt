@@ -1321,10 +1321,27 @@ class AppRuntime(context: Context) {
         cachedCustomCarBitmap()?.let { return@withContext it }
         val vin = session.selectedVin
         if (vin.isBlank()) return@withContext null
-        CarModelStore.load(appContext, vin)?.also {
-            customCarCache = it
-            customCarCacheVin = vin
-        }
+        val loaded = CarModelStore.load(appContext, vin) ?: return@withContext null
+        // 老版本导入的图没有对齐官方比例（车会比官方大一圈、贴边），首次读到时就地补一次摆位。
+        // 比例已经对上的（换色生成的图）会原样返回，所以这步是幂等的，重复跑不会掉画质。
+        val fixed = runCatching { normalizeCustomCarModel(loaded) }.getOrNull() ?: loaded
+        customCarCache = fixed
+        customCarCacheVin = vin
+        fixed
+    }
+
+    /**
+     * 把一张比例与官方不一致的自定义图重新摆位并落盘。
+     *
+     * 失败（离线且官方图没缓存 / 找不到车模外框）就原样返回，不影响显示。
+     */
+    private suspend fun normalizeCustomCarModel(custom: Bitmap): Bitmap {
+        val official = fetchCarImage() ?: return custom
+        val fixed = CarModelStore.normalizeToTemplate(custom, official) ?: return custom
+        if (fixed === custom) return custom
+        val vin = session.selectedVin
+        if (vin.isNotBlank() && CarModelStore.save(appContext, vin, fixed)) return fixed
+        return custom
     }
 
     /** 当前该显示哪张车模：改过色就用自定义的，否则用官方图。 */
@@ -1347,15 +1364,24 @@ class AppRuntime(context: Context) {
         ok
     }
 
-    /** 从相册导入一张图作为自定义车模（自动裁透明边、缩到长边 1600 以内）。 */
-    suspend fun importCarModel(uri: Uri): Boolean {
+    /**
+     * 从相册导入一张图作为自定义车模。
+     *
+     * 会先用官方图当模板做三件事：自动抠背景、裁掉空边、按官方车模的外框重新摆位
+     * （详见 [CarModelStore.import]）。这样不管用户传进来什么比例的图，首页的大小和留白
+     * 都跟官方那张一致。返回处理结果（含「是否抠了背景 / 是否对齐过」），失败返回 null。
+     */
+    suspend fun importCarModel(uri: Uri): CarModelStore.Imported? {
         val vin = session.selectedVin
-        if (vin.isBlank()) return false
-        val bitmap = CarModelStore.import(appContext, vin, uri) ?: return false
-        customCarCache = bitmap
+        if (vin.isBlank()) return null
+        // 官方图既当尺寸模板，也是「官方车模长什么样」的唯一依据；
+        // 拿不到（离线且没缓存）时退化成只抠图 + 裁边，至少不会崩。
+        val template = runCatching { fetchCarImage() }.getOrNull()
+        val result = CarModelStore.import(appContext, vin, uri, template) ?: return null
+        customCarCache = result.bitmap
         customCarCacheVin = vin
         _carModelRevision.value += 1
-        return true
+        return result
     }
 
     /**

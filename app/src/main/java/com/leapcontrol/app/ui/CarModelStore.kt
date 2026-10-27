@@ -3,11 +3,15 @@ package com.leapcontrol.app.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.roundToInt
 
 /**
  * 自定义车模图的本地存取。
@@ -25,6 +29,15 @@ object CarModelStore {
 
     /** 透明阈值：低于它的算背景，裁边时不参与取景。 */
     private const val ALPHA_THRESHOLD = 8
+
+    /** 一次导入的处理结果，UI 靠它决定提示文案。 */
+    data class Imported(
+        val bitmap: Bitmap,
+        /** 抠掉了背景（用户给的是白底 / 纯色底图）。 */
+        val backgroundRemoved: Boolean,
+        /** 已按官方车模的比例和留白重新摆位。 */
+        val aligned: Boolean,
+    )
 
     fun file(context: Context, vin: String): File =
         File(context.filesDir, "car_custom_${vin.ifBlank { "default" }}.png")
@@ -61,38 +74,146 @@ object CarModelStore {
     /**
      * 从相册导入一张图作为自定义车模。
      *
-     * 三步：解码（按 2 的幂采样，避免直接 decode 一张大照片撑爆堆）→ 裁掉全透明边
-     * （用户从 AI 拿回来的图四周常有一大片透明 / 白底留白，不裁的话车模会显示得很小）
-     * → 存 PNG。
+     * 顺序：解码（按 2 的幂采样，避免 decode 一张大照片撑爆堆）→ 自动抠背景
+     * （白底 / 纯色底才动手，本来就透明底的图跳过）→ 裁掉全透明边 → **按官方图的
+     * 车模外框重新摆位**（见 [alignToTemplate]）→ 存 PNG。
      *
-     * 返回存好的 bitmap，失败返回 null。
+     * 最后一步是「不管上传什么比例的图，观感都跟官方一致」的关键：
+     * 少了它，紧裁的图会因为贴着边缘而比官方车大一圈（实测 1.33 倍），首页看着就不协调。
+     *
+     * 返回处理结果，失败返回 null。
      */
-    suspend fun import(context: Context, vin: String, uri: Uri): Bitmap? =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val resolver = context.contentResolver
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-                val rawWidth = bounds.outWidth
-                val rawHeight = bounds.outHeight
-                if (rawWidth <= 0 || rawHeight <= 0) return@runCatching null
+    suspend fun import(
+        context: Context,
+        vin: String,
+        uri: Uri,
+        template: Bitmap? = null,
+    ): Imported? = withContext(Dispatchers.IO) {
+        runCatching {
+            val resolver = context.contentResolver
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            val rawWidth = bounds.outWidth
+            val rawHeight = bounds.outHeight
+            if (rawWidth <= 0 || rawHeight <= 0) return@runCatching null
 
-                val options = BitmapFactory.Options().apply {
-                    inSampleSize = sampleSizeFor(rawWidth, rawHeight, MAX_SIDE)
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                }
-                val decoded = resolver.openInputStream(uri)?.use {
-                    BitmapFactory.decodeStream(it, null, options)
-                } ?: return@runCatching null
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = sampleSizeFor(rawWidth, rawHeight, MAX_SIDE)
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val decoded = resolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, options)
+            } ?: return@runCatching null
 
-                val scaled = scaleDown(decoded, MAX_SIDE)
-                val trimmed = trimTransparent(scaled)
-                // 这里不主动 recycle：解码出来的中间图马上就没引用，交给 GC 处理。
-                // Android 10 起 Bitmap 像素在 Java 堆上，GC 能回收；手动 recycle 反而容易
-                // 把「返回给 UI 继续显示的那张」也带走。
-                if (save(context, vin, trimmed)) trimmed else null
-            }.getOrNull()
+            val scaled = scaleDown(decoded, MAX_SIDE)
+            val cut = cutout(scaled)
+            val trimmed = trimTransparent(cut.second)
+            val aligned = template?.let { alignToTemplate(trimmed, it) }
+            val result = aligned ?: trimmed
+            if (!save(context, vin, result)) return@runCatching null
+            // 这里不主动 recycle：解码出来的中间图马上就没引用，交给 GC 处理。
+            // Android 10 起 Bitmap 像素在 Java 堆上，GC 能回收；手动 recycle 反而容易
+            // 把「返回给 UI 继续显示的那张」也带走。
+            Imported(result, backgroundRemoved = cut.first, aligned = aligned != null)
+        }.getOrNull()
+    }
+
+    /**
+     * 把官方车模图当模板，把任意比例的导入图重新摆位。
+     *
+     * 官方图是「车模居中 + 一圈留白」的画布，用户那张是紧裁图，直接 Fit 显示必然一大一小。
+     * 这里量出官方图里车模的真实外框，再把导入图的车模等比缩进这个外框、居中摆好，
+     * 输出一张与官方图同尺寸（同留白）的画布 —— 首页显示出来的大小、位置就完全对得上了。
+     *
+     * 用 contain 而不是拉伸：比例差得多的图宁可小一圈，也不能把车拉变形。
+     */
+    fun alignToTemplate(content: Bitmap, template: Bitmap): Bitmap? = runCatching {
+        val cw = content.width
+        val ch = content.height
+        if (cw <= 0 || ch <= 0) return null
+        val cp = IntArray(cw * ch)
+        content.getPixels(cp, 0, cw, 0, 0, cw, ch)
+        val cBox = CarCutout.contentBox(cp, cw, ch, ALPHA_THRESHOLD) ?: return null
+
+        val base = scaleDown(template, MAX_SIDE)
+        val tw = base.width
+        val th = base.height
+        if (tw <= 0 || th <= 0) return null
+        val tp = IntArray(tw * th)
+        base.getPixels(tp, 0, tw, 0, 0, tw, th)
+        val tBox = CarCutout.contentBox(tp, tw, th, ALPHA_THRESHOLD) ?: return null
+
+        val fit = CarCutout.containRect(cBox, tBox)
+        val dw = fit.width.roundToInt().coerceAtLeast(1)
+        val dh = fit.height.roundToInt().coerceAtLeast(1)
+        if (!fit.width.isFinite() || !fit.height.isFinite() || dw <= 0 || dh <= 0) return null
+
+        val out = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint().apply {
+            isFilterBitmap = true
+            isAntiAlias = true
+            isDither = true
         }
+        // 先精确缩到目标像素尺寸再贴，比一次性 drawBitmap 缩放的边缘更干净
+        val src = Rect(cBox.left, cBox.top, cBox.right + 1, cBox.bottom + 1)
+        val body = if (dw == cBox.width && dh == cBox.height) {
+            content
+        } else {
+            Bitmap.createScaledBitmap(content.subsetOrSelf(src), dw, dh, true)
+        }
+        canvas.drawBitmap(body, fit.left, fit.top, paint)
+        out
+    }.getOrNull()
+
+    /**
+     * 用官方图给一张已有的自定义图「补摆位」，老版本导入的图升级后就地修正。
+     *
+     * 判据是「车模占画布宽度的比例」而不是整图宽高比：换色生成的图与官方图逐像素同构
+     * （占比完全相同 → 直接返回，不重采样掉画质），而老版本导入的紧裁图占比接近 100%
+     * （官方是 76%）→ 重排。重排后再算一次占比就对上了，所以这步是幂等的。
+     */
+    fun normalizeToTemplate(custom: Bitmap, template: Bitmap): Bitmap? {
+        val customBox = contentBoxOf(custom) ?: return custom
+        val base = scaleDown(template, MAX_SIDE)
+        val templateBox = contentBoxOf(base) ?: return custom
+        if (custom.width <= 0 || base.width <= 0) return custom
+
+        val customShare = customBox.width.toFloat() / custom.width
+        val templateShare = templateBox.width.toFloat() / base.width
+        if (templateShare <= 0f) return custom
+        if (kotlin.math.abs(customShare - templateShare) / templateShare < 0.03f) return custom
+        return alignToTemplate(custom, base) ?: custom
+    }
+
+    /** 一张 bitmap 里车模内容的外框。 */
+    private fun contentBoxOf(bitmap: Bitmap): CarCutout.Box? {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w <= 0 || h <= 0) return null
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        return CarCutout.contentBox(pixels, w, h, ALPHA_THRESHOLD)
+    }
+
+    private fun Bitmap.subsetOrSelf(rect: Rect): Bitmap {
+        val full = rect.left == 0 && rect.top == 0 && rect.right == width && rect.bottom == height
+        return if (full) this else Bitmap.createBitmap(this, rect.left, rect.top, rect.width(), rect.height())
+    }
+
+    /** 抠背景；返回「是否真的抠了」和结果图。本来透明底的图原样返回。 */
+    private fun cutout(bitmap: Bitmap): Pair<Boolean, Bitmap> {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w <= 0 || h <= 0) return false to bitmap
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        val result = CarCutout.removeBackground(pixels, w, h)
+        if (!result.removed) return false to bitmap
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        out.setPixels(result.pixels, 0, w, 0, 0, w, h)
+        return true to out
+    }
 
     /**
      * 裁掉四周的全透明像素（留 [padding] 像素余量，免得边缘被切掉）。
@@ -105,31 +226,18 @@ object CarModelStore {
         if (w <= 0 || h <= 0) return bitmap
         val pixels = IntArray(w * h)
         bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
-
-        var left = w
-        var top = h
-        var right = -1
-        var bottom = -1
-        for (y in 0 until h) {
-            val row = y * w
-            for (x in 0 until w) {
-                val a = (pixels[row + x] ushr 24) and 0xFF
-                if (a > ALPHA_THRESHOLD) {
-                    if (x < left) left = x
-                    if (x > right) right = x
-                    if (y < top) top = y
-                    if (y > bottom) bottom = y
-                }
-            }
+        val box = CarCutout.contentBox(pixels, w, h, ALPHA_THRESHOLD) ?: return bitmap
+        // 本来就铺满（或只差 1px）：不裁
+        if (box.left <= padding && box.top <= padding &&
+            box.right >= w - 1 - padding && box.bottom >= h - 1 - padding
+        ) {
+            return bitmap
         }
-        // 整张透明（用户选错图）或本来就铺满：都不裁
-        if (right < 0) return bitmap
-        if (left == 0 && top == 0 && right == w - 1 && bottom == h - 1) return bitmap
 
-        val l = (left - padding).coerceAtLeast(0)
-        val t = (top - padding).coerceAtLeast(0)
-        val r = (right + padding).coerceAtMost(w - 1)
-        val b = (bottom + padding).coerceAtMost(h - 1)
+        val l = (box.left - padding).coerceAtLeast(0)
+        val t = (box.top - padding).coerceAtLeast(0)
+        val r = (box.right + padding).coerceAtMost(w - 1)
+        val b = (box.bottom + padding).coerceAtMost(h - 1)
         return Bitmap.createBitmap(bitmap, l, t, r - l + 1, b - t + 1)
     }
 

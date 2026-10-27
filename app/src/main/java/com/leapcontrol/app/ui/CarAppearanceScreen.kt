@@ -119,8 +119,8 @@ fun CarAppearanceScreen(
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             busy = true
-            val ok = runtime.importCarModel(uri)
-            if (ok) {
+            val result = runtime.importCarModel(uri)
+            if (result != null) {
                 custom = runtime.customCarModel()
                 tintIndex = null
                 preview = null
@@ -128,7 +128,13 @@ fun CarAppearanceScreen(
             busy = false
             Toast.makeText(
                 context,
-                if (ok) "已换成这张图" else "这张图读不出来，换一张再试",
+                when {
+                    result == null -> "这张图读不出来，换一张再试"
+                    result.backgroundRemoved && result.aligned -> "已抠掉背景，并按官方车模比例对齐"
+                    result.aligned -> "已按官方车模的比例对齐"
+                    result.backgroundRemoved -> "已抠掉背景（没取到官方图，未做比例对齐）"
+                    else -> "没识别出纯色背景，按原图导入"
+                },
                 Toast.LENGTH_SHORT,
             ).show()
         }
@@ -342,7 +348,7 @@ fun CarAppearanceScreen(
                 HairLine()
                 ClickRow(
                     title = "导入改好的图片",
-                    desc = "从相册选一张，自动裁掉空白边、等比适配首页",
+                    desc = "自动抠背景，并按官方车模的比例和留白对齐",
                     icon = Icons.Filled.PhotoLibrary,
                     onClick = {
                         if (busy) return@ClickRow
@@ -370,6 +376,15 @@ fun CarAppearanceScreen(
         }
 
         Spacer(Modifier.height(14.dp))
+        Text(
+            "导入时会先把车模从背景里抠出来，再按官方车模的外框重新摆大小和位置 —— "
+                + "所以不管原图是什么比例、车贴着哪个边，首页看到的都一样大、同一个位置。"
+                + "白底或纯色底的图能自动去背景；实景照片去不掉，会按原图比例导入。",
+            color = C.textSecondary,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+        )
+        Spacer(Modifier.height(8.dp))
         Text(
             "车模图只在手机本地处理：不上传、不经过任何服务器，换色结果也只存在本机。"
                 + "导入的图片请自己确认版权，仅作个人使用。",
