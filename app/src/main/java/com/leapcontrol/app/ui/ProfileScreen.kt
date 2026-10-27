@@ -1,6 +1,11 @@
 package com.leapcontrol.app.ui
 
+import android.graphics.Bitmap
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,22 +28,29 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.R
@@ -56,6 +68,38 @@ fun ProfileScreen(
     onOpenPage: (SettingsPage) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    // ---- 头像 ----
+    // 偏好里只存「选了哪个」，自定义照片是文件；两者分开读，删照片不影响选择记录
+    var avatarRaw by remember { mutableStateOf(runtime.avatarChoiceRaw()) }
+    // 先吃运行时缓存：切 Tab 回来时第一帧就能显示自定义照片，不会闪一下内置头像
+    var customBitmap by remember { mutableStateOf(runtime.cachedCustomAvatar()) }
+    var showAvatarPicker by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        if (AvatarStore.exists(context)) {
+            customBitmap = runtime.customAvatar()
+        }
+    }
+
+    // 系统相册选择器（Android 13+ 走照片选择器，低版本回落到文件选择，都不需要读存储权限）
+    val pickImage = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = AvatarStore.import(context, uri)
+            if (ok) {
+                customBitmap = runtime.reloadCustomAvatar()
+                avatarRaw = AvatarChoice.CUSTOM_RAW
+                runtime.setAvatarChoiceRaw(avatarRaw)
+                showAvatarPicker = false
+            } else {
+                Toast.makeText(context, "这张图读不出来，换一张试试", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     MaterialTheme(
         colorScheme = if (LocalAppColors.current.isDark) {
@@ -86,19 +130,12 @@ fun ProfileScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .background(LocalAppColors.current.chipBg, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            painterResource(R.drawable.ic_nav_person),
-                            null,
-                            tint = LocalAppColors.current.textSecondary,
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
+                    ProfileAvatar(
+                        choice = AvatarChoice.decode(avatarRaw),
+                        customBitmap = customBitmap,
+                        size = 46.dp,
+                        onClick = { showAvatarPicker = true },
+                    )
                     Spacer(Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -212,6 +249,30 @@ fun ProfileScreen(
             }
 
             Spacer(Modifier.height(24.dp))
+
+            if (showAvatarPicker) {
+                AvatarPickerDialog(
+                    current = AvatarChoice.decode(avatarRaw),
+                    customBitmap = customBitmap,
+                    onPickPreset = { index ->
+                        avatarRaw = AvatarChoice.preset(index)
+                        runtime.setAvatarChoiceRaw(avatarRaw)
+                        showAvatarPicker = false
+                    },
+                    onPickCustom = {
+                        pickImage.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    },
+                    onClearCustom = {
+                        runtime.clearCustomAvatar()
+                        customBitmap = null
+                        avatarRaw = AvatarChoice.DEFAULT_RAW
+                        runtime.setAvatarChoiceRaw(avatarRaw)
+                    },
+                    onDismiss = { showAvatarPicker = false },
+                )
+            }
         }
     }
 }
@@ -252,5 +313,72 @@ internal fun ProfileItem(
             tint = C.textSecondary,
             modifier = Modifier.size(18.dp),
         )
+    }
+}
+
+/**
+ * 「我的」页顶部头像。
+ *
+ * 内置头像是自带色底的圆形 WebP，直接铺满就行；自定义照片先被 [AvatarStore]
+ * 中心裁成正方形存下来，这里再用 `ContentScale.Crop` 兜一层，任何比例都不变形。
+ *
+ * 右下角那枚小相机是唯一的功能提示——没有它，用户不会知道头像能点。
+ * 尺寸压到 [size] 的 30%，压在圆弧内圈，不额外描边（全 App 只有选中态才描边）。
+ */
+@Composable
+private fun ProfileAvatar(
+    choice: AvatarChoice,
+    customBitmap: Bitmap?,
+    size: Dp,
+    onClick: () -> Unit,
+) {
+    val C = LocalAppColors.current
+    val custom = (choice as? AvatarChoice.Custom)?.let { customBitmap }
+
+    // 外层方形、内层圆形：角标挂在方形层的右下角，才不会被圆弧切掉一角
+    Box(modifier = Modifier.size(size)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (custom != null) {
+                Image(
+                    bitmap = custom.asImageBitmap(),
+                    contentDescription = "头像，点击更换",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                // 自定义照片可能被清掉（清缓存、换机恢复）：回落到内置头像，不能留一块空白
+                val index = (choice as? AvatarChoice.Preset)?.index ?: AvatarCatalog.DEFAULT_INDEX
+                Image(
+                    painter = painterResource(AvatarCatalog.drawableAt(index)),
+                    contentDescription = "头像，点击更换",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+
+        // 唯一的「可点」提示。用 chipBg 而不是卡片底色：浅色主题下白底白圆会看不出来，
+        // 只剩一个悬空的灰色相机，看着像头像被挖了个缺口
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(size * 0.30f)
+                .clip(CircleShape)
+                .background(C.chipBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.PhotoCamera,
+                contentDescription = null,
+                tint = C.textSecondary,
+                modifier = Modifier.size(size * 0.17f),
+            )
+        }
     }
 }

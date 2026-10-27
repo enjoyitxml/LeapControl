@@ -1046,6 +1046,52 @@ class AppRuntime(context: Context) {
         namingPrefs.edit().putString("dark_theme", safe.id).apply()
     }
 
+    // ---------------- 「我的」页头像 ----------------
+
+    /**
+     * 头像选择，存成 `preset:<下标>` 或 `custom` 的可读字符串。
+     *
+     * 这里只存「选择」本身；自定义照片的文件由 [AvatarStore] 管，
+     * 所以换头像不改图片文件，删图片也不动偏好——两边各管一件事。
+     */
+    fun avatarChoiceRaw(): String =
+        namingPrefs.getString("avatar_choice", AvatarChoice.DEFAULT_RAW)
+            ?: AvatarChoice.DEFAULT_RAW
+
+    fun setAvatarChoiceRaw(raw: String) {
+        namingPrefs.edit().putString("avatar_choice", raw).apply()
+    }
+
+    /**
+     * 自定义头像的内存热缓存。
+     *
+     * 和车模图一个道理：MainScreen 用 `when(tab)` 切页，切回「我的」时整棵子树重建、
+     * remember 全丢。只靠页面里的 remember，自定义头像会先闪一下内置头像再跳回来。
+     * 挂到 AppRuntime 上，切页时能同步拿到，第一帧就是对的。
+     */
+    private var customAvatarCache: Bitmap? = null
+
+    /** 已解码的自定义头像（同步、可能为 null）。 */
+    fun cachedCustomAvatar(): Bitmap? = customAvatarCache?.takeIf { !it.isRecycled }
+
+    /** 读自定义头像，优先用缓存。 */
+    suspend fun customAvatar(): Bitmap? = withContext(Dispatchers.IO) {
+        cachedCustomAvatar() ?: AvatarStore.load(appContext)?.also { customAvatarCache = it }
+    }
+
+    /** 换过照片后强制重读（缓存里还是旧图）。 */
+    suspend fun reloadCustomAvatar(): Bitmap? = withContext(Dispatchers.IO) {
+        val loaded = AvatarStore.load(appContext)
+        customAvatarCache = loaded
+        loaded
+    }
+
+    /** 删掉自定义头像，连同缓存一起清。 */
+    fun clearCustomAvatar() {
+        customAvatarCache = null
+        AvatarStore.clear(appContext)
+    }
+
     // ---------------- 相伴卡背景 ----------------
 
     fun ownershipBackdropId(): String = _ownershipBackdrop.value
