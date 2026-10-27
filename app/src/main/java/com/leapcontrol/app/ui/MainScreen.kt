@@ -110,6 +110,9 @@ fun MainScreen(
     // 首页是否停在「主界面」（打开充电中心 / 空调 / 体检等二级页时为 false）。
     // 动态背景视频只在零控首页主界面播放，其余界面一律用主题色渐变。
     var homeOnMainPage by remember { mutableStateOf(true) }
+    // 车模是否滑出视口：HomeScreen 通过 onCarModelGoneChange 上报。
+    // 车模消失后视频背景也要跟着隐去、换成纯色，避免画面细节干扰下方文字，提高可读性。
+    var carModelGone by remember { mutableStateOf(false) }
     var appearance by remember { mutableStateOf(runtime.appearanceMode()) }
     // 动态背景：视频开关与声音开关。设置页改完后回到首页要立刻生效，
     // 所以状态提在这里持有，而不是让设置页自己去读一次就不变了
@@ -268,24 +271,33 @@ fun MainScreen(
                 // 视频层「常驻」组合、不随切页 / 进二级页卸载：用 alpha 显隐 + paused 控制播放，
                 // 切回首页时画面连续、不会从头起播闪烁一下（我的页、设置/个性化/关于、
                 // 以及首页二级页不显示视频，纯主题色渐变，靠 alpha=0 隐藏、暂停解码省电）。
-                val onHomeMain = videoEnabled && tab == 0 && homeOnMainPage
+                val videoActive = videoEnabled && tab == 0 && homeOnMainPage && !carModelGone
                 if (videoEnabled) {
                     Box(
                         modifier = Modifier
                             .matchParentSize()
-                            .alpha(if (onHomeMain) 1f else 0f)
+                            .alpha(if (videoActive) 1f else 0f)
                     ) {
                         SeasonVideoBackground(
                             seasonId = activeSeasonId,
                             muted = !videoSound,
-                            // 不在前台或不在首页主界面都暂停解码；切回时从当前帧续播，不闪。
-                            paused = !resumed || !onHomeMain,
+                            // 不在前台、不在首页主界面、或车模已滑出视口都暂停解码；
+                            // 切回时从当前帧续播，不闪。
+                            paused = !resumed || !videoActive,
                             modifier = Modifier.matchParentSize(),
                         )
                     }
                 }
-                // 雾化遮罩 + 下缘渐隐只在首页主界面绘制（无播放器的静态层，切页重建无副作用）
-                if (onHomeMain) {
+                // 车模滑出视口后：视频已隐藏，改用纯色背景铺底，文字压在干净底色上更清晰
+                if (carModelGone) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(season.gradient(dark).last()),
+                    )
+                }
+                // 雾化遮罩 + 下缘渐隐只在首页主界面且车模可见时绘制（无播放器的静态层，切页重建无副作用）
+                if (videoActive) {
                     // ---- 雾化遮罩：以车模正中心为圆心，向外圆弧发散 ----
                     // 圆心处完全通透（车模不被压灰），越往四周越浓，屏幕顶端最浓。
                     // 取主题渐变的最顶色，视频是「淡出进背景」而不是被压上一块别的颜色。
@@ -356,6 +368,7 @@ fun MainScreen(
                                     seasonId = it
                                 },
                                 onMainPageChange = { homeOnMainPage = it },
+                                onCarModelGoneChange = { carModelGone = it },
                             )
 
                             else -> ProfileScreen(

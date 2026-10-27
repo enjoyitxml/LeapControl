@@ -100,6 +100,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.RoundRect
@@ -157,6 +158,8 @@ fun HomeScreen(
     onSeasonChange: (String) -> Unit,
     /** 向上汇报「当前是否在零控首页主界面」—— 视频背景只在首页主界面播放 */
     onMainPageChange: (Boolean) -> Unit,
+    /** 向上汇报「车模是否已滚出可视区」—— 滚出后视频背景切换为纯色背景，提高可读性 */
+    onCarModelGoneChange: (Boolean) -> Unit,
 ) {
     // 配色由 MainScreen 通过 LocalAppColors 下发（跟随系统 / 浅色 / 深色）
     val C = LocalAppColors.current
@@ -169,6 +172,8 @@ fun HomeScreen(
     ) {
         // 跨 Tab 切换保留滚动位置（随 Activity 重建也能恢复）
         val homeScrollState = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
+        // 车模底边在滚动内容中的纵向坐标（px），用于判断车模是否已滚出可视区
+        var carModelBottomY by remember { mutableStateOf(0f) }
         val scope = rememberCoroutineScope()
         // 车况提升到 AppRuntime 持有（跨页面/跨 Tab 保留 + 磁盘缓存），
         // 这里只订阅，不再用 remember 存 —— 切到「我的」再回来不会先变成 null 而闪一下。
@@ -222,9 +227,8 @@ fun HomeScreen(
         var showScheduledAc by remember { mutableStateOf(false) }
         var showVehicleHealth by remember { mutableStateOf(false) }
         var showOta by remember { mutableStateOf(false) }
-        // 胎压监测 / 车辆位置（寻车）独立页
+        // 胎压监测独立页
         var showTire by remember { mutableStateOf(false) }
-        var showFindCar by remember { mutableStateOf(false) }
         var acPlan by remember { mutableStateOf(com.leapcontrol.app.ScheduledAcPlan()) }
         var acPlanLoading by remember { mutableStateOf(false) }
         var acPlanLoadFailed by remember { mutableStateOf(false) }
@@ -277,8 +281,11 @@ fun HomeScreen(
         // 打开时向 MainScreen 汇报，让背景视频只在首页主界面播放
         val onMainPage = !showChargingCenter && !showSeatComfort && !showFridge && !showClimate &&
             !showScheduledAc && !showVehicleHealth && !showOta && !showControlEditor &&
-            !showTire && !showFindCar
+            !showTire
         LaunchedEffect(onMainPage) { onMainPageChange(onMainPage) }
+        // 车模滚出可视区 -> 通知 MainScreen 把视频背景切纯色
+        val carModelGone = homeScrollState.value >= carModelBottomY - 2f
+        LaunchedEffect(carModelGone) { onCarModelGoneChange(carModelGone) }
 
         // 进入首页时拉取一次官方车模图（本地有缓存则直接用）。
         // 车模默认常开（设置里的显示开关已移除），不再有「关闭车模」这条分支；
@@ -708,13 +715,6 @@ fun HomeScreen(
                 status = status,
                 onBack = { showTire = false },
             )
-        } else if (showFindCar) {
-            FindCarScreen(
-                runtime = runtime,
-                status = status,
-                onHorn = { ensureConfirmed("鸣笛闪灯") { runControl("horn") } },
-                onBack = { showFindCar = false },
-            )
         } else {
             // 外层 Box：承载悬浮反馈条（指令结果必须让用户看到，放在滚动列表底部等于看不见）
             Box(modifier = Modifier.fillMaxSize()) {
@@ -860,14 +860,14 @@ fun HomeScreen(
                         text = currentStatus?.range ?: "--",
                         color = LocalAppColors.current.textPrimary,
                         fontSize = 40.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Normal,
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
                             text = "km",
                             color = LocalAppColors.current.textPrimary,
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Normal,
                             modifier = Modifier.padding(bottom = 6.dp),
                         )
                     }
@@ -949,7 +949,15 @@ fun HomeScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(200.dp),
+                        .height(200.dp)
+                        .onGloballyPositioned { coords ->
+                            // 车模底部在「滚动内容」（父 Column）坐标系里的 y：
+                            // 这是固定布局位置，不随滚动偏移变化，正好和 homeScrollState.value
+                            // 处于同一坐标空间，可直接比较判断是否滑出视口。
+                            coords.parentLayoutCoordinates?.let { parent ->
+                                carModelBottomY = parent.localBoundingBoxOf(coords).bottom
+                            }
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Image(
@@ -1019,7 +1027,6 @@ fun HomeScreen(
                     onOpenScheduledAc = { showScheduledAc = true },
                     onOpenCharging = { showChargingCenter = true },
                     onOpenTire = { showTire = true },
-                    onOpenFindCar = { showFindCar = true },
                     onToggleSentry = { ensureConfirmed("哨兵模式") { runControl("sentry") } },
                     onAcOn = { ensureConfirmed("开启空调") { runAcCommand(true) } },
                     onAcOff = { ensureConfirmed("关闭空调") { runAcCommand(false) } },
@@ -1559,68 +1566,6 @@ private fun TempStepButton(symbol: String, enabled: Boolean, onClick: () -> Unit
     }
 }
 
-/**
- * 车辆位置卡（官方 1:1）：标题「位置」+ 右上绿色定位图钉（14×17.8dp，#34D37F）
- * → 中部大号距离「39」+ 单位「m」→ 底部灰字「已驻车」。
- *
- * 车端基本不上报经纬度，所以距离恒为占位「--」；要显示真实距离需要申请设备定位
- * 权限并用手机坐标与车辆坐标求距离，本版不做，避免给一个永远为空的卡片。
- */
-@Composable
-private fun LocationTile(
-    modifier: Modifier = Modifier,
-    status: CarStatus?,
-) {
-    val C = LocalAppColors.current
-    val shape = officialCardShape()
-    val hasFix = status?.latitude != null && status?.longitude != null
-    Column(
-        modifier = modifier
-            .background(C.cardBg, shape)
-            .padding(horizontal = 14.dp, vertical = 15.dp),
-    ) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("位置", color = C.textPrimary, fontSize = 13.sp)
-            Spacer(Modifier.weight(1f))
-            Icon(
-                painter = painterResource(R.drawable.ic_loc_pin),
-                contentDescription = "车辆位置",
-                tint = if (hasFix) LOC_PIN_GREEN else C.textSecondary.copy(alpha = 0.45f),
-                modifier = Modifier.size(14.dp, 18.dp),
-            )
-        }
-        Spacer(Modifier.height(46.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Spacer(Modifier.weight(1f))
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(
-                    text = "--",
-                    color = C.textPrimary,
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Normal,
-                )
-                Text(
-                    text = if (hasFix) "m" else "",
-                    color = C.textPrimary,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(bottom = 3.dp),
-                )
-            }
-            Spacer(Modifier.weight(1f))
-        }
-        Spacer(Modifier.height(12.dp))
-        Text(
-            text = if (hasFix) status?.drivingStatus ?: "已驻车" else "位置未知",
-            color = C.textSecondary,
-            fontSize = 11.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
 
 /**
  * 控车/刷新结果悬浮条：固定在屏幕底部居中，6 秒后自动消失，带关闭按钮。
@@ -1710,8 +1655,6 @@ private fun ClimateModule(status: CarStatus) {
     }
 }
 
-/** 位置卡定位图钉的官方绿 #34D37F */
-private val LOC_PIN_GREEN = Color(0xFF34D37F)
 /** 空调卡右上风扇圆底的官方浅灰 #F3F4F6（图标 #9A9C9B） */
 private val FAN_CIRCLE_BG = Color(0xFFF3F4F6)
 private val FAN_ICON_TINT = Color(0xFF9A9C9B)
@@ -2066,7 +2009,7 @@ private fun MileageRow(
             text = label,
             color = C.textPrimary,
             fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Normal,
             modifier = Modifier.width(46.dp),
         )
         Spacer(Modifier.width(6.dp))
@@ -2090,7 +2033,7 @@ private fun MileageRow(
             text = percent,
             color = C.textPrimary,
             fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Normal,
             textAlign = TextAlign.End,
             modifier = Modifier.width(38.dp),
         )

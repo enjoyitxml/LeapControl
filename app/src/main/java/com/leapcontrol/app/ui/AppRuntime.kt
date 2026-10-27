@@ -246,13 +246,6 @@ class AppRuntime(context: Context) {
         runCatching { AmapWebApi.searchPoi(key, keyword.trim()) }.getOrDefault(emptyList())
     }
 
-    /** 逆地理编码：车端经纬度（GCJ-02）→ 中文地址。无 Key 时返回 null。开源接口 23。 */
-    suspend fun reverseGeocodeLocation(latitude: Double, longitude: Double): String? =
-        withContext(Dispatchers.IO) {
-            if (!hasAmapKey()) return@withContext null
-            runCatching { AmapWebApi.reverseGeocode(amapKey(), latitude, longitude) }.getOrDefault(null)
-        }
-
     /** 首页控车按钮顺序（按 VIN 独立存储）。 */
     fun controlLayout(): List<String> {
         val raw = namingPrefs.getString("control_layout_${session.selectedVin}", "") ?: ""

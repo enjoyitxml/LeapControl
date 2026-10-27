@@ -3,9 +3,7 @@ package com.leapcontrol.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,9 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,54 +52,36 @@ import java.util.Locale
 
 /**
  * 首页功能模块区：定义在 [HomeModules]，卡片统一按「空调卡」的尺寸与圆角渲染，
- * 在零控页面最下方横向排布（左右滑动 + 横向滚动指示条），
+ * 在零控页面最下方纵向排布（整页向上滑动浏览），所有卡片放在一起、不再分组；
  * 最底部一个「自定义」按钮可调整顺序、删除与添加模块。
  */
 object HomeModules {
-    /** 模块分组（用于首页底部按「车辆状态 / 舒适座舱 / 充电中心 / 安全守护」归类）。 */
-    const val GROUP_STATUS = "status"
-    const val GROUP_COMFORT = "comfort"
-    const val GROUP_CHARGING = "charging"
-    const val GROUP_SAFETY = "safety"
-
-    /** 分组展示顺序与标题（对应原型四组）。 */
-    val GROUP_ORDER = listOf(GROUP_STATUS, GROUP_COMFORT, GROUP_CHARGING, GROUP_SAFETY)
-    fun groupTitle(group: String): String = when (group) {
-        GROUP_STATUS -> "车辆状态"
-        GROUP_COMFORT -> "舒适座舱"
-        GROUP_CHARGING -> "充电中心"
-        GROUP_SAFETY -> "安全守护"
-        else -> ""
-    }
+    // 模块不再分组：所有卡片在首页底部纵向排在一起。
 
     data class Spec(
         val id: String,
         val title: String,
         val iconRes: Int,
-        /** 所属分组。 */
-        val group: String = GROUP_STATUS,
         /** 本车是否具备该模块：没有对应硬件的模块不给入口。 */
         val available: (VehicleCapabilities) -> Boolean = { true },
     )
 
-    val CLIMATE = Spec("climate", "空调", R.drawable.ic_qc_ac, GROUP_COMFORT)
-    val SEAT = Spec("seat", "座椅舒适", R.drawable.ic_mod_seat, GROUP_COMFORT) { it.hasSeatComfort }
-    val TIRE = Spec("tire", "胎压", R.drawable.ic_mod_tire, GROUP_STATUS)
-    val MILEAGE = Spec("mileage", "里程能耗", R.drawable.ic_mod_mileage, GROUP_STATUS)
-    val HEALTH = Spec("health", "车辆健康", R.drawable.ic_health, GROUP_STATUS)
-    val FRIDGE = Spec("fridge", "车载冰箱", R.drawable.ic_mod_fridge, GROUP_COMFORT) { it.fridge }
-    val SCHEDULED_AC = Spec("scheduledAc", "定时空调", R.drawable.ic_phosphor_fan, GROUP_COMFORT)
-    val CHARGING = Spec("charging", "充电", R.drawable.ic_charge_station, GROUP_CHARGING)
-    val SENTRY = Spec("sentry", "哨兵模式", R.drawable.ic_qc_sentry, GROUP_SAFETY) { it.sentry }
-    val LOCATION = Spec("location", "车辆位置", R.drawable.ic_loc_pin, GROUP_SAFETY)
+    val CLIMATE = Spec("climate", "空调", R.drawable.ic_qc_ac)
+    val SEAT = Spec("seat", "座椅舒适", R.drawable.ic_mod_seat) { it.hasSeatComfort }
+    val TIRE = Spec("tire", "胎压", R.drawable.ic_mod_tire)
+    val MILEAGE = Spec("mileage", "里程能耗", R.drawable.ic_mod_mileage)
+    val HEALTH = Spec("health", "车辆健康", R.drawable.ic_health)
+    val FRIDGE = Spec("fridge", "车载冰箱", R.drawable.ic_mod_fridge) { it.fridge }
+    val SCHEDULED_AC = Spec("scheduledAc", "定时空调", R.drawable.ic_phosphor_fan)
+    val CHARGING = Spec("charging", "充电", R.drawable.ic_charge_station)
+    val SENTRY = Spec("sentry", "哨兵模式", R.drawable.ic_qc_sentry) { it.sentry }
 
     val ALL: List<Spec> = listOf(
-        CLIMATE, SEAT, TIRE, MILEAGE, HEALTH, FRIDGE, SCHEDULED_AC, CHARGING, SENTRY, LOCATION,
+        CLIMATE, SEAT, TIRE, MILEAGE, HEALTH, FRIDGE, SCHEDULED_AC, CHARGING, SENTRY,
     )
 
     /**
-     * 默认顺序。车辆位置默认不放进来 —— 车端基本不上报经纬度，
-     * 放进来也只会显示「--」，需要的话在自定义里手动添加。
+     * 默认顺序（车辆位置模块已移除：车端基本不上报经纬度，无实际用途）。
      */
     val DEFAULT_ORDER: List<String> = listOf(
         "climate", "mileage", "tire", "seat", "health", "charging", "scheduledAc", "fridge", "sentry",
@@ -119,8 +98,8 @@ object HomeModules {
         sanitize(ids).mapNotNull(::find).filter { it.available(caps) }
 }
 
-/** 模块卡统一尺寸：与官方空调卡一致（半屏宽 × 150dp，圆角同空调卡）。 */
-val MODULE_CARD_HEIGHT = 150.dp
+/** 模块卡统一尺寸：与官方空调卡一致圆角，整页纵向排布，卡片加高确保文字不被遮挡。 */
+val MODULE_CARD_HEIGHT = 170.dp
 private val MODULE_CARD_RADIUS get() = OFFICIAL_CARD_RADIUS
 
 /** 模块卡片需要的交互回调（由 HomeScreen 传入）。 */
@@ -132,7 +111,6 @@ data class ModuleCallbacks(
     val onOpenScheduledAc: () -> Unit = {},
     val onOpenCharging: () -> Unit = {},
     val onOpenTire: () -> Unit = {},
-    val onOpenFindCar: () -> Unit = {},
     val onToggleSentry: () -> Unit = {},
     val onAcOn: () -> Unit = {},
     val onAcOff: () -> Unit = {},
@@ -157,54 +135,22 @@ fun HomeModuleSection(
     var showEditor by remember { mutableStateOf(false) }
     val specs = HomeModules.available(layout, capabilities)
 
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val gap = 11.dp
-        val cardWidth = (maxWidth - gap) / 2
-        // 4 组固定 4 个 LazyListState（数量固定，避免分组增减导致 remember 计数变化）
-        val listStates = List(HomeModules.GROUP_ORDER.size) { rememberLazyListState() }
-
-        Column(modifier = Modifier.fillMaxWidth()) {
-            HomeModules.GROUP_ORDER.forEachIndexed { gi, group ->
-                val groupSpecs = specs.filter { it.group == group }
-                if (groupSpecs.isEmpty()) return@forEachIndexed
-
-                // 分组标题（不参与横滑，固定在该组卡片上方）
-                Text(
-                    text = HomeModules.groupTitle(group),
-                    color = LocalAppColors.current.textPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 2.dp, top = 16.dp, bottom = 8.dp),
-                )
-
-                LazyRow(
-                    state = listStates[gi],
-                    horizontalArrangement = Arrangement.spacedBy(gap),
-                ) {
-                    items(groupSpecs.size, key = { groupSpecs[it].id }) { index ->
-                        HomeModuleCard(
-                            spec = groupSpecs[index],
-                            status = status,
-                            energy = energy,
-                            acPlan = acPlan,
-                            callbacks = callbacks,
-                            modifier = Modifier.width(cardWidth),
-                        )
-                    }
-                }
-
-                if (groupSpecs.size > 2) {
-                    Spacer(Modifier.height(10.dp))
-                    ScrollHintBar(state = listStates[gi], itemCount = groupSpecs.size, visibleCount = 2)
-                }
-                Spacer(Modifier.height(4.dp))
-            }
-
-            // ---- 页面最底部的自定义按钮 ----
-            CustomizeButton(onClick = { showEditor = true })
+    // 所有卡片纵向排在一起（整页向上滑动浏览），不再按分组归类、不再横向滑动
+    Column(modifier = Modifier.fillMaxWidth()) {
+        specs.forEach { spec ->
+            HomeModuleCard(
+                spec = spec,
+                status = status,
+                energy = energy,
+                acPlan = acPlan,
+                callbacks = callbacks,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+            )
         }
+        // ---- 页面最底部的自定义按钮 ----
+        CustomizeButton(onClick = { showEditor = true })
     }
 
     if (showEditor) {
@@ -278,7 +224,6 @@ private fun HomeModuleCard(
         HomeModules.SCHEDULED_AC.id -> ScheduledAcModuleCard(acPlan, callbacks.onOpenScheduledAc, modifier)
         HomeModules.CHARGING.id -> ChargingModuleCard(status, callbacks.onOpenCharging, modifier)
         HomeModules.SENTRY.id -> SentryModuleCard(status, callbacks.onToggleSentry, modifier)
-        HomeModules.LOCATION.id -> LocationModuleCard(status, callbacks.onOpenFindCar, modifier)
     }
 }
 
@@ -616,27 +561,8 @@ private fun SentryModuleCard(status: CarStatus?, onToggle: () -> Unit, modifier:
     }
 }
 
-// ---- 车辆位置 ----
-@Composable
-private fun LocationModuleCard(status: CarStatus?, onClick: () -> Unit, modifier: Modifier) {
-    val hasFix = status?.latitude != null && status?.longitude != null
-    ModuleFrame(
-        modifier = modifier,
-        title = "车辆位置",
-        corner = { ModuleCornerIcon(R.drawable.ic_loc_pin, highlight = hasFix) },
-        onClick = onClick,
-    ) {
-        Spacer(Modifier.height(14.dp))
-        Text(
-            text = "--",
-            color = LocalAppColors.current.textPrimary,
-            fontSize = 26.sp,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(8.dp))
-        ModuleLine(status?.drivingStatus ?: "位置未知")
-    }
-}
+// 车辆位置模块已移除（车端基本不上报经纬度，无实际用途）。
+
 
 // ============================================================================
 // 自定义模块：顺序（上移 / 下移）、删除、添加
