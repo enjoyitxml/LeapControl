@@ -494,7 +494,6 @@ fun SettingsCard(
         modifier = Modifier
             .fillMaxWidth()
             .background(C.panelBg, shape)
-            .border(1.dp, C.border, shape)
             .padding(16.dp),
     ) {
         if (title != null) {
@@ -538,7 +537,7 @@ fun OptionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
-            .border(1.5.dp, if (selected) C.accent else C.border, shape)
+            .border(1.5.dp, if (selected) C.accent else Color.Transparent, shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -555,82 +554,6 @@ fun OptionRow(
             Spacer(Modifier.height(2.dp))
             Text(desc, color = C.textSecondary, fontSize = 11.sp, lineHeight = 15.sp)
         }
-    }
-}
-
-/**
- * 季节主题选择网格（春 / 夏 / 秋 / 冬 / 星空）。
- *
- * @param seasonId 用户自己选的主题（夜间不生效时显示的就是它）
- * @param activeSeasonId 当前真实生效的主题：夜间自动切换顶上时，勾选落在星空上
- * @param autoNightActive 夜间自动主题是否正在生效，用于给出「明早恢复」提示
- */
-@Composable
-fun SeasonThemeGrid(
-    runtime: AppRuntime,
-    seasonId: String,
-    activeSeasonId: String,
-    autoNightActive: Boolean,
-    themes: List<SeasonTheme> = SeasonThemes.ALL,
-    onSeasonChange: (String) -> Unit,
-) {
-    val C = LocalAppColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        themes.forEach { theme ->
-            val selected = theme.id == activeSeasonId
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable {
-                        runtime.setSeasonThemeId(theme.id)
-                        onSeasonChange(theme.id)
-                    }
-                    .padding(2.dp)
-                    .weight(1f),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(64.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Brush.verticalGradient(theme.gradient(C.isDark)))
-                        .border(
-                            if (selected) 2.dp else 0.5.dp,
-                            if (selected) C.accent else C.border,
-                            RoundedCornerShape(10.dp),
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (selected) {
-                        Icon(Icons.Filled.Check, null, tint = C.accent, modifier = Modifier.size(20.dp))
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    theme.label,
-                    color = if (selected) C.accent else C.textPrimary,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                )
-            }
-        }
-    }
-    if (autoNightActive) {
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "夜间主题「${SeasonThemes.NIGHT.label}」正在生效，明早 "
-                + "${SeasonThemes.NIGHT_END_HOUR}:00 后自动恢复「${
-                    SeasonThemes.byId(seasonId).label
-                }」。",
-            color = C.textSecondary,
-            fontSize = 11.sp,
-            lineHeight = 15.sp,
-        )
     }
 }
 

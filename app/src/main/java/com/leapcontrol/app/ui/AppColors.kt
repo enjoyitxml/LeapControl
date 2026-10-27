@@ -52,8 +52,10 @@ data class AppColors(
 )
 
 /**
- * 把主题色按比例混进底色/描边。
+ * 把主题色按比例混进卡片底色。
  * 卡片不是纯白/纯深灰，而是「白里透一点季节色」，同一套控件在四季主题下颜色自然不同。
+ * 描边（[AppColors.border]）刻意保持中性灰、不掺主题色：描边一旦带色，
+ * 满屏卡片就像被一圈彩线框住，反而显脏。
  */
 private fun mix(base: Color, other: Color, amount: Float): Color = Color(
     red = base.red + (other.red - base.red) * amount,
@@ -84,7 +86,7 @@ private fun lightColors(accent: Color = DefaultAccent) = AppColors(
     barTrackStrong = Color(0x8C000000),
     chipBg = Color(0x99FFFFFF),
     chipBgActive = accent.copy(alpha = 0.25f),
-    border = accent.copy(alpha = 0.16f),
+    border = Color(0x1C000000),
     dockBg = Color(0xCCFFFFFF),
     dockUnselected = Color(0xFFB7BCC2),
     dockIndicator = accent.copy(alpha = 0.35f),
@@ -109,7 +111,7 @@ private fun darkColors(accent: Color = DefaultAccent) = AppColors(
     barTrackStrong = Color(0x8CFFFFFF),
     chipBg = Color(0x14FFFFFF),
     chipBgActive = accent.copy(alpha = 0.25f),
-    border = accent.copy(alpha = 0.24f),
+    border = Color(0x2EFFFFFF),
     dockBg = Color(0xCC14161B),
     dockUnselected = Color(0xFF6A6E76),
     dockIndicator = accent.copy(alpha = 0.4f),

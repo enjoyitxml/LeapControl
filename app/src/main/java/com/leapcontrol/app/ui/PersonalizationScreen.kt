@@ -51,8 +51,11 @@ private const val PROJECT_GITHUB_URL = "https://github.com/enjoyitxml/LeapContro
 /**
  * 「个性化」页（从「我的」进入，也可由首页顶部「皮肤」按钮直达）：
  *  - 外观模式：跟随系统 / 始终浅色 / 始终深色
- *  - 四季背景：春夏秋冬 + 星空（夜间）主题
- *  - 动态背景：背景视频开关 + 视频声音开关 + 夜间自动主题
+ *  - 日间主题：10 套（6 静态 + 4 动态）
+ *  - 夜间主题：10 套（6 静态 + 4 动态）+ 夜间自动切换
+ *  - 相伴卡背景：6 套内置图
+ *
+ * 缩略图直接用 [ThemeSwatch] 画真实场景，和首页看到的是同一套绘制代码。
  */
 @Composable
 fun PersonalizationScreen(
@@ -63,14 +66,13 @@ fun PersonalizationScreen(
     onSeasonChange: (String) -> Unit,
     activeSeasonId: String,
     autoNightActive: Boolean,
-    videoEnabled: Boolean,
-    onVideoEnabledChange: (Boolean) -> Unit,
-    videoSound: Boolean,
-    onVideoSoundChange: (Boolean) -> Unit,
+    nightThemeId: String,
+    onNightThemeChange: (String) -> Unit,
     nightAuto: Boolean,
     onNightAutoChange: (Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
+    val C = LocalAppColors.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -91,47 +93,78 @@ fun PersonalizationScreen(
 
         Spacer(Modifier.height(18.dp))
 
-        // ---- 浅色背景：春夏秋冬（明亮色调） ----
-        SettingsSection(title = "浅色背景", desc = "明亮色调主题") {
+        // ---- 日间主题 ----
+        SettingsSection(title = "日间主题", desc = "10 套 · 6 静态 + 4 动态") {
             SettingsCard {
-                SeasonThemeGrid(
-                    runtime = runtime,
-                    seasonId = seasonId,
-                    activeSeasonId = activeSeasonId,
-                    autoNightActive = autoNightActive,
-                    themes = listOf(
-                        SeasonThemes.SPRING,
-                        SeasonThemes.SUMMER,
-                        SeasonThemes.AUTUMN,
-                        SeasonThemes.WINTER,
-                    ),
-                    onSeasonChange = onSeasonChange,
+                ThemePickGrid(
+                    themes = SeasonThemes.DAY,
+                    selectedId = activeSeasonId,
+                    onPick = onSeasonChange,
                 )
             }
         }
 
         Spacer(Modifier.height(18.dp))
 
-        // ---- 深色背景：星空（夜间深色调） ----
-        SettingsSection(title = "深色背景", desc = "暗色调主题") {
+        // ---- 夜间主题 ----
+        SettingsSection(title = "夜间主题", desc = "10 套 · 6 静态 + 4 动态") {
             SettingsCard {
-                SeasonThemeGrid(
-                    runtime = runtime,
-                    seasonId = seasonId,
-                    activeSeasonId = activeSeasonId,
-                    autoNightActive = autoNightActive,
-                    themes = listOf(SeasonThemes.STARS),
-                    onSeasonChange = onSeasonChange,
+                ThemePickGrid(
+                    themes = SeasonThemes.NIGHT_ALL,
+                    selectedId = activeSeasonId,
+                    // 选夜间主题同时记成「夜间自动切换」的目标，晚上自动切到它
+                    onPick = { id ->
+                        onSeasonChange(id)
+                        onNightThemeChange(id)
+                    },
                 )
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    if (autoNightActive) {
+                        "夜间主题「${SeasonThemes.byId(activeSeasonId).label}」正在生效，明早 " +
+                            "${SeasonThemes.NIGHT_END_HOUR}:00 后自动恢复「" +
+                            "${SeasonThemes.byId(seasonId).label}」。"
+                    } else {
+                        "夜间自动切换会切到「${SeasonThemes.byId(nightThemeId).label}」 —— " +
+                            "在上面选任意一套夜间主题，就会记住它。"
+                    },
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                )
+                Spacer(Modifier.height(12.dp))
                 SwitchRow(
-                    label = "夜间自动切换星空",
-                    desc = "每天 ${SeasonThemes.NIGHT_START_HOUR}:00 – 次日 "
-                        + "${SeasonThemes.NIGHT_END_HOUR}:00 自动切换到星空主题，"
-                        + "白天恢复你选的季节（选择不会被覆盖）。星空为深色调，"
-                        + "生效时界面文字会自动转浅色以保证可读",
+                    label = "夜间自动切换",
+                    desc = "每天 ${SeasonThemes.NIGHT_START_HOUR}:00 – 次日 " +
+                        "${SeasonThemes.NIGHT_END_HOUR}:00 自动切到夜间主题，白天恢复你选的日间主题" +
+                        "（选择不会被覆盖）。夜间主题是深色调，生效时界面文字会自动转浅色",
                     checked = nightAuto,
                     onCheckedChange = onNightAutoChange,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 视频主题：旧版四季 + 星空实拍视频，排在动态主题之后 ----
+        SettingsSection(title = "视频主题", desc = "5 套 · 旧版四季与星空的实拍视频") {
+            SettingsCard {
+                ThemePickGrid(
+                    themes = SeasonThemes.VIDEO,
+                    selectedId = activeSeasonId,
+                    onPick = { id ->
+                        onSeasonChange(id)
+                        // 星空视频是深色调，选中它同时记成夜间自动切换的目标
+                        if (SeasonThemes.byId(id).night) onNightThemeChange(id)
+                    },
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "最初那 5 套实拍视频背景原样保留，排在动态主题之后；视频只做背景，" +
+                        "静音循环播放，画面同样收到空调控件上沿，不会压住车模和数字。",
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
                 )
             }
         }
@@ -142,38 +175,10 @@ fun PersonalizationScreen(
         SettingsSection(title = "相伴卡背景", desc = "首页「我与我的爱车走过」") {
             SettingsCard {
                 OwnershipBackdropGrid(runtime = runtime, selectedId = runtime.ownershipBackdrop.value)
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "6 张都按卡片比例裁好了，文字落在天空区，换哪张都不会挡字。",
-                    color = LocalAppColors.current.textSecondary,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                )
             }
         }
 
         Spacer(Modifier.height(18.dp))
-
-        // ---- 动态背景 ----
-        SettingsSection(title = "动态背景", desc = "首页视频") {
-            SettingsCard {
-                SwitchRow(
-                    label = "播放背景视频",
-                    desc = "按当前季节循环播放动态背景（桃花 / 绿树 / 落叶 / 飘雪 / 星空）。关闭后回到纯色渐变，更省电",
-                    checked = videoEnabled,
-                    onCheckedChange = onVideoEnabledChange,
-                )
-                if (videoEnabled) {
-                    Spacer(Modifier.height(10.dp))
-                    SwitchRow(
-                        label = "背景视频声音",
-                        desc = "开启后播放自带的四季氛围配乐。默认关闭，避免打开 App 就出声",
-                        checked = videoSound,
-                        onCheckedChange = onVideoSoundChange,
-                    )
-                }
-            }
-        }
 
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.navigationBarsPadding())
@@ -331,8 +336,8 @@ fun OwnershipBackdropGrid(runtime: AppRuntime, selectedId: String) {
                                 .height(46.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .border(
-                                    if (selected) 2.dp else 0.5.dp,
-                                    if (selected) C.accent else C.border,
+                                    if (selected) 2.dp else 0.dp,
+                                    if (selected) C.accent else Color.Transparent,
                                     RoundedCornerShape(8.dp),
                                 )
                                 .clickable { runtime.setOwnershipBackdropId(backdrop.id) },
@@ -366,6 +371,111 @@ fun OwnershipBackdropGrid(runtime: AppRuntime, selectedId: String) {
                             fontSize = 11.sp,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                             maxLines = 1,
+                        )
+                    }
+                }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+/**
+ * 主题选择网格：3 列，缩略图用 [ThemeSwatch] 画真实场景（和首页同一套绘制代码）。
+ *
+ * 动态主题右上角标「动态」；选中加主题色描边 + 勾。
+ * 每套主题的说明（[SeasonTheme.mood]）不在这里显示 —— 20 套都带一行小字会把页面撑得太长，
+ * 想看效果直接点一下首页就换了。
+ */
+@Composable
+fun ThemePickGrid(
+    themes: List<SeasonTheme>,
+    selectedId: String,
+    onPick: (String) -> Unit,
+) {
+    val C = LocalAppColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        themes.chunked(3).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEach { theme ->
+                    val selected = theme.id == selectedId
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(58.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(
+                                    if (selected) 2.dp else 0.dp,
+                                    if (selected) C.accent else Color.Transparent,
+                                    RoundedCornerShape(8.dp),
+                                )
+                                .clickable { onPick(theme.id) },
+                        ) {
+                            ThemeSwatch(
+                                theme = theme,
+                                dark = C.isDark,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                            if (theme.animated) {
+                                Text(
+                                    "动态",
+                                    color = Color.White,
+                                    fontSize = 8.5.sp,
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(4.dp)
+                                        .background(
+                                            Color.Black.copy(alpha = 0.32f),
+                                            RoundedCornerShape(4.dp),
+                                        )
+                                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                                )
+                            }
+                            if (theme.video) {
+                                Text(
+                                    "视频",
+                                    color = Color.White,
+                                    fontSize = 8.5.sp,
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(4.dp)
+                                        .background(
+                                            Color.Black.copy(alpha = 0.32f),
+                                            RoundedCornerShape(4.dp),
+                                        )
+                                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                                )
+                            }
+                            if (selected) {
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .background(C.accent.copy(alpha = 0.20f)),
+                                )
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .size(18.dp),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(5.dp))
+                        Text(
+                            theme.label,
+                            color = if (selected) C.accent else C.textPrimary,
+                            fontSize = 10.5.sp,
+                            maxLines = 1,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                         )
                     }
                 }

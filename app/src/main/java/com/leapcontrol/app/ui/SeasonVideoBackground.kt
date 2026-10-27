@@ -8,7 +8,12 @@ import android.net.Uri
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.Composable
@@ -19,20 +24,87 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.leapcontrol.app.R
 import kotlin.math.max
 
-/** 主题 id → 打包在 res/raw 里的循环背景视频。 */
+/** 视频主题 id → 打包在 res/raw 里的循环背景视频。 */
 internal fun seasonVideoResId(seasonId: String): Int = when (seasonId) {
-    SeasonThemes.SUMMER.id -> R.raw.bg_season_summer
-    SeasonThemes.AUTUMN.id -> R.raw.bg_season_autumn
-    SeasonThemes.WINTER.id -> R.raw.bg_season_winter
-    SeasonThemes.STARS.id -> R.raw.bg_season_stars
+    SeasonThemes.VIDEO_SUMMER.id -> R.raw.bg_season_summer
+    SeasonThemes.VIDEO_AUTUMN.id -> R.raw.bg_season_autumn
+    SeasonThemes.VIDEO_WINTER.id -> R.raw.bg_season_winter
+    SeasonThemes.VIDEO_STARS.id -> R.raw.bg_season_stars
     else -> R.raw.bg_season_spring
 }
+
+/**
+ * 视频主题的背景层：视频 + 顶部雾化 + 下缘渐隐。
+ *
+ * 视频仍然是满屏播放（和旧版一致：主景在上部、铺到状态栏之后），
+ * 但**下缘要用页面底色渐隐掉**，否则卡片会压在有画面上的一层，
+ * 和另外 20 套「只覆盖到空调卡上沿」的主题观感就对不上了。
+ *
+ * 淡出终点取主题渐变的最底色（浅色主题近白、深色主题近黑），
+ * 所以无论深浅模式，视频都是「淡出进背景」而不是被糊上一块别的颜色。
+ */
+@Composable
+internal fun ThemeVideoBackdrop(
+    theme: SeasonTheme,
+    dark: Boolean,
+    paused: Boolean,
+    veilBrush: Brush?,
+    modifier: Modifier = Modifier,
+    sceneHeight: Dp = SCENE_HEIGHT,
+) {
+    val bottom = theme.gradient(dark).last()
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val totalH = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+        val sceneHeightPx = with(LocalDensity.current) { sceneHeight.toPx() }
+        val sceneEnd = (sceneHeightPx / totalH).coerceIn(0.25f, 1f)
+
+        SeasonVideoBackground(
+            seasonId = theme.id,
+            muted = true,
+            paused = paused,
+            modifier = Modifier.matchParentSize(),
+        )
+
+        // 顶部雾化：只在场景高度内叠，避免把下方卡片压上一层灰
+        if (veilBrush != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(sceneHeight)
+                    .background(veilBrush),
+            )
+        }
+
+        // 下缘渐隐：从场景高度 62% 处开始变实，到场景底边完全变成页面底色
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        *arrayOf(
+                            0f to Color.Transparent,
+                            sceneEnd * 0.62f to Color.Transparent,
+                            sceneEnd * 0.84f to bottom.copy(alpha = 0.55f),
+                            sceneEnd to bottom,
+                            1f to bottom,
+                        ),
+                    ),
+                ),
+        )
+    }
+}
+
 
 /**
  * 四季动态背景层。

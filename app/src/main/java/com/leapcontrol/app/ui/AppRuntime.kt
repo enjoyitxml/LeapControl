@@ -1011,16 +1011,34 @@ class AppRuntime(context: Context) {
     /** 账号下全部车辆（用于首页多车切换下拉）。 */
     fun vehicles(): List<Vehicle> = sessionStore.loadVehicles()
 
-    // ---------------- 四季主题 ----------------
+    // ---------------- 背景主题 ----------------
 
     fun seasonThemeId(): String =
-        namingPrefs.getString("season_theme", SeasonThemes.SPRING.id) ?: SeasonThemes.SPRING.id
+        namingPrefs.getString("season_theme", SeasonThemes.DAY.first().id)
+            ?: SeasonThemes.DAY.first().id
 
     fun setSeasonThemeId(id: String) {
         namingPrefs.edit().putString("season_theme", id).apply()
+        // 选的是夜间主题时，顺手记成「夜间自动切换」的目标，晚上就不必再选一次
+        if (SeasonThemes.byId(id).night) setNightThemeId(id)
     }
 
-    /** 动态背景开关：true = 播放对应季节的背景视频，false = 只用静态渐变。 */
+    /**
+     * 夜间自动切换使用哪套夜间主题，默认「浩瀚星空」。
+     *
+     * 用户在夜间主题里选过任意一套，之后每天 22:00 自动切到的就是那套。
+     */
+    fun nightThemeId(): String =
+        namingPrefs.getString("night_theme", SeasonThemes.NIGHT.id) ?: SeasonThemes.NIGHT.id
+
+    fun setNightThemeId(id: String) {
+        val safe = SeasonThemes.byId(id)
+        // 只接受夜间主题：白天主题存进来会让夜间切换变成「切了跟没切一样」
+        if (!safe.night) return
+        namingPrefs.edit().putString("night_theme", safe.id).apply()
+    }
+
+    /** 动态背景开关：false 时动态主题也用固定相位（静止画面）。 */
     fun seasonVideoEnabled(): Boolean = namingPrefs.getBoolean("season_video", true)
 
     fun setSeasonVideoEnabled(enabled: Boolean) {

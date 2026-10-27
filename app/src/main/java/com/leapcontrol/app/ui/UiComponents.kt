@@ -53,7 +53,6 @@ fun AppCard(
             .fillMaxWidth()
             .shadow(4.dp, shape)
             .background(C.cardBg, shape)
-            .border(1.dp, C.border, shape)
             .padding(16.dp),
     ) {
         if (title != null) {
@@ -87,7 +86,6 @@ fun CircleIconButton(
             .size(size)
             .clip(CircleShape)
             .background(if (pressed) C.chipBgActive else C.iconBg, CircleShape)
-            .border(1.dp, C.border, CircleShape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -188,7 +186,6 @@ fun ListRow(
     val base = modifier
         .fillMaxWidth()
         .background(C.cardBg, shape)
-        .border(1.dp, C.border, shape)
     Box(
         modifier = if (onClick != null) {
             base.clip(shape).clickable(onClick = onClick)
@@ -212,6 +209,6 @@ fun OptionSurface(
         modifier = modifier
             .fillMaxWidth()
             .background(if (selected) C.chipBgActive else C.chipBg, shape)
-            .border(1.dp, if (selected) C.accent.copy(alpha = 0.45f) else C.border, shape),
+            .border(1.dp, if (selected) C.accent.copy(alpha = 0.45f) else Color.Transparent, shape),
     ) { content() }
 }

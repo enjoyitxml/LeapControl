@@ -1,8 +1,9 @@
 package com.leapcontrol.app.ui
 
+import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Palette
@@ -37,9 +39,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.R
@@ -180,15 +184,37 @@ fun ProfileScreen(
                 "版本信息、免责声明与隐私条款",
             ) { onOpenPage(SettingsPage.ABOUT) }
 
-            // 页脚：交流群（放在所有入口之下，居中的小字，不抢主内容的视觉）
+            // 页脚：交流群（放在所有入口之下，居中的小字，不抢主内容的视觉）。
+            // 整行可点：点一下就把群号复制到剪贴板，省得手动选数字。
             Spacer(Modifier.height(26.dp))
-            Text(
-                text = "QQ交流群：179731222",
-                color = LocalAppColors.current.textSecondary.copy(alpha = 0.75f),
-                fontSize = 12.sp,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center,
-            )
+            val qqGroup = "179731222"
+            val clipboard = LocalClipboardManager.current
+            val context = LocalContext.current
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable {
+                        clipboard.setText(AnnotatedString(qqGroup))
+                        Toast.makeText(context, "已复制群号 $qqGroup", Toast.LENGTH_SHORT).show()
+                    }
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "QQ交流群：$qqGroup",
+                    color = LocalAppColors.current.textSecondary.copy(alpha = 0.75f),
+                    fontSize = 12.sp,
+                )
+                Spacer(Modifier.width(5.dp))
+                Icon(
+                    Icons.Filled.ContentCopy,
+                    contentDescription = "复制群号",
+                    tint = LocalAppColors.current.textSecondary.copy(alpha = 0.55f),
+                    modifier = Modifier.size(13.dp),
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
         }
@@ -196,7 +222,7 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun ProfileItem(
+internal fun ProfileItem(
     iconRes: Int,
     title: String,
     desc: String,
@@ -208,7 +234,6 @@ private fun ProfileItem(
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(C.panelBg, RoundedCornerShape(16.dp))
-            .border(1.dp, C.border, RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,

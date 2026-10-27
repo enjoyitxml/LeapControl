@@ -2,7 +2,6 @@ package com.leapcontrol.app.ui
 
 import com.leapcontrol.app.VehicleCapabilities
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -192,7 +191,6 @@ internal fun InfoCard(content: @Composable ColumnScope.() -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(C.panelBg, RoundedCornerShape(18.dp))
-            .border(1.dp, C.border, RoundedCornerShape(18.dp))
             .padding(16.dp),
         content = content,
     )
@@ -651,7 +649,6 @@ private fun HealthSystemCard(
         modifier = Modifier
             .fillMaxWidth()
             .background(C.panelBg, RoundedCornerShape(18.dp))
-            .border(1.dp, C.border, RoundedCornerShape(18.dp))
             .padding(16.dp),
     ) {
         Row(
