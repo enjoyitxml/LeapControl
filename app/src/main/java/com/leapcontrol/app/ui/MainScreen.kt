@@ -95,6 +95,7 @@ private val HEADER_VEIL_STOPS = arrayOf(
 enum class SettingsPage {
     SETTINGS,
     PERSONALIZATION,
+    CAR_APPEARANCE,
     ABOUT,
     DISCLAIMER,
     PRIVACY,
@@ -249,7 +250,14 @@ fun MainScreen(
                                 lightThemeId = pick.lightThemeId
                                 darkThemeId = pick.darkThemeId
                             },
+                            onOpenCarAppearance = { settingsPage = SettingsPage.CAR_APPEARANCE },
                             onBack = { settingsPage = null },
+                        )
+
+                        // 车模外观从个性化进，返回也回个性化 —— 别让用户按一次返回直接掉回「我的」
+                        SettingsPage.CAR_APPEARANCE -> CarAppearanceScreen(
+                            runtime = runtime,
+                            onBack = { settingsPage = SettingsPage.PERSONALIZATION },
                         )
 
                         SettingsPage.ABOUT -> AboutScreen(

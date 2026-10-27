@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -91,6 +92,7 @@ fun PersonalizationScreen(
     activeThemeId: String,
     systemDark: Boolean,
     onApplyPick: (ThemeResolver.Pick) -> Unit,
+    onOpenCarAppearance: () -> Unit,
     onBack: () -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -186,6 +188,22 @@ fun PersonalizationScreen(
         SettingsSection(title = "相伴卡背景", desc = "首页「我与我的爱车走过」") {
             SettingsCard {
                 OwnershipBackdropGrid(runtime = runtime, selectedId = runtime.ownershipBackdrop.value)
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 车模外观 ----
+        // 官方车模图是按车辆档案渲染的定妆照，接口没有「选颜色」的入参，
+        // 所以颜色跟实车不一致时只能在这一页自己换（内置换色 / 导入自己改好的图）。
+        SettingsSection(title = "车模外观", desc = "换色 · 导入自有图片") {
+            SettingsCard {
+                ClickRow(
+                    title = "首页车模",
+                    desc = "颜色跟实车不一样？在这里换车漆，或导入自己改好的图片",
+                    icon = Icons.Filled.DirectionsCar,
+                    onClick = onOpenCarAppearance,
+                )
             }
         }
 

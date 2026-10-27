@@ -48,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -123,13 +124,23 @@ fun SettingsScreen(
             Spacer(Modifier.height(10.dp))
             ClickRow(
                 title = "刷新车模图片",
-                desc = "清除缓存并从官方接口重新拉取",
+                desc = if (runtime.hasCustomCarModel()) {
+                    "重新拉取官方图，当前显示的自定义车模不受影响"
+                } else {
+                    "清除缓存并从官方接口重新拉取"
+                },
                 iconRes = R.drawable.ic_nav_car,
             ) {
                 scope.launch {
+                    // 只清官方缓存：用户改过色 / 导入的自定义车模要留住，
+                    // 否则点一下刷新就把他辛苦调的图弄没了
                     runtime.clearCarImageCache()
                     val ok = runCatching { runtime.fetchCarImage(force = true) }.getOrNull() != null
-                    message = if (ok) "车模已刷新" else "未取到官方车图，首页暂不显示车模"
+                    message = when {
+                        ok && runtime.hasCustomCarModel() -> "官方车模已刷新（首页仍用你的自定义车模）"
+                        ok -> "车模已刷新"
+                        else -> "未取到官方车图，首页暂不显示车模"
+                    }
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -552,6 +563,7 @@ fun ClickRow(
     title: String,
     desc: String,
     iconRes: Int? = null,
+    icon: ImageVector? = null,
     showDot: Boolean = false,
     onClick: () -> Unit,
 ) {
@@ -563,7 +575,16 @@ fun ClickRow(
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (iconRes != null) {
+        // 两种图标来源：老页面传 drawable 资源，新页面直接用 Material 矢量图（不用再补 XML）
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = C.textPrimary,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+        } else if (iconRes != null) {
             Icon(
                 painter = painterResource(iconRes),
                 contentDescription = null,

@@ -1,6 +1,7 @@
 package com.leapcontrol.app.ui
 
 import android.content.Context
+import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -8,6 +9,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import com.leapcontrol.app.AmapPoi
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.BuildConfig
@@ -431,6 +434,11 @@ class AppRuntime(context: Context) {
         _lastUpdated.value = 0L
         carBitmapCache = null
         carBitmapCacheVin = null
+        // 自定义车模同理：图片文件本身留在磁盘（重新登录同一账号还能接着用），
+        // 但内存里那份必须丢掉，否则退出后换账号会先闪一下上一辆车的车模
+        customCarCache = null
+        customCarCacheVin = null
+        _carModelRevision.value += 1
         runCatching { statusPrefs.edit().clear().apply() }
     }
 
@@ -1258,6 +1266,131 @@ class AppRuntime(context: Context) {
         runCatching {
             File(appContext.filesDir, "car_model_${session.selectedVin}.img").delete()
         }
+    }
+
+    // ---------------- 自定义车模（内置换色 / 相册导入） ----------------
+    //
+    // 官方接口只收 VIN，图是按车辆档案渲染好的定妆照，客户端没有任何「选颜色」的入参，
+    // 所以换色只能在自己这边做：拿官方 PNG 重着色，或者直接导入用户自己在外面改好的图。
+    // 两类结果都存成「自定义车模」，按 VIN 分文件，官方图永远保留 —— 删掉自定义就回到官方。
+
+    /**
+     * 自定义车模的内存热缓存，和官方图分开存两份。
+     *
+     * 分开缓存的原因：设置页「恢复官方车模」要能立刻回落，不必重新下载；
+     * 而且用户切到别处再回首页，第一帧就该是改过色的那张（和车模掉帧那个老问题同一个道理）。
+     */
+    private var customCarCache: Bitmap? = null
+    private var customCarCacheVin: String? = null
+
+    /** 自定义车模改动计数：首页 collect 它决定什么时候重新取图。 */
+    private val _carModelRevision = mutableStateOf(0)
+    val carModelRevision: State<Int> get() = _carModelRevision
+
+    fun cachedCustomCarBitmap(): Bitmap? =
+        customCarCache?.takeIf { !it.isRecycled && customCarCacheVin == session.selectedVin }
+
+    fun hasCustomCarModel(): Boolean = CarModelStore.exists(appContext, session.selectedVin)
+
+    suspend fun customCarModel(): Bitmap? = withContext(Dispatchers.IO) {
+        cachedCustomCarBitmap()?.let { return@withContext it }
+        val vin = session.selectedVin
+        if (vin.isBlank()) return@withContext null
+        CarModelStore.load(appContext, vin)?.also {
+            customCarCache = it
+            customCarCacheVin = vin
+        }
+    }
+
+    /** 当前该显示哪张车模：改过色就用自定义的，否则用官方图。 */
+    suspend fun displayCarBitmap(force: Boolean = false): Bitmap? =
+        customCarModel() ?: fetchCarImage(force)
+
+    /** 首页首帧用的同步版本（避免车模区先塌一下再回来）。 */
+    fun cachedDisplayCarBitmap(): Bitmap? = cachedCustomCarBitmap() ?: cachedCarBitmap()
+
+    /** 把一张已经改好色的图存成当前车辆的自定义车模。 */
+    suspend fun adoptCarModel(bitmap: Bitmap): Boolean = withContext(Dispatchers.IO) {
+        val vin = session.selectedVin
+        if (vin.isBlank()) return@withContext false
+        val ok = CarModelStore.save(appContext, vin, bitmap)
+        if (ok) {
+            customCarCache = bitmap
+            customCarCacheVin = vin
+            _carModelRevision.value += 1
+        }
+        ok
+    }
+
+    /** 从相册导入一张图作为自定义车模（自动裁透明边、缩到长边 1600 以内）。 */
+    suspend fun importCarModel(uri: Uri): Boolean {
+        val vin = session.selectedVin
+        if (vin.isBlank()) return false
+        val bitmap = CarModelStore.import(appContext, vin, uri) ?: return false
+        customCarCache = bitmap
+        customCarCacheVin = vin
+        _carModelRevision.value += 1
+        return true
+    }
+
+    /**
+     * 用官方车模图生成一张换色版，并存为自定义车模。
+     *
+     * 全尺寸生成在 IO 线程做（1600px 的车模约 80 万像素，整块换色真机上 200ms 上下），
+     * 生成完立刻落盘，之后首页直接用文件缓存，不再重复算。
+     */
+    suspend fun tintCarModel(targetArgb: Int, strength: Float): Boolean = withContext(Dispatchers.IO) {
+        val official = fetchCarImage() ?: return@withContext false
+        val tinted = CarModelStore.tint(official, targetArgb, strength)
+        val vin = session.selectedVin
+        if (vin.isBlank()) return@withContext false
+        val ok = CarModelStore.save(appContext, vin, tinted)
+        if (ok) {
+            customCarCache = tinted
+            customCarCacheVin = vin
+            _carModelRevision.value += 1
+        }
+        ok
+    }
+
+    /** 恢复官方车模：只删自定义图与缓存，官方图仍在。 */
+    fun clearCustomCarModel() {
+        val vin = session.selectedVin
+        if (vin.isNotBlank()) CarModelStore.clear(appContext, vin)
+        customCarCache = null
+        customCarCacheVin = null
+        _carModelRevision.value += 1
+    }
+
+    /** 官方车模图的只读入口（外观页的预览、换色、导出都以它为准）。 */
+    suspend fun officialCarModel(): Bitmap? = fetchCarImage()
+
+    /**
+     * 把当前车模（有自定义就导自定义）存进系统相册，方便用户拿去外部软件改色。
+     *
+     * Android 10+ 走 MediaStore，写 `Pictures/零控` 不需要任何权限。
+     * 9 及以下没有 RELATIVE_PATH，写相册要存储权限，这里不申请，直接返回 false 由 UI 提示。
+     */
+    suspend fun exportCarModelToGallery(): Boolean = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@withContext false
+        val bitmap = displayCarBitmap() ?: return@withContext false
+        runCatching {
+            val values = ContentValues().apply {
+                put(
+                    MediaStore.Images.Media.DISPLAY_NAME,
+                    "LeapControl_车模_${System.currentTimeMillis()}.png",
+                )
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/零控")
+            }
+            val uri = appContext.contentResolver
+                .insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: return@runCatching false
+            appContext.contentResolver.openOutputStream(uri)?.use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            } ?: return@runCatching false
+            true
+        }.getOrDefault(false)
     }
 
     // ---------------- 控车 ----------------

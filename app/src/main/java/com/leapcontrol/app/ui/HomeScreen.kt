@@ -199,7 +199,8 @@ fun HomeScreen(
         // 车辆配置（冰箱/天窗/哨兵/座椅…）：已持久化的识别结果，不依赖当次车况
         val capabilities by runtime.capabilities.collectAsState()
         // 首帧直接复用 runtime 已解码好的车模，避免重进页面时车模先消失再回来
-        var carBitmap by remember { mutableStateOf(runtime.cachedCarBitmap()) }
+        // 「显示哪张」由 runtime 决定：改过色就用自定义那张，否则用官方图
+        var carBitmap by remember { mutableStateOf(runtime.cachedDisplayCarBitmap()) }
         var vinKey by remember { mutableStateOf(runtime.session.selectedVin) }
         var vehicles by remember { mutableStateOf<List<com.leapcontrol.app.Vehicle>>(emptyList()) }
         var showVehicleMenu by remember { mutableStateOf(false) }
@@ -291,8 +292,10 @@ fun HomeScreen(
         // 进入首页时拉取一次官方车模图（本地有缓存则直接用）。
         // 车模默认常开（设置里的显示开关已移除），不再有「关闭车模」这条分支；
         // 依赖 vinKey：切换车辆后自动重新拉取
-        LaunchedEffect(vinKey) {
-            carBitmap = runCatching { runtime.fetchCarImage() }.getOrNull()
+        // 依赖 carModelRevision：在「车模外观」里换色 / 导入 / 恢复官方后立刻换图
+        val carModelRevision by runtime.carModelRevision
+        LaunchedEffect(vinKey, carModelRevision) {
+            carBitmap = runCatching { runtime.displayCarBitmap() }.getOrNull()
         }
 
         // 进入首页（或切换车辆）时拉一次里程 / 能耗；15 分钟内不重复请求，
