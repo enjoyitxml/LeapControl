@@ -1019,9 +1019,10 @@ fun HomeScreen(
                 },
             )
 
-            // ---- 胎压监测卡（左半）+ 相伴时光卡（右半）----
+            // ---- 胎压监测卡（左半）+ 近 7 天行程卡（右半）；相伴卡整行宽放在下面 ----
             // 胎压卡点进去是胎压详情页（四轮数值 + 温度 + 状态）；
-            // 相伴时光卡的提车天数 / 累计公里都取自里程能耗接口，卡片本身不发指令。
+            // 近 7 天行程卡画每日里程柱状图；相伴卡的提车天数 / 累计公里都取自里程能耗接口。
+            // 三张卡本身都不发指令。
             Spacer(Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
                 TireQuickCard(
@@ -1030,12 +1031,17 @@ fun HomeScreen(
                     onOpen = { showTire = true },
                 )
                 Spacer(Modifier.width(12.dp))
-                OwnershipCard(
-                    status = currentStatus,
+                WeeklyTripCard(
                     energy = energySummary,
                     modifier = Modifier.weight(1f),
                 )
             }
+
+            Spacer(Modifier.height(12.dp))
+            OwnershipCard(
+                status = currentStatus,
+                energy = energySummary,
+            )
 
             // ---- 功能模块区（页面最下方）：横向滑动的模块卡 + 指示条 + 自定义按钮 ----
             // 空调 / 座椅 / 胎压 / 里程能耗 / 健康 / 充电 / 定时空调 / 冰箱 / 哨兵 …
