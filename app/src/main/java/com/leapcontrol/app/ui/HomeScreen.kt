@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -827,10 +828,15 @@ fun HomeScreen(
                     .fillMaxWidth()
                     .weight(1f),
             ) {
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            // 滚动内容的「最小高度」固定为可视区高度：这样即便内容不足一屏，
+            // 底部占位块也能被下面的 weight 弹簧压到最底部（贴近底部导航栏）。
+            val pageHeight = maxHeight
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(homeScrollState)
+                    .heightIn(min = pageHeight)
                     .padding(horizontal = 22.dp),
             ) {
 
@@ -1042,12 +1048,15 @@ fun HomeScreen(
                 )
             }
 
-            // ---- 底部占位：更多功能开发中（浅灰施工小人 + 一行小字）----
+            // ---- 底部占位：更多功能开发中（手绘铁锹 + 路障 + 一行小字）----
             // 模块区整体下线期间用它收尾，避免页面滑到底空荡荡；模块逐项恢复后可直接删掉这块。
+            // 26dp 是「最少留白」，weight 弹簧再把整块压到可视区最底部，紧贴底部导航栏。
             Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.weight(1f))
             UnderConstructionHint()
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(14.dp))
+            }
             }
             }
             }

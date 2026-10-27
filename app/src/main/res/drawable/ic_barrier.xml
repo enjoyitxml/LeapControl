@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  手绘路障：条纹横板 + 两条斜腿 + 两根小脚。
+  横板上下沿都画成轻微起伏的曲线（不是直线），四条斜纹间距略微不均，
+  腿也不是完全对称——整体是随手勾出来的工地路障。颜色由运行时 tint 上色。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- 条纹横板 -->
+    <path
+        android:pathData="M6.8,15.2C18.2,13.8 30.7,14.1 41.2,15.1C41.6,17.8 41.5,20.6 41.1,23.3C29.6,24.4 17.3,24.2 7.0,23.4C6.5,20.7 6.5,17.9 6.8,15.2Z"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="2.3" />
+
+    <!-- 斜纹（浅一档，不填满整块板，留出手绘的呼吸感） -->
+    <path
+        android:pathData="M12.4,23.2C13.9,20.6 16.4,18.0 18.1,15.4"
+        android:strokeAlpha="0.55"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.8" />
+    <path
+        android:pathData="M20.7,23.3C22.2,20.7 24.6,18.0 26.3,15.5"
+        android:strokeAlpha="0.55"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.8" />
+    <path
+        android:pathData="M28.9,23.3C30.4,20.7 32.8,18.0 34.5,15.4"
+        android:strokeAlpha="0.55"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.8" />
+    <path
+        android:pathData="M37.1,23.2C38.0,21.3 39.3,18.4 40.9,16.3"
+        android:strokeAlpha="0.55"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.8" />
+
+    <!-- 两条腿 -->
+    <path
+        android:pathData="M12.9,24.3C11.8,30.2 10.4,36.0 9.6,41.0"
+        android:strokeAlpha="0.85"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.2" />
+    <path
+        android:pathData="M35.4,24.3C36.5,30.2 37.9,36.0 38.6,41.0"
+        android:strokeAlpha="0.85"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.2" />
+
+    <!-- 两根小脚，末端略带弧度 -->
+    <path
+        android:pathData="M6.9,41.7C8.7,41.3 11.2,41.3 12.6,41.7"
+        android:strokeAlpha="0.85"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.2" />
+    <path
+        android:pathData="M35.6,41.7C37.0,41.3 39.5,41.3 41.3,41.7"
+        android:strokeAlpha="0.85"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.2" />
+</vector>

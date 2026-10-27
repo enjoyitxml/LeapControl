@@ -14,38 +14,44 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Engineering
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leapcontrol.app.R
 
 /**
  * 首页底部的「更多功能，正在施工中」占位区。
  *
- * 视觉上刻意压得很轻：三个施工小人 + 一行小字，全部取主题次要文字的浅灰
- * （用透明度分层，深浅主题都自动适配），不抢上方车况与快捷控车的主视觉。
- * 中间那个小人做 ±1.5dp 的缓慢上下浮动，暗示「正在干活」，幅度极小不会晃眼。
+ * 造型是手绘的铁锹 + 路障（见 res/drawable/ic_shovel.xml、ic_barrier.xml），
+ * 一把插在地上的铁锹配一块条纹路障，比原来的小人更像「工地现场」。
+ *
+ * 视觉上刻意压得很轻：全部取主题次要文字的浅灰（用透明度分层，深浅主题都自动适配），
+ * 不抢上方车况与快捷控车的主视觉。铁锹绕锹尖（底边中点）做 ±2° 极慢的摇摆，
+ * 幅度极小、周期 2.2s，只是让这块地方略微「活着」，不会晃眼。
+ *
+ * 位置：由 HomeScreen 用 weight 弹簧推到页面最底部，紧贴底部导航栏上方。
  */
 @Composable
 fun UnderConstructionHint(modifier: Modifier = Modifier) {
     val C = LocalAppColors.current
     val ink = C.textSecondary
     val transition = rememberInfiniteTransition(label = "under-construction")
-    val bob by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
+    val sway by transition.animateFloat(
+        initialValue = -12f,
+        targetValue = -8f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 2200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse,
         ),
-        label = "bob",
+        label = "sway",
     )
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -53,37 +59,31 @@ fun UnderConstructionHint(modifier: Modifier = Modifier) {
     ) {
         Row(
             verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            // 左右两个淡一点、微微外倾；中间那个最实、上下浮动 —— 像三个人围着一个坑
+            // 铁锹：绕锹尖旋转（transformOrigin 落在底边中点），摇摆时锹尖一直扎在原地
             Icon(
-                Icons.Filled.Engineering,
+                painter = painterResource(R.drawable.ic_shovel),
                 contentDescription = null,
-                tint = ink.copy(alpha = 0.26f),
+                tint = ink.copy(alpha = 0.55f),
                 modifier = Modifier
-                    .size(18.dp)
-                    .rotate(-8f)
-                    .offset(y = (-1).dp),
+                    .size(40.dp)
+                    .graphicsLayer {
+                        rotationZ = sway
+                        transformOrigin = TransformOrigin(0.5f, 0.9f)
+                    },
             )
+            // 路障：底部下移 1dp，和铁锹的地面线对齐
             Icon(
-                Icons.Filled.Engineering,
+                painter = painterResource(R.drawable.ic_barrier),
                 contentDescription = null,
                 tint = ink.copy(alpha = 0.52f),
                 modifier = Modifier
-                    .size(26.dp)
-                    .offset(y = (-1.5f * bob).dp),
-            )
-            Icon(
-                Icons.Filled.Engineering,
-                contentDescription = null,
-                tint = ink.copy(alpha = 0.26f),
-                modifier = Modifier
-                    .size(18.dp)
-                    .rotate(8f)
-                    .offset(y = (-1).dp),
+                    .size(40.dp)
+                    .offset(y = 1.dp),
             )
         }
-        Spacer(Modifier.height(7.dp))
+        Spacer(Modifier.height(6.dp))
         Text(
             text = "更多功能，正在施工中",
             color = ink.copy(alpha = 0.72f),
