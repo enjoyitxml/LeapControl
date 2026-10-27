@@ -3,6 +3,7 @@ package com.leapcontrol.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -24,7 +25,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,6 +55,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.BuildConfig
+import com.leapcontrol.app.QuickSwitchMode
 import com.leapcontrol.app.R
 import com.leapcontrol.app.tiles.QuickTiles
 import kotlinx.coroutines.launch
@@ -78,8 +83,9 @@ fun SettingsScreen(
     var showAmapKey by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmGate by remember { mutableStateOf(runtime.biometricConfirmEnabled()) }
-    // 呼吸小白点：车模右上角换主题、相伴卡右上角换背景，共用这一个开关
-    var quickDot by remember { mutableStateOf(runtime.quickDotEnabled.value) }
+    // 快速切换壁纸/背景：三态模式 + 两块各自的小白点开关（都挂在 runtime 的 State 上，
+    // 这里直接订阅，改完即时生效，不在页面里存第二份）
+    val quick by runtime.quickSwitch
 
     Column(
         modifier = Modifier
@@ -140,23 +146,64 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(14.dp))
 
-        // ---- 首页装饰：呼吸小白点 ----
+        // ---- 首页：快速切换壁纸 / 背景 ----
         // 单独成卡而不是塞进上面那张：上面全是"功能/安全"项，这个纯属观感偏好，
         // 混在一起会让用户以为关掉它会影响控车。
         SettingsCard("首页") {
-            SwitchRow(
-                label = "呼吸小白点",
-                desc = if (quickDot) {
-                    "车模右上角点击换主题壁纸，相伴卡右上角点击换卡片背景"
-                } else {
-                    "已关闭，首页不再显示这个提示点"
-                },
-                checked = quickDot,
-                onCheckedChange = {
-                    quickDot = it
-                    runtime.setQuickDotEnabled(it)
-                },
+            Text(
+                "快速切换壁纸或背景",
+                color = C.textPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
             )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "车模换的是主题壁纸，相伴卡换的是卡片背景。这里只决定怎么触发。",
+                color = C.textSecondary,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            QuickSwitchCards(
+                mode = quick.mode,
+                onPick = { runtime.setQuickSwitchMode(it) },
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                quickSwitchHint(quick.mode),
+                color = C.textSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+
+            // 「每个部件的小白点单独设置」只在小白点模式下出现：
+            // 点击切换是整块可点、关闭是什么都没有，这两种模式里单个部件的开关没有意义
+            if (quick.mode == QuickSwitchMode.DOT) {
+                Spacer(Modifier.height(16.dp))
+                // 只留标题：上面那行提示已经说过「可以只留一个」，这里再解释一遍是废话
+                Text(
+                    "每个部件单独设置",
+                    color = C.textPrimary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(10.dp))
+                SwitchRow(
+                    label = "车模右上角",
+                    // 一行放得下：这个说明太长会被折成「…那一类」+「）」两行，尾巴挂着一个括号很难看
+                    desc = "点击换主题壁纸，只换当前明暗那一类",
+                    checked = quick.carDot,
+                    onCheckedChange = { runtime.setCarQuickDotEnabled(it) },
+                )
+                Spacer(Modifier.height(16.dp))
+                SwitchRow(
+                    label = "相伴卡右上角",
+                    desc = "点击换相伴卡背景，不影响主题",
+                    checked = quick.cardDot,
+                    onCheckedChange = { runtime.setCardQuickDotEnabled(it) },
+                )
+            }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -433,6 +480,71 @@ fun SwitchRow(
         )
     }
 }
+
+/**
+ * 「快速切换壁纸或背景」的三选一：一行三块卡片。
+ *
+ * 和「个性化 → 外观模式」用同一套视觉（选中 = 主题色淡底 + 1.5dp 描边 + 图标文字变色），
+ * 因为两者都是"三选一、只影响观感"的设置，用户不用重新学一遍。
+ * 说明文字不塞进卡片里（四五个字塞不下），统一放在下面一行，跟着选择变。
+ */
+@Composable
+private fun QuickSwitchCards(
+    mode: QuickSwitchMode,
+    onPick: (QuickSwitchMode) -> Unit,
+) {
+    val C = LocalAppColors.current
+    val items = listOf(
+        QuickSwitchMode.DOT to Icons.Filled.FiberManualRecord,
+        QuickSwitchMode.TAP to Icons.Filled.TouchApp,
+        QuickSwitchMode.OFF to Icons.Filled.VisibilityOff,
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items.forEach { (m, icon) ->
+            val selected = m == mode
+            val shape = RoundedCornerShape(12.dp)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(58.dp)
+                    .clip(shape)
+                    .background(
+                        if (selected) C.accent.copy(alpha = 0.12f) else C.iconBg,
+                        shape,
+                    )
+                    .border(
+                        if (selected) 1.5.dp else 0.dp,
+                        if (selected) C.accent else Color.Transparent,
+                        shape,
+                    )
+                    .clickable { onPick(m) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = if (selected) C.accent else C.textSecondary,
+                    modifier = Modifier.size(17.dp),
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = m.label,
+                    color = if (selected) C.accent else C.textPrimary,
+                    fontSize = 11.5.sp,
+                    maxLines = 1,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                )
+            }
+        }
+    }
+}
+
+/** 当前模式的触发方式说明：点之前就讲清楚，别让人试了才知道点哪儿。 */
+private fun quickSwitchHint(mode: QuickSwitchMode): String = mode.desc
 
 /** 可点击的设置行：左图标（可选）+ 标题 + 说明，右箭头；[showDot] 为真时标题右侧显示红点。 */
 @Composable

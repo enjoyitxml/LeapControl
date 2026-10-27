@@ -124,8 +124,8 @@ fun MainScreen(
     // 跟随系统时两格都参与（白天一格、夜里一格），锁定模式只用得到对应那一格。
     var lightThemeId by remember { mutableStateOf(runtime.lightThemeId()) }
     var darkThemeId by remember { mutableStateOf(runtime.darkThemeId()) }
-    // 呼吸小白点总开关：设置里可关。读 State 才能「设置里一关、退回首页立刻消失」
-    val quickDotEnabled by runtime.quickDotEnabled
+    // 快捷切换配置（小白点 / 点击切换 / 关闭）：读 State 才能「设置里一改、退回首页立刻生效」
+    val quickSwitch by runtime.quickSwitch
     // App 是否在前台：进后台就暂停解码，别在看不见的时候继续耗电
     var resumed by remember { mutableStateOf(true) }
     // 版本更新弹窗：检测到 GitHub 新版本且未忽略该版本时，启动后自动弹出
@@ -365,10 +365,10 @@ fun MainScreen(
                                 runtime = runtime,
                                 onLogout = onLogout,
                                 onOpenSkin = { settingsPage = SettingsPage.PERSONALIZATION },
-                                // 两处呼吸小白点各管一摊：车模换主题壁纸，相伴卡换卡片背景
+                                // 两处快捷切换各管一摊：车模换主题壁纸，相伴卡换卡片背景
                                 onRandomTheme = randomizeTheme,
                                 onRandomBackdrop = { runtime.randomizeOwnershipBackdrop() },
-                                showQuickDot = quickDotEnabled,
+                                quickSwitch = quickSwitch,
                                 onMainPageChange = { homeOnMainPage = it },
                                 onCarModelGoneChange = { carModelGone = it },
                                 onScrollingChange = { homeScrolling = it },

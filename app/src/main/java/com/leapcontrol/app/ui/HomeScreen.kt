@@ -107,6 +107,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.collectAsState
+import com.leapcontrol.app.QuickSwitchPrefs
+import com.leapcontrol.app.QuickTarget
 import com.leapcontrol.app.R
 import com.leapcontrol.app.VehicleCapabilities
 import kotlin.math.roundToInt
@@ -143,12 +145,12 @@ fun HomeScreen(
     onLogout: () -> Unit,
     /** 顶部「皮肤」按钮：打开个性化页（外观模式 / 四季主题 / 动态背景） */
     onOpenSkin: () -> Unit,
-    /** 车模右上角的「呼吸小白点」：在当前壁纸所属的池子里随机换一套主题 */
+    /** 车模这一侧的快捷切换：点白点 / 点车模本体 / 不提供（换当前主题壁纸） */
     onRandomTheme: () -> Unit = {},
-    /** 相伴卡右上角的「呼吸小白点」：随机换这张卡的背景，与主题无关 */
+    /** 相伴卡这一侧的快捷切换：点白点 / 点卡片本体 / 不提供（换卡片背景，与主题无关） */
     onRandomBackdrop: () -> Unit = {},
-    /** 小白点总开关（设置里可关）。关掉后车模与相伴卡都不再显示这个点 */
-    showQuickDot: Boolean = true,
+    /** 快捷切换的当前配置（设置页里选的小白点 / 点击切换 / 关闭） */
+    quickSwitch: QuickSwitchPrefs = QuickSwitchPrefs(),
     /** 向上汇报「当前是否在零控首页主界面」—— 视频背景只在首页主界面播放 */
     onMainPageChange: (Boolean) -> Unit,
     /** 向上汇报「车模是否已滚出可视区」—— 滚出后视频背景切换为纯色背景，提高可读性 */
@@ -169,6 +171,8 @@ fun HomeScreen(
         val homeScrollState = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
         // 车模底边在滚动内容中的纵向坐标（px），用于判断车模是否已滚出可视区
         var carModelBottomY by remember { mutableStateOf(0f) }
+        // 车模「整块可点换壁纸」时用的交互源（放在这里而不是 clickable 的 if 分支里）
+        val carTapInteraction = remember { MutableInteractionSource() }
         val scope = rememberCoroutineScope()
         // 车况提升到 AppRuntime 持有（跨页面/跨 Tab 保留 + 磁盘缓存），
         // 这里只订阅，不再用 remember 存 —— 切到「我的」再回来不会先变成 null 而闪一下。
@@ -938,10 +942,25 @@ fun HomeScreen(
             // ---- 车模：显示官方接口图（默认常开，不再提供关闭开关）----
             if (carBitmap != null) {
                 Spacer(Modifier.height(4.dp))
+                // 快捷换壁纸的触发方式由设置决定：小白点 / 点车模本体 / 不提供
+                val carQuick = quickSwitch.carTarget
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(200.dp)
+                        // 点车模本体换壁纸时不要涟漪：车模是透明底 PNG，
+                        // 一圈方形涟漪会盖出"这块是个按钮"的方框，很难看
+                        .then(
+                            if (carQuick == QuickTarget.TAP) {
+                                Modifier.clickable(
+                                    interactionSource = carTapInteraction,
+                                    indication = null,
+                                    onClick = onRandomTheme,
+                                )
+                            } else {
+                                Modifier
+                            },
+                        )
                         .onGloballyPositioned { coords ->
                             // 车模底部在「滚动内容」（父 Column）坐标系里的 y：
                             // 这是固定布局位置，不随滚动偏移变化，正好和 homeScrollState.value
@@ -960,7 +979,7 @@ fun HomeScreen(
                     )
                     // 快捷换壁纸：小白点放在车模右上角，正好落在车顶右侧的空画面上。
                     // 车模上的点换的是「主题壁纸」，相伴卡上的点换的是「相伴卡背景」，两者互不影响。
-                    if (showQuickDot) {
+                    if (carQuick == QuickTarget.DOT) {
                         QuickThemeButton(
                             onClick = onRandomTheme,
                             modifier = Modifier
@@ -1047,7 +1066,8 @@ fun HomeScreen(
                 status = currentStatus,
                 energy = energySummary,
                 backdropId = ownershipBackdropId,
-                onRandomBackdrop = if (showQuickDot) onRandomBackdrop else null,
+                quickTarget = quickSwitch.cardTarget,
+                onRandomBackdrop = onRandomBackdrop,
             )
 
             // ---- 功能模块区（页面最下方）：横向滑动的模块卡 + 指示条 + 自定义按钮 ----

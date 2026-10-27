@@ -25,6 +25,8 @@ import com.leapcontrol.app.MileageEnergySummary
 import com.leapcontrol.app.ScheduledAcPlan
 import com.leapcontrol.app.ScheduledAcState
 import com.leapcontrol.app.ObfuscatedSecrets
+import com.leapcontrol.app.QuickSwitchMode
+import com.leapcontrol.app.QuickSwitchPrefs
 import com.leapcontrol.app.Session
 import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.ShumeiSecurityManager
@@ -208,16 +210,27 @@ class AppRuntime(context: Context) {
     val ownershipBackdrop: State<String> get() = _ownershipBackdrop
 
     /**
-     * 首页「呼吸小白点」是否显示（默认开）。
+     * 首页「快速切换壁纸 / 背景」的三项偏好（模式 + 两块各自的小白点开关）。
      *
-     * 用 State 而不是每次读盘：设置里一关，退回首页立刻消失，不用等重建。
-     * 关掉之后车模与相伴卡右上角都不再出现这个点——两个点都是同一个开关，
-     * 因为它们属于同一种"点缀"，用户不想看到时不希望只剩一半。
+     * 用 State 而不是每次读盘：设置里一改，退回首页立刻生效，不用等重建。
+     * 默认是「小白点 + 两块都显示」，与上一版行为一致；上一版的布尔开关
+     * （关掉 = 两颗点都隐藏且没有其它入口）会迁移成 [QuickSwitchMode.OFF]。
      */
-    private val _quickDotEnabled = mutableStateOf(
-        namingPrefs.getBoolean("quick_dot_enabled", true),
+    private val _quickSwitch = mutableStateOf(
+        QuickSwitchPrefs(
+            mode = QuickSwitchMode.fromLegacy(
+                rawMode = namingPrefs.getString("quick_switch_mode", null),
+                legacyDotEnabled = if (namingPrefs.contains("quick_dot_enabled")) {
+                    namingPrefs.getBoolean("quick_dot_enabled", true)
+                } else {
+                    null
+                },
+            ),
+            carDot = namingPrefs.getBoolean("quick_dot_car", true),
+            cardDot = namingPrefs.getBoolean("quick_dot_card", true),
+        ),
     )
-    val quickDotEnabled: State<Boolean> get() = _quickDotEnabled
+    val quickSwitch: State<QuickSwitchPrefs> get() = _quickSwitch
 
     fun customName(): String =
         namingPrefs.getString("name_${session.selectedVin}", "")?.trim().orEmpty()
@@ -1124,9 +1137,26 @@ class AppRuntime(context: Context) {
         setOwnershipBackdropId(OwnershipBackdrops.randomOther(_ownershipBackdrop.value))
     }
 
-    fun setQuickDotEnabled(enabled: Boolean) {
-        _quickDotEnabled.value = enabled
-        namingPrefs.edit().putBoolean("quick_dot_enabled", enabled).apply()
+    // ---------------- 首页快捷切换（小白点 / 点击切换 / 关闭） ----------------
+
+    fun setQuickSwitchMode(mode: QuickSwitchMode) {
+        updateQuickSwitch { it.copy(mode = mode) }
+        namingPrefs.edit().putString("quick_switch_mode", mode.name).apply()
+    }
+
+    fun setCarQuickDotEnabled(enabled: Boolean) {
+        updateQuickSwitch { it.copy(carDot = enabled) }
+        namingPrefs.edit().putBoolean("quick_dot_car", enabled).apply()
+    }
+
+    fun setCardQuickDotEnabled(enabled: Boolean) {
+        updateQuickSwitch { it.copy(cardDot = enabled) }
+        namingPrefs.edit().putBoolean("quick_dot_card", enabled).apply()
+    }
+
+    /** 只改内存里的快照，落盘由调用方按字段写（避免每次改一项就整份覆盖）。 */
+    private fun updateQuickSwitch(block: (QuickSwitchPrefs) -> QuickSwitchPrefs) {
+        _quickSwitch.value = block(_quickSwitch.value)
     }
 
     // ---------------- 外观模式（跟随系统 / 浅色 / 深色） ----------------
