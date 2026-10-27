@@ -1042,6 +1042,11 @@ fun HomeScreen(
                 )
             }
 
+            // ---- 底部占位：更多功能开发中（浅灰施工小人 + 一行小字）----
+            // 模块区整体下线期间用它收尾，避免页面滑到底空荡荡；模块逐项恢复后可直接删掉这块。
+            Spacer(Modifier.height(26.dp))
+            UnderConstructionHint()
+
             Spacer(Modifier.height(20.dp))
             }
             }
