@@ -27,8 +27,9 @@ import com.leapcontrol.app.TirePressure
 /**
  * 胎压监测卡（首页空调条下方，只占左半边）。
  *
- * 版式：标题「胎压 bar」+ 2×2 数值网格，中间夹一个透明车模 —— 车头朝上，
- * 四个轮子按胎压状态亮灯（正常淡绿 / 不足红色 / 无数据灰）。
+ * 版式对齐官方俯视图：中间一辆透明车模（车头朝上），四个角各一格「位置 + 数值 + bar」。
+ * 颜色只表达「有没有问题」——正常时轮子是深灰实心轮胎、数字用正文黑（深色主题为白）；
+ * 只有胎压不足时，那个轮子和对应数字才变红，另外三个保持原样。
  *
  * 胎压低到什么程度算「不足」：
  *   GB 26149-2017《乘用车轮胎气压监测系统》要求「低于推荐值 ×75% − 7kPa」时报警，
@@ -52,20 +53,28 @@ fun TireQuickCard(
     Column(
         modifier = modifier
             .height(172.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(C.panelBg, RoundedCornerShape(16.dp))
-            .border(1.dp, C.border, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(8.dp))
+            .background(C.panelBg, RoundedCornerShape(8.dp))
+            .border(1.dp, C.border, RoundedCornerShape(8.dp))
             .then(clickModifier)
             .padding(horizontal = 12.dp, vertical = 11.dp),
     ) {
-        // 标题行：左边「胎压」，右边单位（单位只在标题处出现一次，数值列不再重复）
+        // 标题行：左边「胎压」，右边只在异常时给一句提示（正常时保持安静）
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("胎压", color = C.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.weight(1f))
-            Text("bar", color = C.textSecondary, fontSize = 9.5.sp)
+            val alerts = tires.count { TirePressure.stateOf(it.pressure, it.warning) == TirePressure.State.Low }
+            if (alerts > 0) {
+                Text(
+                    text = if (alerts == 1) "气压偏低" else "${alerts} 个气压偏低",
+                    color = redFor(C),
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
         }
 
         Spacer(Modifier.height(6.dp))
@@ -111,26 +120,35 @@ fun TireQuickCard(
     }
 }
 
-/** 单个轮子的「位置 + 数值」。正常淡绿、不足红色、无数据灰。 */
+/** 异常红：浅色主题用偏深的红（白底上够清楚），深色主题用亮一点的红。 */
+private fun redFor(C: AppColors): Color = if (C.isDark) Color(0xFFFF6B6F) else Color(0xFFE5484D)
+
+/** 单个轮子的「位置 / 数值 / bar」。正常＝正文色，不足＝红，无数据＝次要灰。 */
 @Composable
 private fun TireValueCell(tire: TireInfo?, position: String) {
     val C = LocalAppColors.current
     val state = TirePressure.stateOf(tire?.pressure, tire?.warning == true)
     val valueColor = when (state) {
-        TirePressure.State.Ok -> if (C.isDark) Color(0xFF30D158) else Color(0xFF1FA75B)
-        TirePressure.State.Low -> if (C.isDark) Color(0xFFFF6B6F) else Color(0xFFE5484D)
+        // 正常不再用绿色高亮：四个轮子全绿会让人误以为一直在报警，正常就该是普通黑字
+        TirePressure.State.Ok -> C.textPrimary
+        TirePressure.State.Low -> redFor(C)
         TirePressure.State.Unknown -> C.textSecondary
     }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(position, color = C.textSecondary, fontSize = 9.5.sp)
+        Text(position, color = C.textSecondary, fontSize = 9.sp)
         Spacer(Modifier.height(1.dp))
         Text(
             text = tire?.pressure ?: "--",
             color = valueColor,
-            fontSize = 15.sp,
+            fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
+        )
+        Text(
+            text = "bar",
+            color = if (state == TirePressure.State.Low) redFor(C).copy(alpha = 0.75f) else C.textSecondary,
+            fontSize = 8.sp,
         )
     }
 }

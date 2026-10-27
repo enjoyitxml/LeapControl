@@ -6,6 +6,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -86,7 +87,9 @@ fun AcQuickCard(
             .fillMaxWidth()
             .heightIn(min = 72.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(C.cardBg)
+            // 与胎压 / 近7天 / 相伴卡同一套卡片底：白里带一点主题色，描边也用主题色
+            .background(C.panelBg, RoundedCornerShape(8.dp))
+            .border(1.dp, C.border, RoundedCornerShape(8.dp))
             .padding(start = 24.dp, end = 22.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Start,

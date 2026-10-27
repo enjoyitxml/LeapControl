@@ -29,14 +29,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.MileageEnergySummary
 import com.leapcontrol.app.OwnershipStats
-import com.leapcontrol.app.R
 
 /**
  * 「与爱车相伴」卡（首页整行宽幅，横版）。
  *
- * 版式参考官方车况页那张雪山长条图：整张是高山实景，文字压在左上的天空区 ——
- * 天空在图片上部是均匀的深蓝，白字放这里对比最稳，所以不再靠底部压暗来救，
- * 只用左侧一层很轻的水平渐变（0.14 → 0）把文字区再托一下。
+ * 版式参考官方车况页那张雪山长条图：整张是风景实景，文字压在左上的天空区。
+ * 背景支持 6 套内置图（见 [OwnershipBackdrops]，个性化页可切换），
+ * 每张图按「天空亮不亮」单独给压暗强度，白字才在每张图上都站得住。
  *
  * 字号参照官方图的比例（卡片宽 ≈ 349dp 时）：说明文字 15sp、数字 30sp、单位 13sp。
  * 数字用常规字重而不是 Bold —— 图上那串「1013 天 44064 公里」笔画很细，
@@ -52,6 +51,7 @@ import com.leapcontrol.app.R
 fun OwnershipCard(
     status: CarStatus?,
     energy: MileageEnergySummary?,
+    backdropId: String? = null,
     modifier: Modifier = Modifier,
 ) {
     // 图片内容不可控（换图/裁切位置都会变），所以文字统一带一层柔和投影兜底
@@ -59,30 +59,45 @@ fun OwnershipCard(
     val days = OwnershipStats.days(energy?.ownershipDays)
     val kmText = OwnershipStats.formatKm(energy?.totalMileageKm)
         ?: OwnershipStats.formatKm(OwnershipStats.kmFromText(status?.totalMileage))
+    val backdrop = OwnershipBackdrops.byId(backdropId)
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(116.dp)
-            .clip(RoundedCornerShape(16.dp)),
+            .clip(RoundedCornerShape(8.dp)),
     ) {
         // 竖构图原图 Crop 到 3:1 后正好取到「天空 + 山脊」这一段，不裁峰尖
         Image(
-            painter = painterResource(R.drawable.bg_ownership_mountain),
+            painter = painterResource(backdrop.res),
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
         )
 
-        // 左侧轻微压暗：文字全部靠左，右侧保持雪山通透
+        // 左侧压暗：文字全部靠左，强度按背景图有多亮单独给（见 OwnershipBackdrops.scrim），
+        // 半屏以外（0.55 之后）就不再压，右侧留出图本身的通透感
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .background(
                     Brush.horizontalGradient(
-                        0f to Color.Black.copy(alpha = 0.14f),
-                        0.55f to Color.Black.copy(alpha = 0.03f),
+                        0f to Color.Black.copy(alpha = backdrop.scrim),
+                        0.55f to Color.Black.copy(alpha = backdrop.scrim * 0.28f),
                         1f to Color.Transparent,
+                    ),
+                ),
+        )
+
+        // 底部再压一点：山脊/水面本身花色，不压的话白字下缘会和山体纹路打架
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.55f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.26f),
                     ),
                 ),
         )

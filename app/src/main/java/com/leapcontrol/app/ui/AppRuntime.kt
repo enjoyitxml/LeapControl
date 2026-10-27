@@ -41,6 +41,8 @@ import com.leapcontrol.app.VehicleCapabilities
 import com.leapcontrol.app.VehicleHomeStatus
 import com.leapcontrol.app.VehicleStatusMapper
 import com.leapcontrol.app.WidgetStatusMapper
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -193,6 +195,19 @@ class AppRuntime(context: Context) {
 
     // 车辆自定义命名（按 VIN 独立存储，登出不清除）
     private val namingPrefs = appContext.getSharedPreferences("leapcontrol_naming", Context.MODE_PRIVATE)
+
+    /**
+     * 相伴卡背景（个性化里可选 6 套内置图）。
+     *
+     * 用 State 而不是每次读盘：在个性化里选完，返回首页要立刻换图。
+     * 初值在构造时就同步读一次，冷启动不会先闪一帧默认图。
+     */
+    private val _ownershipBackdrop = mutableStateOf(
+        OwnershipBackdrops.byId(
+            namingPrefs.getString("ownership_backdrop", OwnershipBackdrops.DEFAULT_ID),
+        ).id,
+    )
+    val ownershipBackdrop: State<String> get() = _ownershipBackdrop
 
     fun customName(): String =
         namingPrefs.getString("name_${session.selectedVin}", "")?.trim().orEmpty()
@@ -1033,6 +1048,16 @@ class AppRuntime(context: Context) {
 
     fun setNightThemeAuto(enabled: Boolean) {
         namingPrefs.edit().putBoolean("night_theme_auto", enabled).apply()
+    }
+
+    // ---------------- 相伴卡背景 ----------------
+
+    fun ownershipBackdropId(): String = _ownershipBackdrop.value
+
+    fun setOwnershipBackdropId(id: String) {
+        val safe = OwnershipBackdrops.byId(id).id
+        _ownershipBackdrop.value = safe
+        namingPrefs.edit().putString("ownership_backdrop", safe).apply()
     }
 
     // ---------------- 外观模式（跟随系统 / 浅色 / 深色） ----------------

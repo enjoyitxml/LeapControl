@@ -54,10 +54,14 @@ private fun carBodyPath(X: (Float) -> Float, Y: (Float) -> Float): Path = Path()
 }
 
 /**
- * 透明车模（首页胎压卡用）：只留一层极淡的车身轮廓，四轮按状态点亮。
+ * 透明车模（首页胎压卡用）：只留一层极淡的车身轮廓，四轮按状态着色。
  *
  * 和 [TireTopView] 的深色实心车不同，这里刻意去掉填充感 —— 车身按 5% 不透明度铺底、
  * 边框 22% 描线，卡片底色直接透上来，看起来像一块玻璃模型；真正的信息量全压在四个轮子上。
+ *
+ * 轮子配色跟随「正常就该像真轮胎」的思路：正常时是深灰实心（深色主题下换成浅灰，
+ * 否则深灰压在深底上看不见），只有胎压不足才变红并带一圈红色光晕 ——
+ * 绿色高亮会让四个轮子看起来一直「在报警」，反而弱化了真正的异常。
  */
 @Composable
 fun TireCarOutline(
@@ -66,10 +70,9 @@ fun TireCarOutline(
 ) {
     val C = LocalAppColors.current
     val ink = C.textPrimary
-    // 正常＝淡绿（深色主题下淡绿发灰，换成系统的亮绿）
-    val okColor = if (C.isDark) Color(0xFF30D158) else Color(0xFF5AD98C)
-    val badColor = Color(0xFFFF5A5F)
-    val unknownColor = ink.copy(alpha = 0.16f)
+    val tireNormal = if (C.isDark) Color(0xFFB0B5BD) else Color(0xFF3A3D44)
+    val tireBad = if (C.isDark) Color(0xFFFF6B6F) else Color(0xFFE5484D)
+    val tireUnknown = ink.copy(alpha = 0.16f)
 
     Canvas(modifier = modifier) {
         val scale = minOf(size.width / TOP_W, size.height / TOP_H)
@@ -118,25 +121,31 @@ fun TireCarOutline(
         // ---- 四个轮胎 ----
         TIRE_SLOTS.forEach { (label, slot) ->
             val tire = tires.firstOrNull { it.position == label }
+            // 车端置位了异常（欠压/过压/无信号）才算「红」，其余一律按正常轮子画
+            val abnormal = tire != null && tire.warning
             val color = when {
-                tire == null -> unknownColor
-                tire.warning -> badColor
-                else -> okColor
+                tire == null -> tireUnknown
+                abnormal -> tireBad
+                else -> tireNormal
             }
             val left = slot[0]
             val top = slot[1]
-            // 状态光晕：正常时也带一点，四个轮子才有「亮着」的感觉
-            drawRoundRect(
-                color.copy(alpha = 0.20f),
-                topLeft = Offset(X(left - 3.5f), Y(top - 3.5f)),
-                size = Size(S(21f), S(41f)),
-                cornerRadius = CornerRadius(S(7f), S(7f)),
-            )
+            // 光晕只给异常轮：正常轮子保持实心轮胎的干净外形
+            if (abnormal) {
+                drawRoundRect(
+                    color.copy(alpha = 0.20f),
+                    topLeft = Offset(X(left - 4.5f), Y(top - 4f)),
+                    size = Size(S(24f), S(44f)),
+                    cornerRadius = CornerRadius(S(8f), S(8f)),
+                )
+            }
+            // 轮胎比槽位略宽一点（17×36）：参考官图那种粗实的实心胎，
+            // 中心仍在 left+7 / top+17，所以位置和旧版完全对齐
             drawRoundRect(
                 color,
-                topLeft = Offset(X(left), Y(top)),
-                size = Size(S(14f), S(34f)),
-                cornerRadius = CornerRadius(S(4f), S(4f)),
+                topLeft = Offset(X(left - 1.5f), Y(top - 1f)),
+                size = Size(S(17f), S(36f)),
+                cornerRadius = CornerRadius(S(5f), S(5f)),
             )
         }
     }

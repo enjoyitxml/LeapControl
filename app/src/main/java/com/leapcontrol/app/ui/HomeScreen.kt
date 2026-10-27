@@ -188,6 +188,8 @@ fun HomeScreen(
         val lastUpdated by runtime.lastUpdatedFlow.collectAsState()
         // 行驶里程 / 能耗（独立接口，拿不到就静默保持上一次结果）
         val energySummary by runtime.mileageEnergyFlow.collectAsState()
+        // 相伴卡背景：个性化里切换后要立刻生效，所以直接读 State
+        val ownershipBackdropId = runtime.ownershipBackdrop.value
         var refreshError by remember { mutableStateOf<String?>(null) }
         var actionMessage by remember { mutableStateOf<String?>(null) }
         var controlling by remember { mutableStateOf<String?>(null) }
@@ -1041,6 +1043,7 @@ fun HomeScreen(
             OwnershipCard(
                 status = currentStatus,
                 energy = energySummary,
+                backdropId = ownershipBackdropId,
             )
 
             // ---- 功能模块区（页面最下方）：横向滑动的模块卡 + 指示条 + 自定义按钮 ----

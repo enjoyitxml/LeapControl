@@ -20,6 +20,13 @@ data class SeasonTheme(
     val previewTop: Color,
     val previewBottom: Color,
     /**
+     * 主题色（浅色模式）：卡片描边、柱状图、强调元素都用它，
+     * 让首页卡片的色调跟着季节走，而不是永远一片品牌绿。
+     */
+    val accent: Color,
+    /** 主题色（深色模式）：同样色相、提亮度，压在深底上才看得清。 */
+    val accentDark: Color,
+    /**
      * 是否强制使用深色内容色（文字 / 图标 / 卡片）。
      *
      * 星空主题的页面底色本身就是深空黑，若沿用「跟随系统」的浅色内容会出现
@@ -38,6 +45,9 @@ data class SeasonTheme(
     val scrimAlphaScale: Float = 1f,
 ) {
     fun gradient(dark: Boolean): List<Color> = if (dark) gradientDark else gradient
+
+    /** 当前明暗下该用哪一档主题色。 */
+    fun accent(dark: Boolean): Color = if (dark) accentDark else accent
 }
 
 object SeasonThemes {
@@ -50,6 +60,8 @@ object SeasonThemes {
         gradientDark = listOf(Color(0xFF11251A), Color(0xFF0D1410), Color(0xFF0B0E0C)),
         previewTop = Color(0xFFBFE3CB),
         previewBottom = Color(0xFFEFF8F1),
+        accent = Color(0xFF2FA85C),
+        accentDark = Color(0xFF46D27C),
     )
 
     /** 夏 · 晴蓝 */
@@ -60,6 +72,8 @@ object SeasonThemes {
         gradientDark = listOf(Color(0xFF0E2030), Color(0xFF0C141C), Color(0xFF0B0E11)),
         previewTop = Color(0xFFB0D7F5),
         previewBottom = Color(0xFFEDF6FD),
+        accent = Color(0xFF2C7BE5),
+        accentDark = Color(0xFF5AA0F5),
     )
 
     /** 秋 · 暖橙 */
@@ -70,6 +84,8 @@ object SeasonThemes {
         gradientDark = listOf(Color(0xFF2A1E11), Color(0xFF16110C), Color(0xFF0D0B09)),
         previewTop = Color(0xFFF5D4A8),
         previewBottom = Color(0xFFFBF1E3),
+        accent = Color(0xFFCE6E28),
+        accentDark = Color(0xFFF0924A),
     )
 
     /** 冬 · 静白 */
@@ -80,6 +96,8 @@ object SeasonThemes {
         gradientDark = listOf(Color(0xFF1A222E), Color(0xFF12161D), Color(0xFF0C0E11)),
         previewTop = Color(0xFFCBD4E1),
         previewBottom = Color(0xFFF2F5F9),
+        accent = Color(0xFF52779F),
+        accentDark = Color(0xFF8AAFCB),
     )
 
     /** 星空 · 夜间（同时作为自动夜间主题） */
@@ -90,6 +108,8 @@ object SeasonThemes {
         gradientDark = listOf(Color(0xFF070C1A), Color(0xFF04070F), Color(0xFF020408)),
         previewTop = Color(0xFF111C36),
         previewBottom = Color(0xFF05070D),
+        accent = Color(0xFF6C8CFF),
+        accentDark = Color(0xFF8AA4FF),
         forcesDarkContent = true,
         // 星空视频本身够暗，这层雾只要压住文字底下的星点，不能再把星星本体糊掉
         veilAlphaScale = 0.35f,
