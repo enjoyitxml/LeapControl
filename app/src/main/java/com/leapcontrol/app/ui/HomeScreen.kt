@@ -143,8 +143,6 @@ fun HomeScreen(
     onLogout: () -> Unit,
     /** 顶部「皮肤」按钮：打开个性化页（外观模式 / 四季主题 / 动态背景） */
     onOpenSkin: () -> Unit,
-    seasonId: String,
-    onSeasonChange: (String) -> Unit,
     /** 向上汇报「当前是否在零控首页主界面」—— 视频背景只在首页主界面播放 */
     onMainPageChange: (Boolean) -> Unit,
     /** 向上汇报「车模是否已滚出可视区」—— 滚出后视频背景切换为纯色背景，提高可读性 */
@@ -236,8 +234,6 @@ fun HomeScreen(
         var pendingFridgeCommand by remember {
             mutableStateOf<com.leapcontrol.app.FridgeControlCommand?>(null)
         }
-        val season = SeasonThemes.byId(seasonId)
-
         // ---- 控车二次确认（应用内弹窗确认，仅主界面触发；控制中心磁贴绕过）----
         // 指纹 / 设备密码验证已移除：发起控车时只弹应用内确认框，不再要求验证。
         val confirmGate = remember { runtime.biometricConfirmEnabled() }
@@ -1325,69 +1321,6 @@ private fun HealthDialog(status: CarStatus?, onDismiss: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("关闭", color = LocalAppColors.current.accent) }
-        },
-    )
-}
-
-/** 四季主题选择弹窗。 */
-@Composable
-private fun ThemePickerDialog(
-    currentId: String,
-    onSelect: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = LocalAppColors.current.cardBg,
-        title = { Text("主题", color = LocalAppColors.current.textPrimary, fontSize = 17.sp) },
-        text = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                SeasonThemes.ALL.forEach { theme ->
-                    val selected = theme.id == currentId
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { onSelect(theme.id) }
-                            .padding(2.dp)
-                            .weight(1f),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(64.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Brush.verticalGradient(theme.gradient(LocalAppColors.current.isDark)))
-                                .then(
-                                    if (selected) {
-                                        Modifier.border(2.dp, LocalAppColors.current.accent, RoundedCornerShape(10.dp))
-                                    } else {
-                                        Modifier.border(0.5.dp, LocalAppColors.current.barTrack, RoundedCornerShape(10.dp))
-                                    }
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (selected) {
-                                Icon(Icons.Filled.Check, null, tint = LocalAppColors.current.accent, modifier = Modifier.size(22.dp))
-                            }
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = theme.label,
-                            color = if (selected) LocalAppColors.current.accent else LocalAppColors.current.textPrimary,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("完成", color = LocalAppColors.current.accent) }
         },
     )
 }

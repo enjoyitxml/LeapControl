@@ -41,7 +41,6 @@ import androidx.core.view.WindowCompat
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.R
 import com.leapcontrol.app.UpdateCheckResult
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 
 // ============================================================================
@@ -122,34 +121,18 @@ fun MainScreen(
     var homeScrolling by remember { mutableStateOf(false) }
     var appearance by remember { mutableStateOf(runtime.appearanceMode()) }
     // 两个主题槽位：浅色槽 / 深色槽。外观模式只决定「现在取哪一格」。
+    // 跟随系统时两格都参与（白天一格、夜里一格），锁定模式只用得到对应那一格。
     var lightThemeId by remember { mutableStateOf(runtime.lightThemeId()) }
     var darkThemeId by remember { mutableStateOf(runtime.darkThemeId()) }
-    // 自由模式下的「夜间时段强制深色」开关
-    var nightAuto by remember { mutableStateOf(runtime.nightThemeAuto()) }
     // App 是否在前台：进后台就暂停解码，别在看不见的时候继续耗电
     var resumed by remember { mutableStateOf(true) }
     // 版本更新弹窗：检测到 GitHub 新版本且未忽略该版本时，启动后自动弹出
     var showUpdateDialog by remember { mutableStateOf(false) }
     var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
 
-    // ---- 夜间时段覆盖（只在自由模式生效）----
-    // 每 30 秒复核一次当前时间，跨过 22:00 / 06:00 时立刻生效，不必等用户重启 App。
-    // 这里的 state 只在「真的翻转」时才写：以前是每次 tick 都加一，等于每 30 秒
-    // 让整个 MainScreen（连同首页 3000 行）无谓重组一次。
-    var nightOverrideActive by remember { mutableStateOf(false) }
-    LaunchedEffect(appearance, nightAuto) {
-        while (true) {
-            val next = ThemeResolver.supportsNightOverride(appearance) &&
-                nightAuto && SeasonThemes.isNight()
-            if (next != nightOverrideActive) nightOverrideActive = next
-            delay(30_000)
-        }
-    }
-
     val systemInDark = isSystemInDarkTheme()
-    // 明暗来源：始终浅色/始终深色由模式锁死；跟随系统与自由模式都看手机
-    //（自由模式额外允许「到点强制深色」这一层覆盖）。
-    val dark = ThemeResolver.isDark(appearance, systemInDark, nightOverrideActive)
+    // 明暗来源只有一处：始终浅色/始终深色由模式锁死，跟随系统看手机
+    val dark = ThemeResolver.isDark(appearance, systemInDark)
     // 生效主题：按明暗取对应槽位，槽里类型不对时自动回落到该类型默认主题
     val season = ThemeResolver.activeTheme(appearance, dark, lightThemeId, darkThemeId)
     val activeSeasonId = season.id
@@ -236,16 +219,17 @@ fun MainScreen(
                             darkThemeId = darkThemeId,
                             activeThemeId = activeSeasonId,
                             systemDark = systemInDark,
-                            darkNow = dark,
-                            onPickTheme = { id ->
-                                runtime.saveThemeChoice(id)
-                                val picked = SeasonThemes.byId(id)
-                                if (picked.night) darkThemeId = picked.id else lightThemeId = picked.id
-                            },
-                            nightAuto = nightAuto,
-                            onNightAutoChange = {
-                                runtime.setNightThemeAuto(it)
-                                nightAuto = it
+                            // 选完主题由 ThemeResolver 统一算出「模式 + 两槽」，
+                            // 这里只负责落盘并同步内存状态，不做第二套判断
+                            onApplyPick = { pick ->
+                                if (pick.mode != appearance) {
+                                    runtime.setAppearanceMode(pick.mode)
+                                    appearance = pick.mode
+                                }
+                                runtime.setLightThemeId(pick.lightThemeId)
+                                runtime.setDarkThemeId(pick.darkThemeId)
+                                lightThemeId = pick.lightThemeId
+                                darkThemeId = pick.darkThemeId
                             },
                             onBack = { settingsPage = null },
                         )
@@ -363,13 +347,6 @@ fun MainScreen(
                                 runtime = runtime,
                                 onLogout = onLogout,
                                 onOpenSkin = { settingsPage = SettingsPage.PERSONALIZATION },
-                                seasonId = activeSeasonId,
-                                onSeasonChange = { id ->
-                                    // 首页若做快捷换肤，同样按主题明暗落到对应槽位
-                                    runtime.saveThemeChoice(id)
-                                    val picked = SeasonThemes.byId(id)
-                                    if (picked.night) darkThemeId = picked.id else lightThemeId = picked.id
-                                },
                                 onMainPageChange = { homeOnMainPage = it },
                                 onCarModelGoneChange = { carModelGone = it },
                                 onScrollingChange = { homeScrolling = it },

@@ -1,7 +1,6 @@
 package com.leapcontrol.app.ui
 
 import androidx.compose.ui.graphics.Color
-import java.util.Calendar
 
 /**
  * 背景主题。
@@ -524,8 +523,17 @@ object SeasonThemes {
         AURORA, METEOR, FIREFLY, NIGHT_RAIN,
     )
 
+    /**
+     * 视频主题的浅色一组（春夏秋冬四支实拍视频）。
+     * 深色时配的是下面那唯一一套 [VIDEO_DARK]，两者成对使用。
+     */
+    val VIDEO_LIGHT = listOf(VIDEO_SPRING, VIDEO_SUMMER, VIDEO_AUTUMN, VIDEO_WINTER)
+
+    /** 视频主题的深色一套（星空夜幕）。 */
+    val VIDEO_DARK = VIDEO_STARS
+
     /** 视频主题 5 套（旧版四季 + 星空，排在动态主题之后） */
-    val VIDEO = listOf(VIDEO_SPRING, VIDEO_SUMMER, VIDEO_AUTUMN, VIDEO_WINTER, VIDEO_STARS)
+    val VIDEO = VIDEO_LIGHT + VIDEO_DARK
 
     val ALL = DAY + NIGHT_ALL + VIDEO
 
@@ -548,20 +556,6 @@ object SeasonThemes {
 
     fun isNightTheme(id: String?): Boolean = byId(id).night
 
-    // ---------------- 夜间自动切换 ----------------
-
-    /** 夜间自动切换的默认主题。 */
+    /** 深色槽为空时的默认主题（浩瀚星空）。 */
     val NIGHT = STARRY
-
-    /** 夜间时段起点（含）：22:00。 */
-    const val NIGHT_START_HOUR = 22
-
-    /** 夜间时段终点（不含）：次日 06:00。 */
-    const val NIGHT_END_HOUR = 6
-
-    /** 当前本地时间是否落在夜间时段内（22:00 – 次日 06:00）。 */
-    fun isNight(now: Calendar = Calendar.getInstance()): Boolean {
-        val hour = now.get(Calendar.HOUR_OF_DAY)
-        return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR
-    }
 }

@@ -1012,7 +1012,7 @@ class AppRuntime(context: Context) {
     // ---------------- 背景主题 ----------------
     //
     // 主题按「明暗」分成两个槽位：浅色槽存浅色主题，深色槽存深色主题。
-    // 外观模式（跟随系统 / 始终浅色 / 始终深色 / 自由）只决定「现在取哪个槽」，
+    // 外观模式（跟随系统 / 始终浅色 / 始终深色）只决定「现在取哪个槽」，
     // 具体取哪套由 ThemeResolver 统一推导，这里只负责读写偏好。
 
     /**
@@ -1044,29 +1044,6 @@ class AppRuntime(context: Context) {
     fun setDarkThemeId(id: String) {
         val safe = ThemeResolver.safeDark(id)
         namingPrefs.edit().putString("dark_theme", safe.id).apply()
-    }
-
-    /**
-     * 保存用户选的主题：按主题自身的明暗落到对应槽位。
-     *
-     * UI 只调这一个方法，不需要自己判断「这套该进哪个槽」——
-     * 日间主题 / 视频里的春夏秋冬季进浅色槽，夜间主题 / 星空视频进深色槽。
-     */
-    fun saveThemeChoice(id: String) {
-        val theme = SeasonThemes.byId(id)
-        if (theme.night) setDarkThemeId(theme.id) else setLightThemeId(theme.id)
-    }
-
-    /**
-     * 夜间时段（22:00–06:00）强制深色，默认开，只在「自由模式」下生效。
-     *
-     * 前面几版是「夜间自动切星空」，现在并进外观模式体系：跟随系统时明暗完全交给手机，
-     * 自由模式才提供「到点自动转深色」这一层覆盖。
-     */
-    fun nightThemeAuto(): Boolean = namingPrefs.getBoolean("night_theme_auto", true)
-
-    fun setNightThemeAuto(enabled: Boolean) {
-        namingPrefs.edit().putBoolean("night_theme_auto", enabled).apply()
     }
 
     // ---------------- 相伴卡背景 ----------------

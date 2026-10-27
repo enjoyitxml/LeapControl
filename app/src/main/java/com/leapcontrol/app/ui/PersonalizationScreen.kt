@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,11 +26,8 @@ import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -76,12 +72,14 @@ private enum class ThemeTab(val label: String, val themes: List<SeasonTheme>) {
 
 /**
  * 「个性化」页（从「我的」进入，也可由首页顶部「皮肤」按钮直达）：
- *  - 外观模式：跟随系统 / 始终浅色 / 始终深色 / 自由模式（四选一，决定明暗与可选主题）
+ *  - 外观模式：跟随系统 / 始终浅色 / 始终深色（三选一，决定明暗与可选主题）
  *  - 主题中心：日间 / 夜间 / 视频 三个 tab，共 25 套
- *  - 夜间时段强制深色（仅自由模式）
  *  - 相伴卡背景：6 套内置图
  *
  * 缩略图直接用 [ThemeSwatch] 画真实场景，和首页看到的是同一套绘制代码。
+ *
+ * 所有点击都交给 [ThemeResolver.pick] 算结果，本页只负责把结果画出来、
+ * 把该说的话说一句 —— 规则不在这里分叉，避免改一处漏一处。
  */
 @Composable
 fun PersonalizationScreen(
@@ -92,10 +90,7 @@ fun PersonalizationScreen(
     darkThemeId: String,
     activeThemeId: String,
     systemDark: Boolean,
-    darkNow: Boolean,
-    onPickTheme: (String) -> Unit,
-    nightAuto: Boolean,
-    onNightAutoChange: (Boolean) -> Unit,
+    onApplyPick: (ThemeResolver.Pick) -> Unit,
     onBack: () -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -103,17 +98,10 @@ fun PersonalizationScreen(
     val activeTheme = SeasonThemes.byId(activeThemeId)
     // 进页面直接落在「当前生效主题」所在的分类上，不用先自己找
     var tab by remember { mutableStateOf(ThemeTab.entries.first { activeTheme in it.themes }) }
-    // 跟随系统下点了明暗相反的主题：先记住它，等用户确认「是否退出跟随」
-    var pendingFollowExit by remember { mutableStateOf<SeasonTheme?>(null) }
     // 切到「始终浅色 / 始终深色」后，如果当前 tab 整组都不可选，自动挪到能用的那一组
     LaunchedEffect(mode) {
         val usable = tab.themes.any { ThemeResolver.canPick(mode, it) }
-        if (!usable) {
-            tab = when (mode) {
-                AppearanceMode.DARK -> ThemeTab.NIGHT
-                else -> ThemeTab.DAY
-            }
-        }
+        if (!usable) tab = if (mode == AppearanceMode.DARK) ThemeTab.NIGHT else ThemeTab.DAY
     }
 
     Column(
@@ -150,7 +138,18 @@ fun PersonalizationScreen(
         ) {
             SettingsCard {
                 ThemeTabBar(selected = tab, onSelect = { tab = it })
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(12.dp))
+                // 分类说明：视频主题为什么点一下就变模式、以及「选了另一侧现在看不到效果」，
+                // 都在点之前讲清楚，别让用户以为没反应
+                tabHint(tab, mode, systemDark)?.let { hint ->
+                    Text(
+                        hint,
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
                 ThemePickGrid(
                     themes = tab.themes,
                     lightThemeId = lightThemeId,
@@ -158,30 +157,16 @@ fun PersonalizationScreen(
                     activeThemeId = activeThemeId,
                     mode = mode,
                     onPick = { theme ->
-                        when {
-                            !ThemeResolver.canPick(mode, theme) -> Toast.makeText(
-                                context,
-                                if (theme.night) "「始终浅色」模式下只能选浅色主题"
-                                else "「始终深色」模式下只能选深色主题",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-
-                            // 跟随系统 + 明暗相反的主题：必须先问，应用它就意味着退出跟随
-                            ThemeResolver.needsFollowExitPrompt(mode, systemDark, theme) ->
-                                pendingFollowExit = theme
-
-                            else -> {
-                                onPickTheme(theme.id)
-                                // 自由模式下选的是「另一侧」的主题：不会立刻换皮肤，说一句免得以为没反应
-                                if (theme.night != darkNow) {
-                                    Toast.makeText(
-                                        context,
-                                        "已设为${if (theme.night) "深色" else "浅色"}模式的主题，" +
-                                            "切到${if (theme.night) "深色" else "浅色"}界面时生效",
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                }
-                            }
+                        val result = ThemeResolver.pick(
+                            mode = mode,
+                            systemDark = systemDark,
+                            theme = theme,
+                            lightThemeId = lightThemeId,
+                            darkThemeId = darkThemeId,
+                        )
+                        if (result.hint != ThemeResolver.PickHint.BLOCKED) onApplyPick(result)
+                        pickHintText(result.hint, theme)?.let {
+                            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
                         }
                     },
                 )
@@ -191,21 +176,6 @@ fun PersonalizationScreen(
                     activeThemeId = activeThemeId,
                     lightThemeId = lightThemeId,
                     darkThemeId = darkThemeId,
-                )
-            }
-        }
-
-        // ---- 夜间时段强制深色：只对自由模式有意义 ----
-        if (ThemeResolver.supportsNightOverride(mode)) {
-            Spacer(Modifier.height(12.dp))
-            SettingsCard {
-                SwitchRow(
-                    label = "夜间时段强制深色",
-                    desc = "每天 ${SeasonThemes.NIGHT_START_HOUR}:00 – 次日 " +
-                        "${SeasonThemes.NIGHT_END_HOUR}:00，即使手机是浅色模式也切到深色主题，" +
-                        "用的是上面深色那一套（选择不会被覆盖）",
-                    checked = nightAuto,
-                    onCheckedChange = onNightAutoChange,
                 )
             }
         }
@@ -222,43 +192,35 @@ fun PersonalizationScreen(
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.navigationBarsPadding())
     }
-
-    // ---- 退出跟随确认 ----
-    pendingFollowExit?.let { theme ->
-        val target = if (theme.night) "深色" else "浅色"
-        val systemNow = if (systemDark) "深色" else "浅色"
-        AlertDialog(
-            onDismissRequest = { pendingFollowExit = null },
-            containerColor = C.panelBg,
-            title = { Text("退出「跟随系统」？", color = C.textPrimary) },
-            text = {
-                Text(
-                    "手机当前是$systemNow 模式，而「${theme.label}」是$target 主题。\n\n" +
-                        "应用后会关闭「跟随系统」，外观固定为$target 模式，" +
-                        "之后不再随手机切换。想保留自动切换，可以改用「自由模式」，" +
-                        "那样浅色和深色能各指定一套。",
-                    color = C.textSecondary,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    onPickTheme(theme.id)
-                    onModeChange(ThemeResolver.modeAfterFollowExit(theme))
-                    pendingFollowExit = null
-                }) { Text("应用并切换", color = C.accent) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingFollowExit = null }) {
-                    Text("取消", color = C.textSecondary)
-                }
-            },
-        )
-    }
 }
 
-/** 外观模式的四种模式：2×2 卡片，一眼看全，不用横向挤四个小段。 */
+/** 主题中心的分类说明：只在「会有意外感」的那几种情况下出现。 */
+private fun tabHint(tab: ThemeTab, mode: AppearanceMode, systemDark: Boolean): String? = when {
+    tab == ThemeTab.VIDEO ->
+        "视频主题按深浅成对使用：浅色播春日 / 夏日 / 秋日 / 冬日，深色播星空。" +
+            "选任意一套都会把外观切回「跟随系统」，随手机深浅自动换。"
+    // 锁定模式下这一组里有选不了的主题，提醒一句免得白点
+    tab.themes.any { !ThemeResolver.canPick(mode, it) } ->
+        "当前是「${mode.label}」模式，这里有些主题不适用，点了会提示原因。"
+    tab == ThemeTab.NIGHT && !systemDark ->
+        "手机现在是浅色模式，这里选的主题会在切到深色时生效。"
+    tab == ThemeTab.DAY && systemDark ->
+        "手机现在是深色模式，这里选的主题会在切到浅色时生效。"
+    else -> null
+}
+
+/** 选完主题之后那句话：只在「界面没按预期变化」或「模式被改了」时需要说。 */
+private fun pickHintText(hint: ThemeResolver.PickHint, theme: SeasonTheme): String? = when (hint) {
+    ThemeResolver.PickHint.NONE -> null
+    ThemeResolver.PickHint.OTHER_SIDE ->
+        "已设为${if (theme.night) "深色" else "浅色"}界面的主题，切到${if (theme.night) "深色" else "浅色"}时生效"
+    ThemeResolver.PickHint.VIDEO_FOLLOWED ->
+        "视频主题自带深浅搭配，外观已切换为「跟随系统」"
+    ThemeResolver.PickHint.BLOCKED ->
+        if (theme.night) "「始终浅色」模式下只能选浅色主题" else "「始终深色」模式下只能选深色主题"
+}
+
+/** 外观模式的三种模式：一行三块，宽高一致，一眼看全。 */
 @Composable
 private fun AppearanceModeCards(
     mode: AppearanceMode,
@@ -269,59 +231,46 @@ private fun AppearanceModeCards(
         Triple(AppearanceMode.SYSTEM, "跟随系统", Icons.Filled.BrightnessAuto),
         Triple(AppearanceMode.LIGHT, "始终浅色", Icons.Filled.LightMode),
         Triple(AppearanceMode.DARK, "始终深色", Icons.Filled.DarkMode),
-        Triple(AppearanceMode.FREE, "自由模式", Icons.Filled.Tune),
     )
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items.chunked(2).forEach { row ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items.forEach { (m, label, icon: ImageVector) ->
+            val selected = m == mode
+            val shape = RoundedCornerShape(12.dp)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(58.dp)
+                    .clip(shape)
+                    .background(
+                        if (selected) C.accent.copy(alpha = 0.12f) else C.iconBg,
+                        shape,
+                    )
+                    .border(
+                        if (selected) 1.5.dp else 0.dp,
+                        if (selected) C.accent else Color.Transparent,
+                        shape,
+                    )
+                    .clickable { onModeChange(m) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
-                row.forEach { (m, label, icon: ImageVector) ->
-                    val selected = m == mode
-                    val shape = RoundedCornerShape(12.dp)
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                            .clip(shape)
-                            .background(
-                                if (selected) C.accent.copy(alpha = 0.12f) else C.iconBg,
-                                shape,
-                            )
-                            .border(
-                                if (selected) 1.5.dp else 0.dp,
-                                if (selected) C.accent else Color.Transparent,
-                                shape,
-                            )
-                            .clickable { onModeChange(m) }
-                            .padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            icon,
-                            contentDescription = null,
-                            tint = if (selected) C.accent else C.textSecondary,
-                            modifier = Modifier.size(17.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            label,
-                            color = if (selected) C.accent else C.textPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        )
-                        if (selected) {
-                            Spacer(Modifier.weight(1f))
-                            Icon(
-                                Icons.Filled.Check,
-                                contentDescription = null,
-                                tint = C.accent,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        }
-                    }
-                }
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = if (selected) C.accent else C.textSecondary,
+                    modifier = Modifier.size(17.dp),
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    label,
+                    color = if (selected) C.accent else C.textPrimary,
+                    fontSize = 11.5.sp,
+                    maxLines = 1,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                )
             }
         }
     }
@@ -330,15 +279,14 @@ private fun AppearanceModeCards(
 /** 当前模式的行为说明，避免用户靠猜。 */
 private fun appearanceHint(mode: AppearanceMode): String = when (mode) {
     AppearanceMode.SYSTEM ->
-        "明暗跟着手机的深色模式走，白天用浅色那一套、夜里用深色那一套，都随手机自动切。" +
-            "在浅色下选了深色主题会先问你 —— 应用它就要关掉跟随。"
+        "明暗跟着手机的深色模式走：白天用浅色那一套、夜里用深色那一套，" +
+            "两套各自选一次就好，之后随手机自动切换。"
     AppearanceMode.LIGHT ->
-        "界面固定浅色，只能选浅色主题（日间 10 套 + 视频里的春日/夏日/秋日/冬日）。"
+        "界面固定浅色，只能选日间主题（10 套）。视频主题例外：它自带深浅搭配，" +
+            "选中会切回「跟随系统」。"
     AppearanceMode.DARK ->
-        "界面固定深色，只能选深色主题（夜间 10 套 + 星空视频）。"
-    AppearanceMode.FREE ->
-        "明暗仍跟手机走，但浅色和深色各用哪套由你定，两边互不影响，" +
-            "选主题不会退出跟随。"
+        "界面固定深色，只能选夜间主题（10 套）。视频主题例外：它自带深浅搭配，" +
+            "选中会切回「跟随系统」。"
 }
 
 /** 主题中心顶部的三分类 tab（胶囊分段，选中白底浮起）。 */
@@ -399,7 +347,7 @@ private fun ThemeSlotSummary(
     val detail = when (mode) {
         AppearanceMode.LIGHT -> "浅色 → $light"
         AppearanceMode.DARK -> "深色 → $dark"
-        AppearanceMode.SYSTEM, AppearanceMode.FREE -> "浅色 → $light　·　深色 → $dark"
+        AppearanceMode.SYSTEM -> "浅色 → $light　·　深色 → $dark"
     }
     Column {
         Text(
