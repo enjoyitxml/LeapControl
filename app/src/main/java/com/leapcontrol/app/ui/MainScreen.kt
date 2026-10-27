@@ -41,6 +41,7 @@ import androidx.core.view.WindowCompat
 import com.leapcontrol.app.AppearanceMode
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.R
+import com.leapcontrol.app.UpdateCheckResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 
@@ -163,9 +164,9 @@ fun MainScreen(
     }
     // 启动后检测一次 GitHub 更新；确有新版本且未对该版本选择「不再提醒」才弹窗
     LaunchedEffect(Unit) {
-        val info = runCatching { runtime.checkForUpdate() }.getOrNull()
-        if (info != null && info.version != runtime.dismissedVersion()) {
-            pendingUpdate = info
+        val result = runCatching { runtime.checkForUpdate() }.getOrNull()
+        if (result is UpdateCheckResult.Newer && result.info.version != runtime.dismissedVersion()) {
+            pendingUpdate = result.info
             showUpdateDialog = true
         }
     }

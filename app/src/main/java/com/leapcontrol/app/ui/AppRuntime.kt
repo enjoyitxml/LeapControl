@@ -31,6 +31,7 @@ import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.ShumeiSecurityManager
 import com.leapcontrol.app.TrunkState
 import com.leapcontrol.app.TrunkStateMapper
+import com.leapcontrol.app.UpdateCheckResult
 import com.leapcontrol.app.Vehicle
 import com.leapcontrol.app.VehicleChargePlan
 import com.leapcontrol.app.VehicleLocationDomain
@@ -422,20 +423,22 @@ class AppRuntime(context: Context) {
 
     /**
      * 拉取 GitHub 最新 Release 并与当前版本比较。
-     * 确有更新时填充 [_updateInfo] 并返回；无网络 / 解析失败 / 已是最新都返回 null 并清空。
+     *
+     * 返回三态而不是单纯的「有无更新」：检测失败时必须让调用方能区别对待，
+     * 否则界面会把「网络不通」也显示成「已是最新」，用户无从判断功能是否正常。
      */
-    suspend fun checkForUpdate(): AppUpdateInfo? = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdate(): UpdateCheckResult = withContext(Dispatchers.IO) {
         val latest = runCatching { GitHubUpdate.latestRelease() }.getOrNull() ?: run {
             _updateInfo.value = null
-            return@withContext null
+            return@withContext UpdateCheckResult.Failed
         }
         val newer = runCatching { GitHubUpdate.isNewer(latest.version, currentVersion()) }.getOrDefault(false)
         if (newer) {
             _updateInfo.value = latest
-            latest
+            UpdateCheckResult.Newer(latest)
         } else {
             _updateInfo.value = null
-            null
+            UpdateCheckResult.UpToDate
         }
     }
 

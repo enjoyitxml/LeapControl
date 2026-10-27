@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.AppUpdateInfo
+import com.leapcontrol.app.UpdateCheckResult
 import com.leapcontrol.app.AppearanceMode
 import com.leapcontrol.app.R
 import kotlinx.coroutines.launch
@@ -158,6 +159,8 @@ fun AboutScreen(
     var checkingUpdate by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    // 上一次手动检查是否「失败」（网络 / 接口异常），与「已是最新」分开反馈
+    var checkFailed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Column(
@@ -179,15 +182,11 @@ fun AboutScreen(
             // 检查更新：红点 + 手动检查 + 弹窗
             ClickRow(
                 title = "检查更新",
-                desc = if (checkingUpdate) {
-                    "检查中…"
-                } else {
-                    val info = updateInfo
-                    if (info != null) {
-                        "发现新版本 v${info.version}，点击前往下载"
-                    } else {
-                        "当前已是最新版本（v${runtime.currentVersion()}）"
-                    }
+                desc = when {
+                    checkingUpdate -> "检查中…"
+                    checkFailed -> "检查失败，请检查网络后重试"
+                    updateInfo != null -> "发现新版本 v${updateInfo?.version}，点击前往下载"
+                    else -> "当前已是最新版本（v${runtime.currentVersion()}）"
                 },
                 iconRes = R.drawable.ic_system_update,
                 showDot = updateInfo != null,
@@ -195,11 +194,16 @@ fun AboutScreen(
                 if (!checkingUpdate) {
                     scope.launch {
                         checkingUpdate = true
-                        val info = runCatching { runtime.checkForUpdate() }.getOrNull()
+                        checkFailed = false
+                        val result = runCatching { runtime.checkForUpdate() }.getOrNull()
                         checkingUpdate = false
-                        if (info != null) {
-                            pendingUpdate = info
-                            showUpdateDialog = true
+                        when (result) {
+                            is UpdateCheckResult.Newer -> {
+                                pendingUpdate = result.info
+                                showUpdateDialog = true
+                            }
+                            UpdateCheckResult.UpToDate -> Unit
+                            else -> checkFailed = true
                         }
                     }
                 }
