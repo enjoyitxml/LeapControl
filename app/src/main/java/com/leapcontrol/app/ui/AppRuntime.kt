@@ -1,12 +1,17 @@
 package com.leapcontrol.app.ui
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.Uri
 import com.leapcontrol.app.AmapPoi
+import com.leapcontrol.app.AppUpdateInfo
+import com.leapcontrol.app.BuildConfig
+import com.leapcontrol.app.GitHubUpdate
 import com.leapcontrol.app.AmapWebApi
 import com.leapcontrol.app.ApiException
 import com.leapcontrol.app.Commands
@@ -199,10 +204,10 @@ class AppRuntime(context: Context) {
         .ifEmpty { session.selectedNickname.trim() }
         .ifEmpty { "我的零跑" }
 
-    // 控车二次确认（指纹 / 密码防误触）：默认开启
+    // 控车二次确认（应用内弹窗确认，防误触）：默认开启
     private val securityPrefs = appContext.getSharedPreferences("leapcontrol_security", Context.MODE_PRIVATE)
 
-    /** 主界面向车端下发控车指令前，是否需要指纹 / 密码二次确认（默认开启）。 */
+    /** 主界面向车端下发控车指令前，是否需要二次确认（应用内弹窗，默认开启）。 */
     fun biometricConfirmEnabled(): Boolean =
         securityPrefs.getBoolean("biometric_confirm", true)
 
@@ -245,13 +250,6 @@ class AppRuntime(context: Context) {
         if (key.isBlank() || keyword.isBlank()) return@withContext emptyList()
         runCatching { AmapWebApi.searchPoi(key, keyword.trim()) }.getOrDefault(emptyList())
     }
-
-    /** 逆地理编码：车端经纬度（GCJ-02）→ 中文地址。无 Key 时返回 null。开源接口 23。 */
-    suspend fun reverseGeocodeLocation(latitude: Double, longitude: Double): String? =
-        withContext(Dispatchers.IO) {
-            if (!hasAmapKey()) return@withContext null
-            runCatching { AmapWebApi.reverseGeocode(amapKey(), latitude, longitude) }.getOrDefault(null)
-        }
 
     /** 首页控车按钮顺序（按 VIN 独立存储）。 */
     fun controlLayout(): List<String> {
@@ -404,6 +402,53 @@ class AppRuntime(context: Context) {
     private val _capabilities = MutableStateFlow(VehicleCapabilities.EMPTY)
     /** 当前车辆已识别到的可选配置（粘滞 + 持久化）。 */
     val capabilities: StateFlow<VehicleCapabilities> = _capabilities.asStateFlow()
+
+    // ---------------- 版本更新检测（GitHub Releases） ----------------
+
+    private val updatePrefs = appContext.getSharedPreferences("leapcontrol_update", Context.MODE_PRIVATE)
+
+    private val _updateInfo = MutableStateFlow<AppUpdateInfo?>(null)
+    /** 检测到的可用更新（无更新 / 检测失败时为空）。设置页红点据此显示。 */
+    val updateInfo: StateFlow<AppUpdateInfo?> = _updateInfo.asStateFlow()
+
+    /** 当前已安装的版本号（取自构建配置，避免与 build.gradle.kts 脱节）。 */
+    fun currentVersion(): String = BuildConfig.VERSION_NAME
+
+    /** 用户选择「不再提醒」的版本（空表示从未忽略）。 */
+    fun dismissedVersion(): String? = updatePrefs.getString("dismissed_version", null)
+    fun setDismissedVersion(version: String) {
+        updatePrefs.edit().putString("dismissed_version", version).apply()
+    }
+
+    /**
+     * 拉取 GitHub 最新 Release 并与当前版本比较。
+     * 确有更新时填充 [_updateInfo] 并返回；无网络 / 解析失败 / 已是最新都返回 null 并清空。
+     */
+    suspend fun checkForUpdate(): AppUpdateInfo? = withContext(Dispatchers.IO) {
+        val latest = runCatching { GitHubUpdate.latestRelease() }.getOrNull() ?: run {
+            _updateInfo.value = null
+            return@withContext null
+        }
+        val newer = runCatching { GitHubUpdate.isNewer(latest.version, currentVersion()) }.getOrDefault(false)
+        if (newer) {
+            _updateInfo.value = latest
+            latest
+        } else {
+            _updateInfo.value = null
+            null
+        }
+    }
+
+    /** 跳转到外部链接（GitHub 发布页 / APK 下载）。 */
+    fun openExternal(url: String) {
+        runCatching {
+            appContext.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+        }
+    }
 
     // ---------------- 车况快照（跨页面 / 跨 Tab 保持） ----------------
     //

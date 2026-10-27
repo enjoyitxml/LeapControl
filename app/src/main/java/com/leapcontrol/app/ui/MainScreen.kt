@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.darkColorScheme
@@ -36,6 +39,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import com.leapcontrol.app.AppearanceMode
+import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -110,6 +114,9 @@ fun MainScreen(
     // 首页是否停在「主界面」（打开充电中心 / 空调 / 体检等二级页时为 false）。
     // 动态背景视频只在零控首页主界面播放，其余界面一律用主题色渐变。
     var homeOnMainPage by remember { mutableStateOf(true) }
+    // 车模是否滑出视口：HomeScreen 通过 onCarModelGoneChange 上报。
+    // 车模消失后视频背景也要跟着隐去、换成纯色，避免画面细节干扰下方文字，提高可读性。
+    var carModelGone by remember { mutableStateOf(false) }
     var appearance by remember { mutableStateOf(runtime.appearanceMode()) }
     // 动态背景：视频开关与声音开关。设置页改完后回到首页要立刻生效，
     // 所以状态提在这里持有，而不是让设置页自己去读一次就不变了
@@ -120,6 +127,9 @@ fun MainScreen(
     var resumed by remember { mutableStateOf(true) }
     // 四季背景提到根布局：状态栏、Dock、导航条区域都透出同一套渐变
     var seasonId by remember { mutableStateOf(runtime.seasonThemeId()) }
+    // 版本更新弹窗：检测到 GitHub 新版本且未忽略该版本时，启动后自动弹出
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
 
     // ---- 夜间自动主题 ----
     // 每 30 秒复核一次当前时间，跨过 22:00 / 06:00 时立刻生效，不必等用户重启 App。
@@ -150,6 +160,14 @@ fun MainScreen(
     }
     LaunchedEffect(Unit) {
         ForegroundSignal.pauseEvents.collect { resumed = false }
+    }
+    // 启动后检测一次 GitHub 更新；确有新版本且未对该版本选择「不再提醒」才弹窗
+    LaunchedEffect(Unit) {
+        val info = runCatching { runtime.checkForUpdate() }.getOrNull()
+        if (info != null && info.version != runtime.dismissedVersion()) {
+            pendingUpdate = info
+            showUpdateDialog = true
+        }
     }
 
     val view = LocalView.current
@@ -268,58 +286,81 @@ fun MainScreen(
                 // 视频层「常驻」组合、不随切页 / 进二级页卸载：用 alpha 显隐 + paused 控制播放，
                 // 切回首页时画面连续、不会从头起播闪烁一下（我的页、设置/个性化/关于、
                 // 以及首页二级页不显示视频，纯主题色渐变，靠 alpha=0 隐藏、暂停解码省电）。
-                val onHomeMain = videoEnabled && tab == 0 && homeOnMainPage
+                //
+                // 车模滑出视口时的背景切换做「交叉淡入淡出」：视频 alpha 渐隐到 0 的同时，
+                // 纯色背景层 alpha 渐入到 1；雾化遮罩 / 下缘渐隐跟随视频一起渐隐，避免硬切突兀。
+                val videoActive = videoEnabled && tab == 0 && homeOnMainPage && !carModelGone
+                val videoAlpha by animateFloatAsState(
+                    targetValue = if (videoActive) 1f else 0f,
+                    animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+                    label = "videoAlpha",
+                )
+                // 纯色背景层：车模滑出后渐入；滑回时渐出，与视频形成柔和交叉过渡
+                val solidAlpha by animateFloatAsState(
+                    targetValue = if (carModelGone) 1f else 0f,
+                    animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+                    label = "solidAlpha",
+                )
                 if (videoEnabled) {
+                    // 视频层：始终挂载（carModelGone 时 alpha 渐隐到 0 而非直接卸载，保证淡出连续）
                     Box(
                         modifier = Modifier
                             .matchParentSize()
-                            .alpha(if (onHomeMain) 1f else 0f)
+                            .alpha(videoAlpha),
                     ) {
                         SeasonVideoBackground(
                             seasonId = activeSeasonId,
                             muted = !videoSound,
-                            // 不在前台或不在首页主界面都暂停解码；切回时从当前帧续播，不闪。
-                            paused = !resumed || !onHomeMain,
+                            // 不在前台、不在首页主界面、或车模已滑出视口都暂停解码；
+                            // 切回时从当前帧续播，不闪。
+                            paused = !resumed || !videoActive,
                             modifier = Modifier.matchParentSize(),
                         )
                     }
-                }
-                // 雾化遮罩 + 下缘渐隐只在首页主界面绘制（无播放器的静态层，切页重建无副作用）
-                if (onHomeMain) {
-                    // ---- 雾化遮罩：以车模正中心为圆心，向外圆弧发散 ----
-                    // 圆心处完全通透（车模不被压灰），越往四周越浓，屏幕顶端最浓。
-                    // 取主题渐变的最顶色，视频是「淡出进背景」而不是被压上一块别的颜色。
-                    val veilColor = season.gradient(dark).first()
-                    val veilRadiusY = with(density) { HEADER_VEIL_RADIUS_Y.toPx() }
-                    val veilCenterY = statusBarTopPx + with(density) {
-                        (HEADER_VEIL_CONTENT_HEIGHT + CAR_ARTWORK_HEIGHT / 2).toPx()
-                    }
-                    val veilBrush = remember(veilColor, veilRadiusY, veilCenterY, season.veilAlphaScale) {
-                        radialVeilBrush(veilColor, veilCenterY, veilRadiusY, season.veilAlphaScale)
-                    }
+                    // 纯色背景层：车模滑出后交叉淡入，盖住根渐变，文字压在干净底色上更清晰
                     Box(
                         modifier = Modifier
                             .matchParentSize()
-                            .background(veilBrush),
+                            .alpha(solidAlpha)
+                            .background(season.gradient(dark).last()),
                     )
-                    // 下缘渐隐回主题色：主景留在画面上部，从快捷控件上沿（约 38%）开始压暗，
-                    // 到控件区已接近纯色 —— 文字与组件压在干净底色上，不会被画面细节吃掉。
-                    val scrim = season.gradient(dark).last()
-                    val scrimScale = season.scrimAlphaScale
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    0.00f to Color.Transparent,
-                                    0.38f to Color.Transparent,
-                                    0.50f to scrim.copy(alpha = 0.55f * scrimScale),
-                                    0.62f to scrim.copy(alpha = 0.85f * scrimScale),
-                                    0.78f to scrim.copy(alpha = 0.95f * scrimScale),
-                                    1.00f to scrim.copy(alpha = 0.98f * scrimScale),
+                    // 雾化遮罩 + 下缘渐隐：仅视频显示时才有意义，跟随 videoAlpha 一起渐隐
+                    Box(Modifier.matchParentSize().alpha(videoAlpha)) {
+                        // ---- 雾化遮罩：以车模正中心为圆心，向外圆弧发散 ----
+                        // 圆心处完全通透（车模不被压灰），越往四周越浓，屏幕顶端最浓。
+                        // 取主题渐变的最顶色，视频是「淡出进背景」而不是被压上一块别的颜色。
+                        val veilColor = season.gradient(dark).first()
+                        val veilRadiusY = with(density) { HEADER_VEIL_RADIUS_Y.toPx() }
+                        val veilCenterY = statusBarTopPx + with(density) {
+                            (HEADER_VEIL_CONTENT_HEIGHT + CAR_ARTWORK_HEIGHT / 2).toPx()
+                        }
+                        val veilBrush = remember(veilColor, veilRadiusY, veilCenterY, season.veilAlphaScale) {
+                            radialVeilBrush(veilColor, veilCenterY, veilRadiusY, season.veilAlphaScale)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .background(veilBrush),
+                        )
+                        // 下缘渐隐回主题色：主景留在画面上部，从快捷控件上沿（约 38%）开始压暗，
+                        // 到控件区已接近纯色 —— 文字与组件压在干净底色上，不会被画面细节吃掉。
+                        val scrim = season.gradient(dark).last()
+                        val scrimScale = season.scrimAlphaScale
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        0.00f to Color.Transparent,
+                                        0.38f to Color.Transparent,
+                                        0.50f to scrim.copy(alpha = 0.55f * scrimScale),
+                                        0.62f to scrim.copy(alpha = 0.85f * scrimScale),
+                                        0.78f to scrim.copy(alpha = 0.95f * scrimScale),
+                                        1.00f to scrim.copy(alpha = 0.98f * scrimScale),
+                                    )
                                 )
-                            )
-                    )
+                        )
+                    }
                 }
                 Scaffold(
                     containerColor = Color.Transparent,
@@ -356,6 +397,7 @@ fun MainScreen(
                                     seasonId = it
                                 },
                                 onMainPageChange = { homeOnMainPage = it },
+                                onCarModelGoneChange = { carModelGone = it },
                             )
 
                             else -> ProfileScreen(
@@ -366,6 +408,23 @@ fun MainScreen(
                         }
                     }
                 }
+            }
+
+            // ---- 版本更新提醒弹窗（覆盖全局，最高层级）----
+            if (showUpdateDialog && pendingUpdate != null) {
+                UpdateDialog(
+                    info = pendingUpdate!!,
+                    currentVersion = runtime.currentVersion(),
+                    onOpenDownload = {
+                        runtime.openExternal(pendingUpdate!!.htmlUrl)
+                        showUpdateDialog = false
+                    },
+                    onDismiss = { showUpdateDialog = false },
+                    onNeverAgain = {
+                        runtime.setDismissedVersion(pendingUpdate!!.version)
+                        showUpdateDialog = false
+                    },
+                )
             }
         }
     }

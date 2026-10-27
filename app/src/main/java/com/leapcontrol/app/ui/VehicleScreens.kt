@@ -1,5 +1,6 @@
 package com.leapcontrol.app.ui
 
+import com.leapcontrol.app.VehicleCapabilities
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -555,13 +556,14 @@ fun ScheduledAcScreen(
 @Composable
 fun VehicleHealthScreen(
     status: CarStatus?,
+    capabilities: VehicleCapabilities = VehicleCapabilities.EMPTY,
     busy: String? = null,
     onFix: (String) -> Unit,
     onRefresh: () -> Unit,
     onBack: () -> Unit,
 ) {
     val C = LocalAppColors.current
-    val report = remember(status) { VehicleHealthDiagnostics.evaluate(status) }
+    val report = remember(status, capabilities) { VehicleHealthDiagnostics.evaluate(status, capabilities) }
 
     Column(
         modifier = Modifier

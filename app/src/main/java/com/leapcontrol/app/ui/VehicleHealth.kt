@@ -1,5 +1,7 @@
 package com.leapcontrol.app.ui
 
+import com.leapcontrol.app.VehicleCapabilities
+
 /**
  * 车辆体检：基于当前车况快照 [CarStatus] 做规则判断，产出可读的体检报告。
  *
@@ -65,7 +67,7 @@ object VehicleHealthDiagnostics {
     /** 车内温度偏高提醒阈值（夏季暴晒后常见）。 */
     private const val INTERIOR_TEMP_HOT = 40.0
 
-    fun evaluate(status: CarStatus?): VehicleHealthReport {
+    fun evaluate(status: CarStatus?, capabilities: VehicleCapabilities = VehicleCapabilities.EMPTY): VehicleHealthReport {
         if (status == null) {
             return VehicleHealthReport(
                 score = 0,
@@ -84,7 +86,7 @@ object VehicleHealthDiagnostics {
 
         val powertrain = evaluatePowertrain(status)
         val chassis = evaluateChassis(status)
-        val body = evaluateBody(status)
+        val body = evaluateBody(status, capabilities)
         val climate = evaluateClimate(status)
         val systems = listOf(powertrain, chassis, body, climate)
 
@@ -259,7 +261,7 @@ object VehicleHealthDiagnostics {
 
     // ---------------- 3. 车身与门锁 ----------------
 
-    private fun evaluateBody(status: CarStatus): HealthSystemReport {
+    private fun evaluateBody(status: CarStatus, capabilities: VehicleCapabilities): HealthSystemReport {
         val items = mutableListOf<HealthCheckItem>()
 
         // 车锁
@@ -348,18 +350,22 @@ object VehicleHealthDiagnostics {
                 level = HealthLevel.GOOD,
             )
         }
-        status.sunroofOpen?.let { open ->
-            items += if (open) HealthCheckItem(
-                title = "天窗未关",
-                detail = "天窗处于开启状态",
-                level = HealthLevel.WARNING,
-                fixCommand = ControlActions.resolveCommand("sunroof", status),
-                fixLabel = "关闭天窗",
-            ) else HealthCheckItem(
-                title = "天窗",
-                detail = "已关闭",
-                level = HealthLevel.GOOD,
-            )
+        // 天窗：仅在车辆确实配备可开启天窗时展示。未选装车网关仍会下发 1718 的 SNA 占位，
+        // 能力识别阶段已用值域判定将其排除（capabilities.sunroof = false），此处据此隐藏。
+        if (capabilities.sunroof) {
+            status.sunroofOpen?.let { open ->
+                items += if (open) HealthCheckItem(
+                    title = "天窗未关",
+                    detail = "天窗处于开启状态",
+                    level = HealthLevel.WARNING,
+                    fixCommand = ControlActions.resolveCommand("sunroof", status),
+                    fixLabel = "关闭天窗",
+                ) else HealthCheckItem(
+                    title = "天窗",
+                    detail = "已关闭",
+                    level = HealthLevel.GOOD,
+                )
+            }
         }
         status.sunshadeOpen?.let { open ->
             items += HealthCheckItem(
@@ -369,25 +375,27 @@ object VehicleHealthDiagnostics {
             )
         }
 
-        // 哨兵模式（关闭时给建议，不算异常）
-        items += when (status.sentryOn) {
-            true -> HealthCheckItem(
-                title = "哨兵模式",
-                detail = "已开启，停车期间可记录异常",
-                level = HealthLevel.GOOD,
-            )
-            false -> HealthCheckItem(
-                title = "哨兵模式未开启",
-                detail = "建议在陌生或露天停车场地开启哨兵模式",
-                level = HealthLevel.WARNING,
-                fixCommand = ControlActions.resolveCommand("sentry", status),
-                fixLabel = "开启哨兵",
-            )
-            null -> HealthCheckItem(
-                title = "哨兵模式",
-                detail = "当前车况未上报哨兵状态",
-                level = HealthLevel.GOOD,
-            )
+        // 哨兵模式：仅在车辆具备哨兵能力时展示（无该硬件的车网关不下发信号，能力识别为 false）。
+        if (capabilities.sentry) {
+            items += when (status.sentryOn) {
+                true -> HealthCheckItem(
+                    title = "哨兵模式",
+                    detail = "已开启，停车期间可记录异常",
+                    level = HealthLevel.GOOD,
+                )
+                false -> HealthCheckItem(
+                    title = "哨兵模式未开启",
+                    detail = "建议在陌生或露天停车场地开启哨兵模式",
+                    level = HealthLevel.WARNING,
+                    fixCommand = ControlActions.resolveCommand("sentry", status),
+                    fixLabel = "开启哨兵",
+                )
+                null -> HealthCheckItem(
+                    title = "哨兵模式",
+                    detail = "当前车况未上报哨兵状态",
+                    level = HealthLevel.GOOD,
+                )
+            }
         }
 
         return systemReport("车身与门锁", items)

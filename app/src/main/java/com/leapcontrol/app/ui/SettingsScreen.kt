@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,7 +55,17 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import com.leapcontrol.app.AppearanceMode
+import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.R
 import com.leapcontrol.app.tiles.QuickTiles
@@ -83,6 +94,11 @@ fun SettingsScreen(
     var showAmapKey by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmGate by remember { mutableStateOf(runtime.biometricConfirmEnabled()) }
+    // 版本更新：红点 + 手动检查 + 弹窗
+    val updateInfo by runtime.updateInfo.collectAsState()
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
 
     Column(
         modifier = Modifier
@@ -130,9 +146,39 @@ fun SettingsScreen(
                 }
             }
             Spacer(Modifier.height(10.dp))
+            ClickRow(
+                title = "检查更新",
+                desc = if (checkingUpdate) {
+                    "检查中…"
+                } else {
+                    val info = updateInfo
+                    if (info != null) {
+                        "发现新版本 v${info.version}，点击前往下载"
+                    } else {
+                        "当前已是最新版本（v${runtime.currentVersion()}）"
+                    }
+                },
+                iconRes = R.drawable.ic_system_update,
+                showDot = updateInfo != null,
+            ) {
+                if (!checkingUpdate) {
+                    scope.launch {
+                        checkingUpdate = true
+                        val info = runCatching { runtime.checkForUpdate() }.getOrNull()
+                        checkingUpdate = false
+                        if (info != null) {
+                            pendingUpdate = info
+                            showUpdateDialog = true
+                        } else {
+                            message = "已是最新版本（v${runtime.currentVersion()}）"
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
             SwitchRow(
-                label = "指纹/密码二次确认",
-                desc = "主界面下发控车指令前需验证，防误触（控制中心磁贴不受限）",
+                label = "控车二次确认",
+                desc = "主界面下发控车指令前弹窗确认，防误触（控制中心磁贴不受限）",
                 checked = confirmGate,
                 onCheckedChange = {
                     confirmGate = it
@@ -358,6 +404,23 @@ fun SettingsScreen(
             },
         )
     }
+
+    // ---- 版本更新弹窗（手动「检查更新」触发）----
+    if (showUpdateDialog && pendingUpdate != null) {
+        UpdateDialog(
+            info = pendingUpdate!!,
+            currentVersion = runtime.currentVersion(),
+            onOpenDownload = {
+                runtime.openExternal(pendingUpdate!!.htmlUrl)
+                showUpdateDialog = false
+            },
+            onDismiss = { showUpdateDialog = false },
+            onNeverAgain = {
+                runtime.setDismissedVersion(pendingUpdate!!.version)
+                showUpdateDialog = false
+            },
+        )
+    }
 }
 
 // ============================================================================
@@ -416,12 +479,13 @@ fun SwitchRow(
     }
 }
 
-/** 可点击的设置行：左图标（可选）+ 标题 + 说明，右箭头。 */
+/** 可点击的设置行：左图标（可选）+ 标题 + 说明，右箭头；[showDot] 为真时标题右侧显示红点。 */
 @Composable
 fun ClickRow(
     title: String,
     desc: String,
     iconRes: Int? = null,
+    showDot: Boolean = false,
     onClick: () -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -442,8 +506,22 @@ fun ClickRow(
             Spacer(Modifier.width(12.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = C.textPrimary, fontSize = 14.sp)
-            Spacer(Modifier.height(2.dp))
+            if (showDot) {
+                // 红点紧跟标题，提示有更新待处理
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, color = C.textPrimary, fontSize = 14.sp)
+                    Spacer(Modifier.width(7.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(Color(0xFFFF3B30), CircleShape),
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+            } else {
+                Text(title, color = C.textPrimary, fontSize = 14.sp)
+                Spacer(Modifier.height(2.dp))
+            }
             Text(desc, color = C.textSecondary, fontSize = 11.sp, lineHeight = 15.sp)
         }
         Spacer(Modifier.width(10.dp))
@@ -652,26 +730,76 @@ fun AppearanceModeOptions(
     onModeChange: (AppearanceMode) -> Unit,
 ) {
     val C = LocalAppColors.current
-    Text(
-        "默认跟随手机系统；开启系统深色模式后自动切换。",
-        color = C.textSecondary,
-        fontSize = 11.sp,
+    val items = listOf(
+        AppearanceMode.SYSTEM to "系统",
+        AppearanceMode.LIGHT to "浅色",
+        AppearanceMode.DARK to "深色",
     )
-    Spacer(Modifier.height(12.dp))
-    AppearanceMode.entries.forEach { item ->
-        if (item.ordinal > 0) Spacer(Modifier.height(8.dp))
-        OptionRow(
-            label = when (item) {
-                AppearanceMode.SYSTEM -> "跟随系统"
-                AppearanceMode.LIGHT -> "始终浅色"
-                AppearanceMode.DARK -> "始终深色"
-            },
-            desc = when (item) {
-                AppearanceMode.SYSTEM -> "随手机深色模式自动切换（默认）"
-                AppearanceMode.LIGHT -> "不受系统影响，固定使用浅色界面"
-                AppearanceMode.DARK -> "不受系统影响，固定使用深色界面"
-            },
-            selected = mode == item,
-        ) { onModeChange(item) }
+    val selectedIndex = items.indexOfFirst { it.first == mode }.coerceAtLeast(0)
+    // 底衬：卡片底色；滑块：浅色为白、深色为比底衬略亮的灰（iOS 风格浮起）
+    val trackColor = C.cardBg
+    val thumbColor = if (C.isDark) Color(0xFF48484A) else Color.White
+    val selectedText = C.textPrimary
+    val unselectedText = C.textSecondary
+
+    Column(Modifier.fillMaxWidth()) {
+        // 紧凑说明（一行）
+        Text(
+            "跟随系统：随手机深色模式自动切换；浅色/深色：固定界面明暗。",
+            color = C.textSecondary,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+        )
+        Spacer(Modifier.height(10.dp))
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(36.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(trackColor),
+        ) {
+            val density = LocalDensity.current
+            val pad = 3.dp
+            val padPx = with(density) { pad.toPx() }
+            val segW = (maxWidth - pad * 2) / items.size
+            val segWpx = with(density) { segW.toPx() }
+            val animIndex by animateFloatAsState(
+                targetValue = selectedIndex.toFloat(),
+                animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+            )
+            // 浮起滑块（白色胶囊，带柔和投影）
+            Box(
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            x = (padPx + animIndex * segWpx).roundToInt(),
+                            y = padPx.roundToInt(),
+                        )
+                    }
+                    .size(width = segW, height = maxHeight - pad * 2)
+                    .shadow(2.dp, RoundedCornerShape(15.dp))
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(thumbColor),
+            )
+            // 三段文字（各自可点）
+            Row(Modifier.fillMaxSize()) {
+                items.forEachIndexed { i, (m, label) ->
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clickable { onModeChange(m) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (i == selectedIndex) selectedText else unselectedText,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+        }
     }
 }

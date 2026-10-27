@@ -119,6 +119,28 @@ fun ProfileScreen(
                             fontSize = 12.sp,
                         )
                     }
+                    Spacer(Modifier.width(12.dp))
+                    // 退出登录：放在车名容器右侧
+                    Box(
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(LocalAppColors.current.chipBg)
+                            .clickable { scope.launch { runtime.logout(); onLogout() } }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.Logout,
+                                null,
+                                tint = Color(0xFFFF6B6B),
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("退出登录", color = Color(0xFFFF6B6B), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
                 }
             }
 
@@ -156,27 +178,6 @@ fun ProfileScreen(
                 "关于",
                 "版本信息、免责声明与隐私条款",
             ) { onOpenPage(SettingsPage.ABOUT) }
-
-            Spacer(Modifier.height(24.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(LocalAppColors.current.cardBg, RoundedCornerShape(14.dp))
-                    .clickable { scope.launch { runtime.logout(); onLogout() } }
-                    .padding(vertical = 14.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Filled.Logout,
-                        null,
-                        tint = Color(0xFFFF6B6B),
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("退出登录", color = Color(0xFFFF6B6B), fontSize = 14.sp)
-                }
-            }
 
             Spacer(Modifier.height(24.dp))
         }
