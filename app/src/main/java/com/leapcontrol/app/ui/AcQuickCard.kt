@@ -40,11 +40,12 @@ import com.leapcontrol.app.R
 /**
  * 快捷控车下方的「空调概览条」。
  *
- * 版式照设计稿 1:1 还原（稿子 1080×289 的三倍图，折算到 dp）：
- *   - 整条：高 ≈59dp、圆角 8dp、左右内边距 24dp
- *   - 左：设定温度大字 30sp（如「24°」）
- *   - 中：距大字 24dp 的「车内温度 32.5℃」11.5sp 次要文字
- *   - 右：30dp 圆形按钮 + 20dp 四叶风扇
+ * 版式来自设计稿（1080×289 的三倍图，折算到 dp），但高度在实机上偏薄、和上方圆钮不协调，
+ * 所以整条按 ~1.2 倍等比撑高（宽度不变，横向比例不动）：
+ *   - 整条：高 72dp、圆角 8dp、左右内边距 24dp
+ *   - 左：设定温度大字 32sp（如「24°」）
+ *   - 中：距大字 26dp 的「车内温度 32.5℃」12sp 次要文字
+ *   - 右：34dp 圆形按钮 + 22dp 四叶风扇
  *
  * 交互：风扇灰色＝空调关闭，点一下开空调；开启后圆底淡绿、图标变主题绿并持续旋转。
  * 点下去立刻按「意图」点亮（车端 acSwitch 上报有几秒延迟，否则会觉得点了没反应），
@@ -83,7 +84,7 @@ fun AcQuickCard(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 59.dp)
+            .heightIn(min = 72.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(C.cardBg)
             .padding(start = 24.dp, end = 22.dp),
@@ -94,17 +95,17 @@ fun AcQuickCard(
         Text(
             text = if (target != null) "$target°" else "--",
             color = C.textPrimary,
-            fontSize = 30.sp,
+            fontSize = 32.sp,
             fontWeight = FontWeight.Normal,
-            letterSpacing = (-0.5).sp,
+            letterSpacing = (-0.6).sp,
             maxLines = 1,
         )
-        Spacer(Modifier.width(24.dp))
+        Spacer(Modifier.width(26.dp))
         // 中：车内温度
         Text(
             text = "车内温度 $indoor℃",
             color = C.textSecondary,
-            fontSize = 11.5.sp,
+            fontSize = 12.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -112,7 +113,7 @@ fun AcQuickCard(
         // 右：风扇开关
         Box(
             modifier = Modifier
-                .size(30.dp)
+                .size(34.dp)
                 .clip(CircleShape)
                 .background(if (acOn) C.accent.copy(alpha = 0.16f) else fanCircleBg(C.isDark))
                 .clickable(enabled = !busy) {
@@ -131,7 +132,7 @@ fun AcQuickCard(
                     else -> FAN_GRAY
                 },
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(22.dp)
                     .rotate(fanAngle),
             )
         }
