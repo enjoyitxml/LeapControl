@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  手绘铁锹：T 形手柄 + 木柄 + 尖头锹刃。
+  线条是手绘的那种「不直」——控制点刻意左右不对称、端点略微歪一点，
+  描边全部圆头圆角，放大到 38dp 也不会显出机械感。颜色由运行时 tint 上色。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- T 形手柄 -->
+    <path
+        android:pathData="M19.2,6.9C21.4,5.7 25.9,6.0 27.8,7.1"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="2.4" />
+
+    <!-- 木柄：微微左歪 -->
+    <path
+        android:pathData="M23.3,6.4C22.8,12.8 24.0,20.6 23.6,27.2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.3" />
+
+    <!-- 锹刃：上沿一条近乎水平的手绘横线，两侧收成尖头 -->
+    <path
+        android:pathData="M16.2,27.0C19.8,25.6 27.5,25.9 30.9,26.9C30.3,33.5 27.5,39.0 23.6,43.4C19.8,38.8 16.9,33.3 16.2,27.0Z"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="2.4" />
+
+    <!-- 刃面加强筋，浅一档，只画到一半就断，像随手勾的一笔 -->
+    <path
+        android:pathData="M23.6,28.8C23.9,31.2 23.5,33.0 23.6,34.6"
+        android:strokeAlpha="0.45"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.5" />
+</vector>
