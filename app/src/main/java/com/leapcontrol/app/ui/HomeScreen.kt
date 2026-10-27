@@ -141,6 +141,15 @@ import kotlinx.coroutines.launch
 
 /** 最后一格「编辑」按钮的占位 id。 */
 private const val EDIT_CELL = "__edit__"
+
+/**
+ * 首页底部「功能模块区」总开关。
+ *
+ * 当前为 false：模块卡片（胎压/车况/空调/冰箱/里程图…）整体从首页下线，
+ * 但 `ui/HomeModules.kt` 里的实现代码与这里的接线都完整保留、照常参与编译，
+ * 后续按需要逐项恢复时不必重写。整块恢复只需把这里改回 true。
+ */
+private const val SHOW_HOME_MODULES = false
 /** 控车指令下发后，车端上报车况的滞后补偿时间（再拉一次车况让状态收敛）。 */
 private const val AC_SETTLE_DELAY_MS = 3_000L
 
@@ -997,36 +1006,41 @@ fun HomeScreen(
             // ---- 功能模块区（页面最下方）：横向滑动的模块卡 + 指示条 + 自定义按钮 ----
             // 空调 / 座椅 / 胎压 / 里程能耗 / 健康 / 充电 / 定时空调 / 冰箱 / 哨兵 …
             // 全部按「空调卡」的尺寸与圆角渲染，顺序、增删由底部「自定义模块」调整。
-            Spacer(Modifier.height(14.dp))
-            HomeModuleSection(
-                status = currentStatus,
-                energy = energySummary,
-                capabilities = capabilities,
-                callbacks = ModuleCallbacks(
-                    onOpenClimate = { showClimate = true },
-                    onOpenFridge = { showFridge = true },
-                    onOpenTire = { showTire = true },
-                    onAcOn = { ensureConfirmed("开启空调") { runAcCommand(true) } },
-                    onAcOff = { ensureConfirmed("关闭空调") { runAcCommand(false) } },
-                    onToggleFridge = { enable ->
-                        ensureConfirmed(if (enable) "开启车载冰箱" else "关闭车载冰箱") {
-                            val f = currentStatus?.fridge
-                            runFridgeCommand(
-                                com.leapcontrol.app.FridgeControlCommand(
-                                    enable = enable,
-                                    mode = f?.mode ?: com.leapcontrol.app.FridgeMode.COLD,
-                                    temp = f?.temp ?: 4,
-                                    style = f?.style ?: com.leapcontrol.app.FridgeStyle.NORMAL,
-                                ),
-                            )
-                        }
-                    },
-                    acBusy = controlling == "acOn" || controlling == "acOff" || controlling == "acTemp",
-                    onRefreshEnergy = {
-                        scope.launch { runCatching { runtime.refreshMileageEnergy(force = true) } }
-                    },
-                ),
-            )
+            //
+            // 当前由 SHOW_HOME_MODULES 关闭（模块整体下线、代码保留）。接线一并留在 if 内，
+            // 只为保持编译期可校验；改回 true 即可整块恢复。
+            if (SHOW_HOME_MODULES) {
+                Spacer(Modifier.height(14.dp))
+                HomeModuleSection(
+                    status = currentStatus,
+                    energy = energySummary,
+                    capabilities = capabilities,
+                    callbacks = ModuleCallbacks(
+                        onOpenClimate = { showClimate = true },
+                        onOpenFridge = { showFridge = true },
+                        onOpenTire = { showTire = true },
+                        onAcOn = { ensureConfirmed("开启空调") { runAcCommand(true) } },
+                        onAcOff = { ensureConfirmed("关闭空调") { runAcCommand(false) } },
+                        onToggleFridge = { enable ->
+                            ensureConfirmed(if (enable) "开启车载冰箱" else "关闭车载冰箱") {
+                                val f = currentStatus?.fridge
+                                runFridgeCommand(
+                                    com.leapcontrol.app.FridgeControlCommand(
+                                        enable = enable,
+                                        mode = f?.mode ?: com.leapcontrol.app.FridgeMode.COLD,
+                                        temp = f?.temp ?: 4,
+                                        style = f?.style ?: com.leapcontrol.app.FridgeStyle.NORMAL,
+                                    ),
+                                )
+                            }
+                        },
+                        acBusy = controlling == "acOn" || controlling == "acOff" || controlling == "acTemp",
+                        onRefreshEnergy = {
+                            scope.launch { runCatching { runtime.refreshMileageEnergy(force = true) } }
+                        },
+                    ),
+                )
+            }
 
             Spacer(Modifier.height(20.dp))
             }
@@ -1987,8 +2001,11 @@ private fun ControlEditorDialog(
 }
 
 /**
- * 横向滚动提示条：只在内容超出一屏时显示，
- * 滑块宽度 = 可见数 / 总数，位置随 LazyListState 实时跟随。
+ * 横向滚动提示条：只在内容超出一屏时显示。
+ *
+ * 无级（连续）调节：轨道上只有一个滑块，滑块宽度 = 可见比例，
+ * 水平位置按 LazyListState 的实时滚动进度线性跟随 —— 手指滑多少它走多少，
+ * 而不是以前那样「按页切段、到页才跳一下」的两段式。
  */
 @Composable
 internal fun ScrollHintBar(
@@ -1998,36 +2015,46 @@ internal fun ScrollHintBar(
 ) {
     if (itemCount <= visibleCount) return
     val C = LocalAppColors.current
-    // 官方：提示条按「页」分段，当前页深色、其余浅灰，段宽与该页格子数成正比。
-    // 实测总宽约为快捷圆钮直径的 0.46、高约为 0.037（58dp 圆钮 → 约 27dp × 2.1dp），
-    // 段间仅 1px 缝隙，整体居中。
-    val pages = (itemCount + visibleCount - 1) / visibleCount
-    if (pages < 2) return
-    val perPage = (0 until pages).map { i ->
-        minOf(visibleCount, itemCount - i * visibleCount)
-    }
-    val current by remember {
+    // 轨道比原先的分段条略长一点，无级滑动的位移才看得出来（原分段条 26dp）
+    val trackWidth = 36.dp
+    // 滑块宽度与「可见比例」一致；过窄时兜底 9dp，保证始终看得见
+    val thumbWidth = (trackWidth * (visibleCount.toFloat() / itemCount)).coerceAtLeast(9.dp)
+    // 连续进度 = (首个可见项下标 + 该项已滑出的比例) / 最大可滚动格数，取值 0..1
+    val progress by remember(state, itemCount, visibleCount) {
         derivedStateOf {
-            val first = state.layoutInfo.visibleItemsInfo.firstOrNull()?.index ?: 0
-            (first / visibleCount).coerceIn(0, pages - 1)
+            val info = state.layoutInfo
+            val total = info.totalItemsCount
+            val visible = info.visibleItemsInfo
+            if (total == 0 || visible.isEmpty()) return@derivedStateOf 0f
+            // 相邻两项 offset 之差 = 单格步距（含卡片间距），
+            // 用它把像素偏移换算成「格」，间距才不会让进度忽快忽慢
+            val stride = (if (visible.size >= 2) {
+                (visible[1].offset - visible[0].offset).toFloat()
+            } else {
+                visible[0].size.toFloat()
+            }).takeIf { it > 0f } ?: 1f
+            val scrolled = state.firstVisibleItemIndex +
+                state.firstVisibleItemScrollOffset.toFloat() / stride
+            val maxScroll = (total - visibleCount).coerceAtLeast(1)
+            (scrolled / maxScroll).coerceIn(0f, 1f)
         }
     }
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(1.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Box(
+            modifier = Modifier
+                .width(trackWidth)
+                .height(2.5.dp)
+                .clip(CircleShape)
+                .background(C.textPrimary.copy(alpha = 0.22f)),
         ) {
-            perPage.forEachIndexed { index, count ->
-                Box(
-                    modifier = Modifier
-                        .width(26.dp * count / itemCount)
-                        .height(2.5.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (index == current) C.textPrimary else Color(0xFFBEBEBE)
-                        ),
-                )
-            }
+            Box(
+                modifier = Modifier
+                    .offset(x = (trackWidth - thumbWidth) * progress)
+                    .width(thumbWidth)
+                    .fillMaxHeight()
+                    .clip(CircleShape)
+                    .background(C.textPrimary),
+            )
         }
     }
 }
