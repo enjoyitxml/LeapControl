@@ -15,7 +15,6 @@ import com.leapcontrol.app.GitHubUpdate
 import com.leapcontrol.app.AmapWebApi
 import com.leapcontrol.app.ApiException
 import com.leapcontrol.app.Commands
-import com.leapcontrol.app.ControlCommand
 import com.leapcontrol.app.ControlResultPollingPolicy
 import com.leapcontrol.app.FridgeControlCommand
 import com.leapcontrol.app.FridgeMode
@@ -50,7 +49,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
-import java.util.Locale
 
 /** 未设置 4 位控车密码时抛出，由 UI 层弹出输入框。 */
 class NeedPinException : Exception("需要先设置 4 位控车密码")

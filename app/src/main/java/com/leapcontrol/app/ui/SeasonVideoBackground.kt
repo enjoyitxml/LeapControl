@@ -29,10 +29,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.leapcontrol.app.R
-import kotlin.math.max
 
 /** 视频主题 id → 打包在 res/raw 里的循环背景视频。 */
 internal fun seasonVideoResId(seasonId: String): Int = when (seasonId) {

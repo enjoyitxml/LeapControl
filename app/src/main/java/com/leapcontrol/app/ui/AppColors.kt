@@ -2,6 +2,7 @@ package com.leapcontrol.app.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
@@ -130,5 +131,8 @@ val LocalAppColors = staticCompositionLocalOf { lightColors() }
  */
 @Composable
 fun ProvideAppColors(dark: Boolean, accent: Color? = null, content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalAppColors provides appColors(dark, accent), content = content)
+    // 配色表是 data class，值不变时读者不会重组；但这里每次重组都重新计算一遍
+    // mix() 加两次对象构造是白费，用 remember 钉住。
+    val colors = remember(dark, accent) { appColors(dark, accent) }
+    CompositionLocalProvider(LocalAppColors provides colors, content = content)
 }

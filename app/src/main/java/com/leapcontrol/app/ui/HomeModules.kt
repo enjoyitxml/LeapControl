@@ -31,12 +31,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -651,8 +649,13 @@ private fun SevenDayChart(
         }
         return
     }
-    val max = (points.maxOfOrNull { it.km } ?: 0.0).coerceAtLeast(1.0)
-    val labels = points.map { MileageEnergyParser.dayLabel(it.day) }
+    // 最大值与日期标签只跟这份数据有关，别在每次重组时重新扫一遍、重新解析日期
+    val max = remember(points) {
+        (points.maxOfOrNull { it.km } ?: 0.0).coerceAtLeast(1.0)
+    }
+    val labels = remember(points) {
+        points.map { MileageEnergyParser.dayLabel(it.day) }
+    }
     Column(modifier = modifier) {
         Canvas(
             modifier = Modifier
