@@ -459,12 +459,10 @@ fun AboutScreen(
         }
 
         Spacer(Modifier.height(12.dp))
-        // 本项目开源地址：完全免费开源，点击直接用浏览器打开仓库
-        // 仓库已转为私有：这里保留入口给作者自己（手机浏览器已登录 GitHub 时可用），
-        // 文案写清楚「私有」，避免别人点开看到 404 以为软件坏了
+        // 项目地址：自用版本不再强调「开源」，入口只作为作者自己的书签保留
         ClickRow(
-            title = "项目仓库（私有）",
-            desc = "已转为私有仓库，仅作者本人可访问",
+            title = "项目地址",
+            desc = "点击用浏览器打开项目主页（私有仓库，需登录）",
             iconRes = R.drawable.ic_github,
             onClick = { runtime.openExternal(PROJECT_GITHUB_URL) },
         )
