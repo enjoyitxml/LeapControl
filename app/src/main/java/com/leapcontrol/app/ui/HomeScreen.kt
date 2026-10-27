@@ -1009,6 +1009,16 @@ fun HomeScreen(
             Spacer(Modifier.height(12.dp))
             ScrollHintBar(state = listState, itemCount = cells.size, visibleCount = 4)
 
+            // ---- 空调概览条：设定温度 / 车内温度 / 风扇开关（风扇可一键开关空调）----
+            Spacer(Modifier.height(14.dp))
+            AcQuickCard(
+                status = currentStatus,
+                busy = controlling == "acOn" || controlling == "acOff",
+                onToggle = { turnOn ->
+                    ensureConfirmed(if (turnOn) "开启空调" else "关闭空调") { runAcCommand(turnOn) }
+                },
+            )
+
             // ---- 功能模块区（页面最下方）：横向滑动的模块卡 + 指示条 + 自定义按钮 ----
             // 空调 / 座椅 / 胎压 / 里程能耗 / 健康 / 充电 / 定时空调 / 冰箱 / 哨兵 …
             // 全部按「空调卡」的尺寸与圆角渲染，顺序、增删由底部「自定义模块」调整。
