@@ -761,6 +761,32 @@ fun HomeScreen(
                             onClick = { showRenameDialog = true },
                         )
                     }
+                    // 车况更新时间：紧贴车名下方，点一下可手动刷新
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !refreshing) { refresh() },
+                    ) {
+                        if (refreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(11.dp),
+                                strokeWidth = 1.6.dp,
+                                color = LocalAppColors.current.textPrimary,
+                            )
+                            Spacer(Modifier.width(5.dp))
+                        }
+                        Text(
+                            text = when {
+                                refreshing -> "更新中…"
+                                lastUpdated == 0L -> "尚未更新"
+                                else -> "更新于 ${formatUpdateTime(lastUpdated)}"
+                            },
+                            color = LocalAppColors.current.textPrimary.copy(alpha = 0.7f),
+                            fontSize = 11.5.sp,
+                        )
+                    }
                     VehicleDropdown(
                         expanded = showVehicleMenu,
                         vehicles = vehicles,
@@ -897,33 +923,6 @@ fun HomeScreen(
                         }
                     }
                 }
-            }
-
-            // ---- 车况更新时间（随内容滚动，不再固定在顶栏）：点一下可手动刷新 ----
-            Spacer(Modifier.height(12.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = !refreshing) { refresh() },
-            ) {
-                if (refreshing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(11.dp),
-                        strokeWidth = 1.6.dp,
-                        color = LocalAppColors.current.textPrimary,
-                    )
-                    Spacer(Modifier.width(5.dp))
-                }
-                Text(
-                    text = when {
-                        refreshing -> "更新中…"
-                        lastUpdated == 0L -> "尚未更新"
-                        else -> "更新于 ${formatUpdateTime(lastUpdated)}"
-                    },
-                    color = LocalAppColors.current.textPrimary.copy(alpha = 0.7f),
-                    fontSize = 11.5.sp,
-                )
             }
 
             // ---- 充电中心入口（胶囊按钮，续航下方，样式参考官网 App）----
@@ -1068,7 +1067,7 @@ fun HomeScreen(
                         OutlinedTextField(
                             value = nameInput,
                             onValueChange = { nameInput = it.take(12) },
-                            placeholder = { Text("如：小7", color = LocalAppColors.current.textSecondary) },
+                            placeholder = { Text("如：小零", color = LocalAppColors.current.textSecondary) },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = LocalAppColors.current.textPrimary,

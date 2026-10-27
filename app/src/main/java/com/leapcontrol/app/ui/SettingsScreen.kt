@@ -94,11 +94,6 @@ fun SettingsScreen(
     var showAmapKey by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmGate by remember { mutableStateOf(runtime.biometricConfirmEnabled()) }
-    // 版本更新：红点 + 手动检查 + 弹窗
-    val updateInfo by runtime.updateInfo.collectAsState()
-    var checkingUpdate by remember { mutableStateOf(false) }
-    var showUpdateDialog by remember { mutableStateOf(false) }
-    var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
 
     Column(
         modifier = Modifier
@@ -143,36 +138,6 @@ fun SettingsScreen(
                     runtime.clearCarImageCache()
                     val ok = runCatching { runtime.fetchCarImage(force = true) }.getOrNull() != null
                     message = if (ok) "车模已刷新" else "未取到官方车图，首页暂不显示车模"
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            ClickRow(
-                title = "检查更新",
-                desc = if (checkingUpdate) {
-                    "检查中…"
-                } else {
-                    val info = updateInfo
-                    if (info != null) {
-                        "发现新版本 v${info.version}，点击前往下载"
-                    } else {
-                        "当前已是最新版本（v${runtime.currentVersion()}）"
-                    }
-                },
-                iconRes = R.drawable.ic_system_update,
-                showDot = updateInfo != null,
-            ) {
-                if (!checkingUpdate) {
-                    scope.launch {
-                        checkingUpdate = true
-                        val info = runCatching { runtime.checkForUpdate() }.getOrNull()
-                        checkingUpdate = false
-                        if (info != null) {
-                            pendingUpdate = info
-                            showUpdateDialog = true
-                        } else {
-                            message = "已是最新版本（v${runtime.currentVersion()}）"
-                        }
-                    }
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -404,23 +369,6 @@ fun SettingsScreen(
             },
         )
     }
-
-    // ---- 版本更新弹窗（手动「检查更新」触发）----
-    if (showUpdateDialog && pendingUpdate != null) {
-        UpdateDialog(
-            info = pendingUpdate!!,
-            currentVersion = runtime.currentVersion(),
-            onOpenDownload = {
-                runtime.openExternal(pendingUpdate!!.htmlUrl)
-                showUpdateDialog = false
-            },
-            onDismiss = { showUpdateDialog = false },
-            onNeverAgain = {
-                runtime.setDismissedVersion(pendingUpdate!!.version)
-                showUpdateDialog = false
-            },
-        )
-    }
 }
 
 // ============================================================================
@@ -623,6 +571,7 @@ fun SeasonThemeGrid(
     seasonId: String,
     activeSeasonId: String,
     autoNightActive: Boolean,
+    themes: List<SeasonTheme> = SeasonThemes.ALL,
     onSeasonChange: (String) -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -630,7 +579,7 @@ fun SeasonThemeGrid(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        SeasonThemes.ALL.forEach { theme ->
+        themes.forEach { theme ->
             val selected = theme.id == activeSeasonId
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

@@ -10,10 +10,19 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.AppearanceMode
+import com.leapcontrol.app.R
+import kotlinx.coroutines.launch
 
 /**
  * 「个性化」页（从「我的」进入，也可由首页顶部「皮肤」按钮直达）：
@@ -58,14 +67,36 @@ fun PersonalizationScreen(
 
         Spacer(Modifier.height(18.dp))
 
-        // ---- 四季背景（含星空夜间主题） ----
-        SettingsSection(title = "季节背景", desc = "主题配色") {
+        // ---- 浅色背景：春夏秋冬（明亮色调） ----
+        SettingsSection(title = "浅色背景", desc = "明亮色调主题") {
             SettingsCard {
                 SeasonThemeGrid(
                     runtime = runtime,
                     seasonId = seasonId,
                     activeSeasonId = activeSeasonId,
                     autoNightActive = autoNightActive,
+                    themes = listOf(
+                        SeasonThemes.SPRING,
+                        SeasonThemes.SUMMER,
+                        SeasonThemes.AUTUMN,
+                        SeasonThemes.WINTER,
+                    ),
+                    onSeasonChange = onSeasonChange,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 深色背景：星空（夜间深色调） ----
+        SettingsSection(title = "深色背景", desc = "暗色调主题") {
+            SettingsCard {
+                SeasonThemeGrid(
+                    runtime = runtime,
+                    seasonId = seasonId,
+                    activeSeasonId = activeSeasonId,
+                    autoNightActive = autoNightActive,
+                    themes = listOf(SeasonThemes.STARS),
                     onSeasonChange = onSeasonChange,
                 )
                 Spacer(Modifier.height(14.dp))
@@ -110,15 +141,22 @@ fun PersonalizationScreen(
 }
 
 /**
- * 「关于」页：版本信息 + 内嵌「免责声明」「隐私条款」两个子入口。
+ * 「关于」页：版本信息 + 检查更新 + 内嵌「免责声明」「隐私条款」两个子入口。
  */
 @Composable
 fun AboutScreen(
+    runtime: AppRuntime,
     onBack: () -> Unit,
     onOpenDisclaimer: () -> Unit = {},
     onOpenPrivacy: () -> Unit = {},
 ) {
     val C = LocalAppColors.current
+    val updateInfo by runtime.updateInfo.collectAsState()
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    val scope = rememberCoroutineScope()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -134,6 +172,35 @@ fun AboutScreen(
             InfoRow(label = "客户端", value = "零控 LeapControl")
             Spacer(Modifier.height(10.dp))
             InfoRow(label = "版本", value = appVersionText())
+            Spacer(Modifier.height(10.dp))
+            // 检查更新：红点 + 手动检查 + 弹窗
+            ClickRow(
+                title = "检查更新",
+                desc = if (checkingUpdate) {
+                    "检查中…"
+                } else {
+                    val info = updateInfo
+                    if (info != null) {
+                        "发现新版本 v${info.version}，点击前往下载"
+                    } else {
+                        "当前已是最新版本（v${runtime.currentVersion()}）"
+                    }
+                },
+                iconRes = R.drawable.ic_system_update,
+                showDot = updateInfo != null,
+            ) {
+                if (!checkingUpdate) {
+                    scope.launch {
+                        checkingUpdate = true
+                        val info = runCatching { runtime.checkForUpdate() }.getOrNull()
+                        checkingUpdate = false
+                        if (info != null) {
+                            pendingUpdate = info
+                            showUpdateDialog = true
+                        }
+                    }
+                }
+            }
             Spacer(Modifier.height(12.dp))
             androidx.compose.material3.Text(
                 "零控是车主自发开发的非官方自用客户端，与零跑汽车官方无关。"
@@ -162,5 +229,27 @@ fun AboutScreen(
 
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.navigationBarsPadding())
+    }
+
+    // ---- 版本更新弹窗（手动「检查更新」触发）----
+    if (showUpdateDialog && pendingUpdate != null) {
+        UpdateDialog(
+            info = pendingUpdate!!,
+            currentVersion = runtime.currentVersion(),
+            onOpenDownload = {
+                // 默认直接下载安装包；无直链时退回发布页
+                runtime.openExternal(pendingUpdate!!.downloadUrl ?: pendingUpdate!!.htmlUrl)
+                showUpdateDialog = false
+            },
+            onOpenGithub = {
+                runtime.openExternal(pendingUpdate!!.htmlUrl)
+                showUpdateDialog = false
+            },
+            onDismiss = { showUpdateDialog = false },
+            onNeverAgain = {
+                runtime.setDismissedVersion(pendingUpdate!!.version)
+                showUpdateDialog = false
+            },
+        )
     }
 }
