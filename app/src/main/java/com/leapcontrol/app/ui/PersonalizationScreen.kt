@@ -1,6 +1,15 @@
 package com.leapcontrol.app.ui
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -16,7 +25,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.AppUpdateInfo
@@ -112,6 +132,22 @@ fun PersonalizationScreen(
                         + "生效时界面文字会自动转浅色以保证可读",
                     checked = nightAuto,
                     onCheckedChange = onNightAutoChange,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 相伴卡背景 ----
+        SettingsSection(title = "相伴卡背景", desc = "首页「我与我的爱车走过」") {
+            SettingsCard {
+                OwnershipBackdropGrid(runtime = runtime, selectedId = runtime.ownershipBackdrop.value)
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "6 张都按卡片比例裁好了，文字落在天空区，换哪张都不会挡字。",
+                    color = LocalAppColors.current.textSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
                 )
             }
         }
@@ -266,5 +302,75 @@ fun AboutScreen(
                 showUpdateDialog = false
             },
         )
+    }
+}
+
+/**
+ * 相伴卡背景选择网格：3 列 × 2 行，缩略图按 3:1 裁切（和实际卡片一致）。
+ *
+ * 缩略图直接用原图 Crop，所见即所得；选中的那张加主题色描边 + 半透明蒙层 + 勾。
+ */
+@Composable
+fun OwnershipBackdropGrid(runtime: AppRuntime, selectedId: String) {
+    val C = LocalAppColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        OwnershipBackdrops.ALL.chunked(3).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEach { backdrop ->
+                    val selected = backdrop.id == selectedId
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(
+                                    if (selected) 2.dp else 0.5.dp,
+                                    if (selected) C.accent else C.border,
+                                    RoundedCornerShape(8.dp),
+                                )
+                                .clickable { runtime.setOwnershipBackdropId(backdrop.id) },
+                        ) {
+                            Image(
+                                painter = painterResource(backdrop.res),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop,
+                            )
+                            if (selected) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.28f)),
+                                )
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .size(18.dp),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(5.dp))
+                        Text(
+                            backdrop.label,
+                            color = if (selected) C.accent else C.textSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            maxLines = 1,
+                        )
+                    }
+                }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
     }
 }
