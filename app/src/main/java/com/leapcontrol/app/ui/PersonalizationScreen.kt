@@ -24,6 +24,9 @@ import com.leapcontrol.app.AppearanceMode
 import com.leapcontrol.app.R
 import kotlinx.coroutines.launch
 
+/** 本项目开源仓库地址（关于页可直接点击跳转）。 */
+private const val PROJECT_GITHUB_URL = "https://github.com/enjoyitxml/LeapControl"
+
 /**
  * 「个性化」页（从「我的」进入，也可由首页顶部「皮肤」按钮直达）：
  *  - 外观模式：跟随系统 / 始终浅色 / 始终深色
@@ -212,6 +215,14 @@ fun AboutScreen(
             )
         }
 
+        Spacer(Modifier.height(12.dp))
+        // 本项目开源地址：完全免费开源，点击直接用浏览器打开仓库
+        ClickRow(
+            title = "项目开源地址",
+            desc = PROJECT_GITHUB_URL,
+            iconRes = R.drawable.ic_github,
+            onClick = { runtime.openExternal(PROJECT_GITHUB_URL) },
+        )
         Spacer(Modifier.height(12.dp))
         ClickRow(
             title = "免责声明",

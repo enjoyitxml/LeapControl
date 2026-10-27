@@ -35,7 +35,7 @@ object OpenSourceInfo {
     const val PROJECT_URL = "https://github.com/stephenwang1011/leapauto"
 
     const val LEAD =
-        "零控不是从零写起的。正是站在原作者的肩膀上，才有了今天这个能每天顺手用一用的 App。"
+        "零控不是从零写起的。正是站在巨人的肩膀上，才有了今天这个能每天顺手用一用的 App。"
 
     const val THANKS =
         "原作者凭一己之力啃下了零跑车云协议的梳理、BLE 无感蓝牙钥匙与国密鉴权这些难度极高的工作，" +
