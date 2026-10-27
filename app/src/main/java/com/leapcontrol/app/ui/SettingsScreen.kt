@@ -46,7 +46,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
@@ -55,16 +54,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
-import kotlin.math.roundToInt
-import com.leapcontrol.app.AppearanceMode
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.R
@@ -595,83 +586,3 @@ fun ClauseList(items: List<String>) {
 /** 当前版本号（取自构建配置，避免与 build.gradle.kts 脱节）。 */
 fun appVersionText(): String = "v${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）"
 
-/** 外观模式选项（跟随系统 / 浅色 / 深色）。 */
-@Composable
-fun AppearanceModeOptions(
-    mode: AppearanceMode,
-    onModeChange: (AppearanceMode) -> Unit,
-) {
-    val C = LocalAppColors.current
-    val items = listOf(
-        AppearanceMode.SYSTEM to "系统",
-        AppearanceMode.LIGHT to "浅色",
-        AppearanceMode.DARK to "深色",
-    )
-    val selectedIndex = items.indexOfFirst { it.first == mode }.coerceAtLeast(0)
-    // 底衬：卡片底色；滑块：浅色为白、深色为比底衬略亮的灰（iOS 风格浮起）
-    val trackColor = C.cardBg
-    val thumbColor = if (C.isDark) Color(0xFF48484A) else Color.White
-    val selectedText = C.textPrimary
-    val unselectedText = C.textSecondary
-
-    Column(Modifier.fillMaxWidth()) {
-        // 紧凑说明（一行）
-        Text(
-            "跟随系统：随手机深色模式自动切换；浅色/深色：固定界面明暗。",
-            color = C.textSecondary,
-            fontSize = 11.sp,
-            lineHeight = 15.sp,
-        )
-        Spacer(Modifier.height(10.dp))
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(36.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(trackColor),
-        ) {
-            val density = LocalDensity.current
-            val pad = 3.dp
-            val padPx = with(density) { pad.toPx() }
-            val segW = (maxWidth - pad * 2) / items.size
-            val segWpx = with(density) { segW.toPx() }
-            val animIndex by animateFloatAsState(
-                targetValue = selectedIndex.toFloat(),
-                animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-            )
-            // 浮起滑块（白色胶囊，带柔和投影）
-            Box(
-                modifier = Modifier
-                    .offset {
-                        IntOffset(
-                            x = (padPx + animIndex * segWpx).roundToInt(),
-                            y = padPx.roundToInt(),
-                        )
-                    }
-                    .size(width = segW, height = maxHeight - pad * 2)
-                    .shadow(2.dp, RoundedCornerShape(15.dp))
-                    .clip(RoundedCornerShape(15.dp))
-                    .background(thumbColor),
-            )
-            // 三段文字（各自可点）
-            Row(Modifier.fillMaxSize()) {
-                items.forEachIndexed { i, (m, label) ->
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clickable { onModeChange(m) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = label,
-                            color = if (i == selectedIndex) selectedText else unselectedText,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}

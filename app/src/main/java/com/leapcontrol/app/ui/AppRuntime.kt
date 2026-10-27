@@ -1012,55 +1012,58 @@ class AppRuntime(context: Context) {
     fun vehicles(): List<Vehicle> = sessionStore.loadVehicles()
 
     // ---------------- 背景主题 ----------------
-
-    fun seasonThemeId(): String =
-        namingPrefs.getString("season_theme", SeasonThemes.DAY.first().id)
-            ?: SeasonThemes.DAY.first().id
-
-    fun setSeasonThemeId(id: String) {
-        namingPrefs.edit().putString("season_theme", id).apply()
-        // 选的是夜间主题时，顺手记成「夜间自动切换」的目标，晚上就不必再选一次
-        if (SeasonThemes.byId(id).night) setNightThemeId(id)
-    }
+    //
+    // 主题按「明暗」分成两个槽位：浅色槽存浅色主题，深色槽存深色主题。
+    // 外观模式（跟随系统 / 始终浅色 / 始终深色 / 自由）只决定「现在取哪个槽」，
+    // 具体取哪套由 ThemeResolver 统一推导，这里只负责读写偏好。
 
     /**
-     * 夜间自动切换使用哪套夜间主题，默认「浩瀚星空」。
+     * 浅色槽里的主题。
      *
-     * 用户在夜间主题里选过任意一套，之后每天 22:00 自动切到的就是那套。
+     * 旧版本只存过一个 `season_theme`，它可能是浅色主题也可能是夜间主题
+     * （那时「选夜间主题」是直接写进这一格的）；升级后若是夜间主题，
+     * 说明用户本来就在用深色，把它让给深色槽，浅色槽回到默认的日间主题。
      */
-    fun nightThemeId(): String =
-        namingPrefs.getString("night_theme", SeasonThemes.NIGHT.id) ?: SeasonThemes.NIGHT.id
-
-    fun setNightThemeId(id: String) {
-        val safe = SeasonThemes.byId(id)
-        // 只接受夜间主题：白天主题存进来会让夜间切换变成「切了跟没切一样」
-        if (!safe.night) return
-        namingPrefs.edit().putString("night_theme", safe.id).apply()
+    fun lightThemeId(): String {
+        val raw = namingPrefs.getString("light_theme", null)
+            ?: namingPrefs.getString("season_theme", null)
+        return ThemeResolver.safeLight(raw).id
     }
 
-    /** 动态背景开关：false 时动态主题也用固定相位（静止画面）。 */
-    fun seasonVideoEnabled(): Boolean = namingPrefs.getBoolean("season_video", true)
+    fun setLightThemeId(id: String) {
+        val safe = ThemeResolver.safeLight(id)
+        namingPrefs.edit().putString("light_theme", safe.id).apply()
+    }
 
-    fun setSeasonVideoEnabled(enabled: Boolean) {
-        namingPrefs.edit().putBoolean("season_video", enabled).apply()
+    /** 深色槽里的主题，默认「浩瀚星空」。 */
+    fun darkThemeId(): String {
+        val raw = namingPrefs.getString("dark_theme", null)
+            ?: namingPrefs.getString("night_theme", null)
+            ?: namingPrefs.getString("season_theme", null)
+        return ThemeResolver.safeDark(raw).id
+    }
+
+    fun setDarkThemeId(id: String) {
+        val safe = ThemeResolver.safeDark(id)
+        namingPrefs.edit().putString("dark_theme", safe.id).apply()
     }
 
     /**
-     * 背景视频的声音开关，默认关。
+     * 保存用户选的主题：按主题自身的明暗落到对应槽位。
      *
-     * 控车类 App 打开即出声太打扰，默认静音；想听配乐的用户自己在设置里打开。
+     * UI 只调这一个方法，不需要自己判断「这套该进哪个槽」——
+     * 日间主题 / 视频里的春夏秋冬季进浅色槽，夜间主题 / 星空视频进深色槽。
      */
-    fun seasonVideoSoundEnabled(): Boolean = namingPrefs.getBoolean("season_video_sound", false)
-
-    fun setSeasonVideoSoundEnabled(enabled: Boolean) {
-        namingPrefs.edit().putBoolean("season_video_sound", enabled).apply()
+    fun saveThemeChoice(id: String) {
+        val theme = SeasonThemes.byId(id)
+        if (theme.night) setDarkThemeId(theme.id) else setLightThemeId(theme.id)
     }
 
     /**
-     * 夜间自动切换到星空主题，默认开。
+     * 夜间时段（22:00–06:00）强制深色，默认开，只在「自由模式」下生效。
      *
-     * 每天 22:00 – 次日 06:00 自动生效星空主题，白天自动还原用户自己选的季节
-     * —— 用户的季节偏好本身不会被覆盖，只是夜间被临时顶替。
+     * 前面几版是「夜间自动切星空」，现在并进外观模式体系：跟随系统时明暗完全交给手机，
+     * 自由模式才提供「到点自动转深色」这一层覆盖。
      */
     fun nightThemeAuto(): Boolean = namingPrefs.getBoolean("night_theme_auto", true)
 
