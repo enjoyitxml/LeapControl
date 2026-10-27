@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 入口「支持开发者」：咖啡杯（杯身 + 把手 + 底座 + 三缕热气），实心填充风格。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <!-- 杯身 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M288,384 H736 V644 A60,60 0 0 1 676,704 H348 A60,60 0 0 1 288,644 Z" />
+
+    <!-- 把手（外圈挖内圈的环，左侧被杯身遮住，只剩右侧露出来） -->
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M768,448 H760 A88,88 0 0 1 760,624 H768 V576 H760 A40,40 0 0 0 760,496 H768 Z" />
+
+    <!-- 底座 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M280,712 H744 A28,28 0 0 1 772,740 V740 A28,28 0 0 1 744,768 H280 A28,28 0 0 1 252,740 V740 A28,28 0 0 1 280,712 Z" />
+
+    <!-- 三缕热气 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M420,224 H456 A18,18 0 0 1 474,242 V306 A18,18 0 0 1 456,324 H420 A18,18 0 0 1 402,306 V242 A18,18 0 0 1 420,224 Z
+        M512,180 H548 A18,18 0 0 1 566,198 V278 A18,18 0 0 1 548,296 H512 A18,18 0 0 1 494,278 V198 A18,18 0 0 1 512,180 Z
+        M604,224 H640 A18,18 0 0 1 658,242 V306 A18,18 0 0 1 640,324 H604 A18,18 0 0 1 586,306 V242 A18,18 0 0 1 604,224 Z" />
+</vector>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设置「系统控制中心」：四宫格磁贴，实心填充风格。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <path android:fillColor="#FF000000"
+        android:pathData="M232,232 H424 A40,40 0 0 1 464,272 V424 A40,40 0 0 1 424,464 H232 A40,40 0 0 1 192,424 V272 A40,40 0 0 1 232,232 Z" />
+    <path android:fillColor="#FF000000"
+        android:pathData="M600,232 H792 A40,40 0 0 1 832,272 V424 A40,40 0 0 1 792,464 H600 A40,40 0 0 1 560,424 V272 A40,40 0 0 1 600,232 Z" />
+    <path android:fillColor="#FF000000"
+        android:pathData="M232,560 H424 A40,40 0 0 1 464,600 V752 A40,40 0 0 1 424,792 H232 A40,40 0 0 1 192,752 V600 A40,40 0 0 1 232,560 Z" />
+    <path android:fillColor="#FF000000"
+        android:pathData="M600,560 H792 A40,40 0 0 1 832,600 V752 A40,40 0 0 1 792,792 H600 A40,40 0 0 1 560,752 V600 A40,40 0 0 1 600,560 Z" />
+</vector>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 车载冰箱：双格柜体 + 两个把手 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="1024dp"
+    android:height="1024dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M360,136H664A60,60 0 0 1 724,196V408A60,60 0 0 1 664,468H360A60,60 0 0 1 300,408V196A60,60 0 0 1 360,136Z M360,508H664A60,60 0 0 1 724,568V840A60,60 0 0 1 664,900H360A60,60 0 0 1 300,840V568A60,60 0 0 1 360,508Z M622,236H628A22,22 0 0 1 650,258V338A22,22 0 0 1 628,360H622A22,22 0 0 1 600,338V258A22,22 0 0 1 622,236Z M622,596H628A22,22 0 0 1 650,618V698A22,22 0 0 1 628,720H622A22,22 0 0 1 600,698V618A22,22 0 0 1 622,596Z" />
+</vector>

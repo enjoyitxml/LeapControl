@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 充电中心：充电桩（机身 + 显示屏 + 闪电），细线描边 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M6.4 2.6 H17.6 A2 2 0 0 1 19.6 4.6 V19.4 A2 2 0 0 1 17.6 21.4 H6.4 A2 2 0 0 1 4.4 19.4 V4.6 A2 2 0 0 1 6.4 2.6 Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M7.2 6.0 H16.8"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M13.2 9.2 L9.4 14.4 H11.8 L10.8 17.8 L14.8 12.6 H12.4 Z"
+        android:fillColor="#FF000000" />
+</vector>

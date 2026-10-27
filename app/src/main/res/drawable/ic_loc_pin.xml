@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 位置卡 · 定位图钉（实心水滴 + 中心圆孔）
+     注意：水滴与圆孔必须写在同一条 path 里并配 fillType="evenOdd"；
+     拆成两条 path 时圆孔会被同一颜色填平，镂空就没了。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M12.09 1.48 C8.22 1.48 4.89 4.80 4.89 8.86 C4.89 14.95 10.62 20.68 11.54 21.78 C11.91 22.25 13.02 22.25 13.38 21.78 C14.31 20.68 20.03 14.95 20.03 8.86 C20.03 4.80 15.97 1.48 12.09 1.48 Z M12.09 5.91 A2.86 2.86 0.00 1.00 1.00 12.09 11.63 A2.86 2.86 0.00 1.00 1.00 12.09 5.91 Z" />
+</vector>

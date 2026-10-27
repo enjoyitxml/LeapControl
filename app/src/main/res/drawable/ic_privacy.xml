@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 入口「隐私条款」：盾牌 + 对勾（evenOdd 挖孔），实心填充风格。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M512,104 L840,232 V520 C840,702 706,850 512,922 C318,850 184,702 184,520 V232 Z
+        M396,518 L466,588 L636,418 L667,449 L466,650 L365,549 Z" />
+</vector>

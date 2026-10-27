@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 顶栏 / 入口「皮肤 · 个性化」：调色盘，实心填充风格。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M160,512 a352,352 0 1 0 704,0 a352,352 0 1 0 -704,0 z
+        M304,352 a64,64 0 1 0 128,0 a64,64 0 1 0 -128,0 z
+        M592,352 a64,64 0 1 0 128,0 a64,64 0 1 0 -128,0 z
+        M284,600 a56,56 0 1 0 112,0 a56,56 0 1 0 -112,0 z
+        M456,672 a56,56 0 1 0 112,0 a56,56 0 1 0 -112,0 z
+        M628,600 a56,56 0 1 0 112,0 a56,56 0 1 0 -112,0 z" />
+</vector>

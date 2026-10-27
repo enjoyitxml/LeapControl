@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 官方同款：三点省略号（实心）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path android:pathData="M7.36,12.00 a0.72,0.72 0 1 0 1.44,0 a0.72,0.72 0 1 0 -1.44,0 z" android:fillColor="#FF000000" />
+    <path android:pathData="M11.28,12.00 a0.72,0.72 0 1 0 1.44,0 a0.72,0.72 0 1 0 -1.44,0 z" android:fillColor="#FF000000" />
+    <path android:pathData="M15.20,12.00 a0.72,0.72 0 1 0 1.44,0 a0.72,0.72 0 1 0 -1.44,0 z" android:fillColor="#FF000000" />
+</vector>

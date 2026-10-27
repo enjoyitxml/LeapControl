@@ -1,17 +1,6 @@
 package com.leapcontrol.app.ui
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Curtains
-import androidx.compose.material.icons.filled.LocalFireDepartment
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.Luggage
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.Roofing
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.SensorDoor
-import androidx.compose.material.icons.filled.Window
-import androidx.compose.ui.graphics.vector.ImageVector
+import com.leapcontrol.app.R
 import com.leapcontrol.app.VehicleCapabilities
 
 /**
@@ -27,7 +16,8 @@ import com.leapcontrol.app.VehicleCapabilities
 data class ControlAction(
     val id: String,
     val label: String,
-    val icon: ImageVector,
+    /** 图标：与底部导航同一套自绘 drawable（1024 视口实心风格）。 */
+    val iconRes: Int,
     /** 是否按车况高亮，并在开启时下发关闭指令、关闭时下发开启指令。 */
     val toggle: Boolean = false,
     val available: (VehicleCapabilities) -> Boolean = { true },
@@ -35,16 +25,16 @@ data class ControlAction(
 
 object ControlActions {
     val all: List<ControlAction> = listOf(
-        ControlAction("unlock", "解锁", Icons.Filled.LockOpen),
-        ControlAction("lock", "上锁", Icons.Filled.Lock),
-        ControlAction("trunk", "后备箱", Icons.Filled.Luggage, toggle = true),
-        ControlAction("window", "车窗", Icons.Filled.Window, toggle = true),
-        ControlAction("horn", "鸣笛寻车", Icons.Filled.NotificationsActive),
-        ControlAction("batteryPreheat", "电池预热", Icons.Filled.LocalFireDepartment),
-        ControlAction("sunshade", "遮阳帘", Icons.Filled.Curtains, toggle = true),
-        ControlAction("sunroof", "天窗", Icons.Filled.Roofing, toggle = true, available = { it.sunroof }),
-        ControlAction("frunk", "前备箱", Icons.Filled.SensorDoor, toggle = true, available = { it.frunk }),
-        ControlAction("sentry", "哨兵", Icons.Filled.Security, toggle = true, available = { it.sentry }),
+        ControlAction("unlock", "解锁", R.drawable.ic_qc_unlock),
+        ControlAction("lock", "上锁", R.drawable.ic_qc_lock),
+        ControlAction("trunk", "后备箱", R.drawable.ic_qc_trunk, toggle = true),
+        ControlAction("window", "车窗", R.drawable.ic_qc_window, toggle = true),
+        ControlAction("horn", "鸣笛寻车", R.drawable.ic_qc_horn),
+        ControlAction("batteryPreheat", "电池预热", R.drawable.ic_qc_preheat),
+        ControlAction("sunshade", "遮阳帘", R.drawable.ic_qc_sunshade, toggle = true),
+        ControlAction("sunroof", "天窗", R.drawable.ic_qc_sunroof, toggle = true, available = { it.sunroof }),
+        ControlAction("frunk", "前备箱", R.drawable.ic_qc_frunk, toggle = true, available = { it.frunk }),
+        ControlAction("sentry", "哨兵", R.drawable.ic_qc_sentry, toggle = true, available = { it.sentry }),
     )
 
     val defaultLayout: List<String> = all.map { it.id }

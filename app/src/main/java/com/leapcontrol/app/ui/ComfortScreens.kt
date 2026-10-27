@@ -2,6 +2,7 @@ package com.leapcontrol.app.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -96,7 +97,8 @@ private fun SectionCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(C.cardBg, shape)
+            .background(C.panelBg, shape)
+            .border(1.dp, C.border, shape)
             .padding(16.dp),
     ) {
         Text(
@@ -903,7 +905,7 @@ private fun SeatChip(
             .size(46.dp)
             .shadow(3.dp, RoundedCornerShape(14.dp))
             .clip(RoundedCornerShape(14.dp))
-            .background(if (active) C.chipBgActive else C.cardBg)
+            .background(if (active) C.chipBgActive else C.chipBg)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -1019,7 +1021,8 @@ private fun ClimateTempCard(target: Int, busy: Boolean, onTempChange: (Int) -> U
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(C.cardBg, RoundedCornerShape(20.dp))
+            .background(C.panelBg, RoundedCornerShape(20.dp))
+            .border(1.dp, C.border, RoundedCornerShape(20.dp))
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1192,7 +1195,8 @@ private fun ClimateGridCell(item: ClimateGridItem, busy: Boolean, modifier: Modi
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(C.cardBg)
+            .background(C.panelBg)
+            .border(1.dp, C.border, RoundedCornerShape(16.dp))
             .clickable(enabled = !busy, onClick = item.onClick)
             .padding(vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

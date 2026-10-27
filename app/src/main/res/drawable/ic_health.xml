@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 顶栏「车辆健康」：心形 + 医疗十字镂空，实心填充风格。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M512,864
+        C512,864 160,648 160,424
+        C160,320 240,256 336,256
+        C400,256 464,288 512,352
+        C560,288 624,256 688,256
+        C784,256 864,320 864,424
+        C864,648 512,864 512,864 Z
+        M472,384 H552 V464 H672 V544 H552 V672 H472 V544 H352 V464 H472 Z" />
+</vector>
