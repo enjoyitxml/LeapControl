@@ -725,7 +725,7 @@ class AppRuntime(context: Context) {
             Triple("右后", "rightRearTirePressure", "rightRearTirePressureState"),
         )
         return layout.mapNotNull { (label, pressureKey, stateKey) ->
-            val pressure = formatValue(st.opt(pressureKey), "kPa")
+            val pressure = formatPressureBar(st.opt(pressureKey))
             val prefix = pressureKey.removeSuffix("Pressure")
             val temperature = listOf(
                 "${prefix}Temperature",
@@ -960,6 +960,13 @@ class AppRuntime(context: Context) {
         }
         return out
     }
+
+    /**
+     * 胎压统一折算成 bar、只留一位小数、不带单位（单位由展示层拼「bar」）。
+     * 归一规则与阈值见 [com.leapcontrol.app.TirePressure]。
+     */
+    private fun formatPressureBar(value: Any?): String? =
+        com.leapcontrol.app.TirePressure.formatBar(value)
 
     private fun formatValue(value: Any?, unit: String): String? {
         if (value == null || value == JSONObject.NULL) return null
