@@ -74,4 +74,10 @@ class MainActivity : ComponentActivity() {
         // 回到前台时让控制中心磁贴刷新一次文案与激活态
         QuickTiles.refreshAll(this)
     }
+
+    /** 进入后台：暂停动态背景，避免不可见时继续解码耗电。 */
+    override fun onPause() {
+        super.onPause()
+        ForegroundSignal.emitPause()
+    }
 }
