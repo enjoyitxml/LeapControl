@@ -37,6 +37,7 @@ import com.leapcontrol.app.journal.CostStats
 import com.leapcontrol.app.journal.CostSummary
 import com.leapcontrol.app.journal.GoalProgress
 import com.leapcontrol.app.journal.JournalData
+import com.leapcontrol.app.journal.MedalStats
 import com.leapcontrol.app.journal.Medals
 import java.util.Locale
 
@@ -117,11 +118,13 @@ fun JournalScreen(runtime: AppRuntime) {
     val goal = data.goal
     val progress = goal?.let { GoalProgress.of(it) }
     val costSummary = CostStats.of(data, goal)
-    val unlocked = Medals.unlockedIds(
+    val stats = MedalStats.of(
+        data = data,
         days = progress?.daysOwned ?: (data.ownershipDays ?: 0),
         fraction = progress?.fraction ?: 0f,
         km = vehicleKm,
     )
+    val unlocked = Medals.unlockedIds(stats)
 
     Column(
         modifier = Modifier
@@ -190,7 +193,7 @@ private fun GoalOverviewCard(
     val C = LocalAppColors.current
     val goal = data.goal
     if (goal == null) {
-        AppCard(modifier = Modifier.clickable(onClick = onClick)) {
+        JournalCard(onClick = onClick) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -217,7 +220,7 @@ private fun GoalOverviewCard(
         return
     }
 
-    AppCard(modifier = Modifier.clickable(onClick = onClick)) {
+    JournalCard(onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(contentAlignment = Alignment.Center) {
                 JournalRing(
@@ -287,7 +290,7 @@ private fun GoalOverviewCard(
 @Composable
 private fun CostOverviewCard(summary: CostSummary, onClick: () -> Unit) {
     val C = LocalAppColors.current
-    AppCard(modifier = Modifier.clickable(onClick = onClick)) {
+    JournalCard(onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("本月用车", color = C.textSecondary, fontSize = 12.sp)
             Spacer(Modifier.weight(1f))
@@ -346,7 +349,7 @@ private fun CostOverviewCard(summary: CostSummary, onClick: () -> Unit) {
 @Composable
 private fun FootprintOverviewCard(data: JournalData, totalKm: Double, onClick: () -> Unit) {
     val C = LocalAppColors.current
-    AppCard(modifier = Modifier.clickable(onClick = onClick)) {
+    JournalCard(onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("足迹", color = C.textSecondary, fontSize = 12.sp)
             Spacer(Modifier.weight(1f))

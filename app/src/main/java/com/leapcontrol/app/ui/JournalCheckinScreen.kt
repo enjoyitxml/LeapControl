@@ -103,7 +103,7 @@ fun JournalCheckinScreen(runtime: AppRuntime, onBack: () -> Unit) {
             )
             Spacer(Modifier.height(16.dp))
 
-            AppCard {
+            JournalCard {
                 Row(Modifier.fillMaxWidth()) {
                     JournalStat(
                         value = "${data.cityCount}",
@@ -145,7 +145,7 @@ fun JournalCheckinScreen(runtime: AppRuntime, onBack: () -> Unit) {
 
             Spacer(Modifier.height(12.dp))
 
-            AppCard {
+            JournalCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("每日里程", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.weight(1f))
@@ -173,7 +173,7 @@ fun JournalCheckinScreen(runtime: AppRuntime, onBack: () -> Unit) {
 
             Spacer(Modifier.height(12.dp))
 
-            AppCard {
+            JournalCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("点亮的城市", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.weight(1f))

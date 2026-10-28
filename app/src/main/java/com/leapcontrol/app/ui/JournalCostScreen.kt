@@ -101,7 +101,7 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
             Spacer(Modifier.height(16.dp))
 
             // ---- 总额 + 日均 ----
-            AppCard {
+            JournalCard {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CostScope.entries.forEach { item ->
                         JournalPill(
@@ -162,7 +162,7 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
 
             // ---- 近 6 个月 ----
-            AppCard {
+            JournalCard {
                 Text("近 6 个月", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(14.dp))
                 val max = summary.months.maxOfOrNull { it.amount } ?: 0.0
@@ -177,7 +177,7 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
 
             // ---- 分类 ----
-            AppCard {
+            JournalCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("花在哪", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.width(8.dp))
@@ -220,7 +220,7 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
 
             // ---- 流水 ----
-            AppCard {
+            JournalCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("流水", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.weight(1f))

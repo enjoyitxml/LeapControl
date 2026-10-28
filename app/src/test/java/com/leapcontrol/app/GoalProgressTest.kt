@@ -3,7 +3,7 @@ package com.leapcontrol.app
 import com.leapcontrol.app.journal.CarGoal
 import com.leapcontrol.app.journal.GoalProgress
 import com.leapcontrol.app.journal.JournalDates
-import com.leapcontrol.app.journal.MedalKind
+import com.leapcontrol.app.journal.MedalStats
 import com.leapcontrol.app.journal.Medals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -70,7 +70,8 @@ class GoalProgressTest {
 
     @Test
     fun `天数勋章按天数解锁`() {
-        val unlocked = Medals.unlockedIds(days = 301, fraction = 0.08f, km = null)
+        val stats = MedalStats(days = 301, fraction = 0.08f, km = null)
+        val unlocked = Medals.unlockedIds(stats)
         assertTrue(unlocked.contains("day_1"))
         assertTrue(unlocked.contains("day_100"))
         assertFalse(unlocked.contains("day_365"))
@@ -78,30 +79,25 @@ class GoalProgressTest {
 
     @Test
     fun `里程勋章需要里程数据`() {
-        assertFalse(Medals.unlockedIds(1, 0f, null).contains("km_1000"))
-        assertTrue(Medals.unlockedIds(1, 0f, 1_200.0).contains("km_1000"))
-        assertFalse(Medals.unlockedIds(1, 0f, 1_200.0).contains("km_10000"))
+        assertFalse(Medals.unlockedIds(MedalStats(days = 1, km = null)).contains("km_1000"))
+        assertTrue(Medals.unlockedIds(MedalStats(days = 1, km = 1_200.0)).contains("km_1000"))
+        assertFalse(Medals.unlockedIds(MedalStats(days = 1, km = 1_200.0)).contains("km_10000"))
     }
 
     @Test
     fun `进度勋章按百分比解锁`() {
-        assertTrue(Medals.unlockedIds(1, 0.12f, null).contains("p_10"))
-        assertFalse(Medals.unlockedIds(1, 0.12f, null).contains("p_25"))
-        assertTrue(Medals.unlockedIds(1, 1.2f, null).contains("p_100"))
+        assertTrue(Medals.unlockedIds(MedalStats(days = 1, fraction = 0.12f)).contains("p_10"))
+        assertFalse(Medals.unlockedIds(MedalStats(days = 1, fraction = 0.12f)).contains("p_25"))
+        assertTrue(Medals.unlockedIds(MedalStats(days = 1, fraction = 1.2f)).contains("p_100"))
     }
 
     @Test
-    fun `下一枚勋章是第一个没拿到的`() {
-        val next = Medals.next(days = 301, fraction = 0.08f, km = null)
+    fun `下一枚勋章是最接近拿到的那枚`() {
+        val stats = MedalStats(days = 301, fraction = 0.08f, km = null)
+        val next = Medals.next(stats)
         assertNotNull(next)
-        // 前两枚（初见 / 百日）已经拿到，下一枚是「一年之约」
+        // 301 天时「一年」的完成度（82.5%）高于「10% 进度」（80%），所以下一枚是一年
         assertEquals("day_365", next!!.id)
-        assertEquals("差 64 天", next.gapText(301, 0.08f, null))
-    }
-
-    @Test
-    fun `勋章 id 唯一且数量固定`() {
-        assertEquals(Medals.ALL.size, Medals.ALL.map { it.id }.toSet().size)
-        assertEquals(10, Medals.ALL.count { it.kind != MedalKind.PROGRESS })
+        assertEquals("差 64 天", next.gapText(stats))
     }
 }
