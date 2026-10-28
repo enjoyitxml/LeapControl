@@ -163,9 +163,9 @@ fun HomeScreen(
     onRandomBackdrop: () -> Unit = {},
     /** 快捷切换的当前配置（设置页里选的小白点 / 点击切换 / 关闭） */
     quickSwitch: QuickSwitchPrefs = QuickSwitchPrefs(),
-    /** 向上汇报「当前是否在零控首页主界面」—— 视频背景只在首页主界面播放 */
+    /** 向上汇报「当前是否在零控首页主界面」—— 场景动画只在首页主界面跑 */
     onMainPageChange: (Boolean) -> Unit,
-    /** 向上汇报「车模是否已滚出可视区」—— 滚出后视频背景切换为纯色背景，提高可读性 */
+    /** 向上汇报「车模是否已滚出可视区」—— 滚出后场景层淡出，改为纯色背景，提高可读性 */
     onCarModelGoneChange: (Boolean) -> Unit,
     /** 向上汇报「首页是否正在滑动」—— 滑动期间冻结动态背景，把整帧预算都留给滚动 */
     onScrollingChange: (Boolean) -> Unit = {},
@@ -319,7 +319,7 @@ fun HomeScreen(
         LaunchedEffect(Unit) { vehicles = runCatching { runtime.vehicles() }.getOrDefault(emptyList()) }
 
         // 二级页（充电中心 / 座椅 / 空调 / 体检 / OTA…）不属于「首页」，
-        // 打开时向 MainScreen 汇报，让背景视频只在首页主界面播放
+        // 打开时向 MainScreen 汇报，让场景动画只在首页主界面跑
         val onMainPage = !showChargingCenter && !showSeatComfort && !showFridge && !showClimate &&
             !showAcScreen && !showScheduledAc && !showVehicleHealth && !showOta &&
             !showControlEditor

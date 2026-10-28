@@ -51,22 +51,19 @@ import com.leapcontrol.app.AppearanceMode
 import com.leapcontrol.app.R
 
 /**
- * 主题中心的三个分类，对应页面上横向的三个 tab。
+ * 主题中心的两个分类，对应页面上横向的两个 tab。
  *
- * 「日间 / 夜间」是实时绘制的 20 套，「视频」是旧版四季 + 星空实拍视频，
- * 三类平铺在同一个主题中心里，不再分散成三块 —— 之前一页里连着三个大网格，
- * 找主题要一直往下滚，分类也不直观。
+ * 「日间 / 夜间」各 20 套（10 静态 + 10 动态），全部是实时绘制的场景。
  */
 private enum class ThemeTab(val label: String, val themes: List<SeasonTheme>) {
     DAY("日间", SeasonThemes.DAY),
     NIGHT("夜间", SeasonThemes.NIGHT_ALL),
-    VIDEO("视频", SeasonThemes.VIDEO),
 }
 
 /**
  * 「个性化」页（从「我的」进入，也可由首页顶部「皮肤」按钮直达）：
  *  - 外观模式：跟随系统 / 始终浅色 / 始终深色（三选一，决定明暗与可选主题）
- *  - 主题中心：日间 / 夜间 / 视频 三个 tab，共 25 套
+ *  - 主题中心：日间 / 夜间 两个 tab，共 40 套
  *  - 相伴卡背景：6 套内置图
  *
  * 缩略图直接用 [ThemeSwatch] 画真实场景，和首页看到的是同一套绘制代码。
@@ -125,15 +122,15 @@ fun PersonalizationScreen(
 
         Spacer(Modifier.height(18.dp))
 
-        // ---- 主题中心：日间 / 夜间 / 视频 三个 tab ----
+        // ---- 主题中心：日间 / 夜间 两个 tab ----
         SettingsSection(
             title = "主题中心",
-            desc = "${SeasonThemes.ALL.size} 套 · 三类",
+            desc = "${SeasonThemes.ALL.size} 套 · 日间夜间各 ${SeasonThemes.DAY.size}",
         ) {
             SettingsCard {
                 ThemeTabBar(selected = tab, onSelect = { tab = it })
                 Spacer(Modifier.height(12.dp))
-                // 分类说明：视频主题为什么点一下就变模式、以及「选了另一侧现在看不到效果」，
+                // 分类说明：锁定模式下有哪些主题点不了、以及「选了另一侧现在看不到效果」，
                 // 都在点之前讲清楚，别让用户以为没反应
                 tabHint(tab, mode, systemDark)?.let { hint ->
                     Text(
@@ -222,9 +219,6 @@ fun PersonalizationScreen(
 
 /** 主题中心的分类说明：只在「会有意外感」的那几种情况下出现。 */
 private fun tabHint(tab: ThemeTab, mode: AppearanceMode, systemDark: Boolean): String? = when {
-    tab == ThemeTab.VIDEO ->
-        "视频主题按深浅成对使用：浅色播春日 / 夏日 / 秋日 / 冬日，深色播星空。" +
-            "选任意一套都会把外观切回「跟随系统」，随手机深浅自动换。"
     // 锁定模式下这一组里有选不了的主题，提醒一句免得白点
     tab.themes.any { !ThemeResolver.canPick(mode, it) } ->
         "当前是「${mode.label}」模式，这里有些主题不适用，点了会提示原因。"
@@ -240,8 +234,6 @@ private fun pickHintText(hint: ThemeResolver.PickHint, theme: SeasonTheme): Stri
     ThemeResolver.PickHint.NONE -> null
     ThemeResolver.PickHint.OTHER_SIDE ->
         "已设为${if (theme.night) "深色" else "浅色"}界面的主题，切到${if (theme.night) "深色" else "浅色"}时生效"
-    ThemeResolver.PickHint.VIDEO_FOLLOWED ->
-        "视频主题自带深浅搭配，外观已切换为「跟随系统」"
     ThemeResolver.PickHint.BLOCKED ->
         if (theme.night) "「始终浅色」模式下只能选浅色主题" else "「始终深色」模式下只能选深色主题"
 }
@@ -308,11 +300,9 @@ private fun appearanceHint(mode: AppearanceMode): String = when (mode) {
         "明暗跟着手机的深色模式走：白天用浅色那一套、夜里用深色那一套，" +
             "两套各自选一次就好，之后随手机自动切换。"
     AppearanceMode.LIGHT ->
-        "界面固定浅色，只能选日间主题（10 套）。视频主题例外：它自带深浅搭配，" +
-            "选中会切回「跟随系统」。"
+        "界面固定浅色，只能选日间主题（${SeasonThemes.DAY.size} 套）。"
     AppearanceMode.DARK ->
-        "界面固定深色，只能选夜间主题（10 套）。视频主题例外：它自带深浅搭配，" +
-            "选中会切回「跟随系统」。"
+        "界面固定深色，只能选夜间主题（${SeasonThemes.NIGHT_ALL.size} 套）。"
 }
 
 /** 主题中心顶部的三分类 tab（胶囊分段，选中白底浮起）。 */
@@ -572,9 +562,6 @@ fun ThemePickGrid(
                             if (theme.animated) {
                                 ThemeCornerBadge("动态", Modifier.align(Alignment.TopEnd))
                             }
-                            if (theme.video) {
-                                ThemeCornerBadge("视频", Modifier.align(Alignment.TopEnd))
-                            }
                             if (active) {
                                 Box(
                                     Modifier
@@ -623,7 +610,7 @@ fun ThemePickGrid(
     }
 }
 
-/** 缩略图右上角的小角标（动态 / 视频）。 */
+/** 缩略图右上角的小角标（动态）。 */
 @Composable
 private fun ThemeCornerBadge(text: String, modifier: Modifier = Modifier) {
     Text(

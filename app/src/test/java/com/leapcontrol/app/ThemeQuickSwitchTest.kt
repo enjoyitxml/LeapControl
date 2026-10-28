@@ -5,6 +5,7 @@ import com.leapcontrol.app.ui.ThemeResolver
 import com.leapcontrol.app.ui.breathCurve
 import com.leapcontrol.app.ui.breathScaleAt
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -22,8 +23,6 @@ class ThemeQuickSwitchTest {
 
     private val lightTheme = SeasonThemes.MIST_HILLS
     private val nightTheme = SeasonThemes.STARRY
-    private val lightVideo = SeasonThemes.VIDEO_SPRING
-    private val darkVideo = SeasonThemes.VIDEO_STARS
 
     // ---------------- 池子判定 ----------------
 
@@ -38,13 +37,9 @@ class ThemeQuickSwitchTest {
     }
 
     @Test
-    fun `浅色视频落在视频浅色池`() {
-        assertSame(SeasonThemes.VIDEO_LIGHT, ThemeResolver.poolOf(lightVideo))
-    }
-
-    @Test
-    fun `深色视频落在视频深色池且只有一套`() {
-        assertEquals(listOf(darkVideo), ThemeResolver.poolOf(darkVideo))
+    fun `两个池子各二十套`() {
+        assertEquals(20, ThemeResolver.poolOf(lightTheme).size)
+        assertEquals(20, ThemeResolver.poolOf(nightTheme).size)
     }
 
     // ---------------- 只换当前那一侧 ----------------
@@ -60,6 +55,7 @@ class ThemeQuickSwitchTest {
                 random = Random(seed),
             )
             assertTrue("浅色槽必须是日间主题", SeasonThemes.DAY.any { it.id == pick.lightThemeId })
+            assertFalse("浅色槽不能出现夜间主题", SeasonThemes.NIGHT_ALL.any { it.id == pick.lightThemeId })
             // 深色槽一个字节都不动：白天换壁纸不该顺手改掉夜里那套
             assertEquals(nightTheme.id, pick.darkThemeId)
         }
@@ -78,37 +74,6 @@ class ThemeQuickSwitchTest {
             assertTrue("深色槽必须是夜间主题", SeasonThemes.NIGHT_ALL.any { it.id == pick.darkThemeId })
             assertEquals(lightTheme.id, pick.lightThemeId)
         }
-    }
-
-    @Test
-    fun `视频主题只在视频池里换`() {
-        repeat(30) { seed ->
-            val pick = ThemeResolver.randomSwitch(
-                mode = AppearanceMode.SYSTEM,
-                systemDark = false,
-                lightThemeId = lightVideo.id,
-                darkThemeId = darkVideo.id,
-                random = Random(seed),
-            )
-            assertTrue(
-                "视频主题不能换成静态主题",
-                SeasonThemes.VIDEO_LIGHT.any { it.id == pick.lightThemeId },
-            )
-            assertEquals(darkVideo.id, pick.darkThemeId)
-        }
-    }
-
-    @Test
-    fun `深色视频池只有星空 点了原地不动`() {
-        val pick = ThemeResolver.randomSwitch(
-            mode = AppearanceMode.SYSTEM,
-            systemDark = true,
-            lightThemeId = lightVideo.id,
-            darkThemeId = darkVideo.id,
-            random = Random(7),
-        )
-        assertEquals(darkVideo.id, pick.darkThemeId)
-        assertEquals(lightVideo.id, pick.lightThemeId)
     }
 
     @Test
@@ -138,18 +103,17 @@ class ThemeQuickSwitchTest {
 
     @Test
     fun `换壁纸不改外观模式`() {
-        // 哪怕当前浅色槽里是视频主题（pick 会强制跟随系统），快捷换壁纸也不插手模式：
-        // 用户点的是「换张壁纸」，模式应该留在原地
+        // 用户点的是「换张壁纸」，模式应该留在原地，不能被顺手改成「跟随系统」
         assertEquals(
             AppearanceMode.LIGHT,
             ThemeResolver.randomSwitch(
-                AppearanceMode.LIGHT, false, lightVideo.id, darkVideo.id, Random(1),
+                AppearanceMode.LIGHT, false, lightTheme.id, nightTheme.id, Random(1),
             ).mode,
         )
         assertEquals(
             AppearanceMode.DARK,
             ThemeResolver.randomSwitch(
-                AppearanceMode.DARK, true, lightVideo.id, darkVideo.id, Random(1),
+                AppearanceMode.DARK, true, lightTheme.id, nightTheme.id, Random(1),
             ).mode,
         )
     }
