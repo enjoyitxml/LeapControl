@@ -66,6 +66,41 @@ object CarCutout {
         return FitRect(target.centerX - w / 2f, target.centerY - h / 2f, w, h)
     }
 
+    /**
+     * 把 [content] 摆进 [target]，并**保证落位整体落在画布内**。
+     *
+     * [containRect] 只管「缩进目标框」，不管画布边界 —— 目标框贴着画布边、或者内容比画布
+     * 还大（极端宽高比）时，浮点结果会顶出去一两个像素，`Canvas.drawBitmap` 就直接把
+     * 车身切在画布外，看着就像「车底/车尾被一刀切掉」。
+     *
+     * 这里多做两件事：内容比画布大就先等比再缩一次；最后把左上角夹进 [0, 画布-尺寸]。
+     * 宁可四周多留一像素空白，也不能切内容。
+     */
+    fun placeRect(
+        content: Box,
+        target: Box,
+        canvasWidth: Int,
+        canvasHeight: Int,
+    ): FitRect {
+        val fit = containRect(content, target)
+        if (fit.width <= 0f || fit.height <= 0f || canvasWidth <= 0 || canvasHeight <= 0) return fit
+        val shrink = minOf(
+            1f,
+            if (fit.width > canvasWidth) canvasWidth / fit.width else 1f,
+            if (fit.height > canvasHeight) canvasHeight / fit.height else 1f,
+        )
+        val w = fit.width * shrink
+        val h = fit.height * shrink
+        val cx = fit.left + fit.width / 2f
+        val cy = fit.top + fit.height / 2f
+        return FitRect(
+            (cx - w / 2f).coerceIn(0f, (canvasWidth - w).coerceAtLeast(0f)),
+            (cy - h / 2f).coerceIn(0f, (canvasHeight - h).coerceAtLeast(0f)),
+            w,
+            h,
+        )
+    }
+
     /** 一个可复用的抠图结果，UI 侧靠它决定要不要提示「没识别出背景」。 */
     data class Cutout(val pixels: IntArray, val removed: Boolean)
 
