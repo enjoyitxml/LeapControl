@@ -19,4 +19,11 @@
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:strokeWidth="1.7" />
+    <!-- 钥匙孔：一小段竖线，锁体空白处有它才不像个空盒子 -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M11.8 13.5 V15.9"
+        android:strokeColor="#FF12141A"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.7" />
 </vector>

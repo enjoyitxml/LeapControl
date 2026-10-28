@@ -51,10 +51,10 @@ class VehicleWidgetProvider : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         val action = intent.action ?: return
-        if (action != VehicleWidget.ACTION_TOGGLE_LOCK &&
+        if (action != VehicleWidget.ACTION_UNLOCK &&
+            action != VehicleWidget.ACTION_LOCK &&
             action != VehicleWidget.ACTION_TOGGLE_AC &&
-            action != VehicleWidget.ACTION_TOGGLE_TRUNK &&
-            action != VehicleWidget.ACTION_HORN
+            action != VehicleWidget.ACTION_TOGGLE_TRUNK
         ) {
             return
         }
@@ -96,25 +96,29 @@ class VehicleWidgetProvider : AppWidgetProvider() {
     }
 
     private suspend fun execute(context: Context, runtime: AppRuntime, action: String) {
-        // 需要先知道「现在是什么状态」才能决定往哪个方向切换。
+        // 开关式按键（空调 / 后备箱）需要先知道「现在是什么状态」才能决定往哪个方向切。
+        // 单次指令（解锁 / 上锁）不看状态，直接发。
         // 先吃磁盘缓存的上一份车况（瞬时，且通常就是几分钟内的），缓存太旧或没有才联网拉。
         runtime.loadCachedStatus()
         var status = runtime.statusFlow.value
         val cacheAge = System.currentTimeMillis() - runtime.lastUpdatedFlow.value
-        if (status == null || cacheAge > CACHE_FRESH_MS) {
+        val needsState = action == VehicleWidget.ACTION_TOGGLE_AC ||
+            action == VehicleWidget.ACTION_TOGGLE_TRUNK
+        if (needsState && (status == null || cacheAge > CACHE_FRESH_MS)) {
             status = runCatching { withTimeoutOrNull(4_000) { runtime.refreshStatus() } }.getOrNull() ?: status
         }
 
         val command = when (action) {
-            VehicleWidget.ACTION_TOGGLE_LOCK -> if (status?.locked == true) "unlock" else "lock"
+            VehicleWidget.ACTION_UNLOCK -> "unlock"
+            VehicleWidget.ACTION_LOCK -> "lock"
             VehicleWidget.ACTION_TOGGLE_AC -> if (status?.acOn == true) "acOff" else "acOn"
             VehicleWidget.ACTION_TOGGLE_TRUNK -> if (status?.trunkOpen == true) "trunkClose" else "trunkOpen"
-            else -> "horn"
+            else -> return
         }
 
         // 开后备箱属于不可撤销动作：沿用 App 内的「3 秒内再点一次确认」策略
-        if (command == "trunkOpen" && !confirmTrunkOpen(context, command)) {
-            toast(context, "再点一次「开后备箱」确认")
+        if (command == "trunkOpen" && !confirmTrunkOpen(context)) {
+            toast(context, "再点一次后备箱确认打开")
             return
         }
 
@@ -138,21 +142,21 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         "acOff" -> "正在关闭空调…"
         "trunkOpen" -> "正在打开后备箱…"
         "trunkClose" -> "正在关闭后备箱…"
-        else -> "正在鸣笛寻车…"
+        else -> "正在下发…"
     }
 
-    private fun confirmTrunkOpen(context: Context, command: String): Boolean {
+    private fun confirmTrunkOpen(context: Context): Boolean {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         val confirmed = WidgetControlSecurity.isDoubleClickConfirmed(
             lastCommand = prefs.getString(KEY_LAST_TRUNK, null),
             lastEpochMs = prefs.getLong(KEY_LAST_TRUNK_AT, 0L),
-            currentCommand = command,
+            currentCommand = "trunkOpen",
             currentEpochMs = now,
         )
         // 确认过一次就清掉，避免连点三下变成两次开箱
         prefs.edit()
-            .putString(KEY_LAST_TRUNK, if (confirmed) null else command)
+            .putString(KEY_LAST_TRUNK, if (confirmed) null else "trunkOpen")
             .putLong(KEY_LAST_TRUNK_AT, if (confirmed) 0L else now)
             .apply()
         return confirmed
