@@ -111,7 +111,7 @@ fun TirePressureScreen(
 
         Spacer(Modifier.height(14.dp))
         Text(
-            text = "正常胎压范围约 2.3 ~ 2.5 bar；低于下限提示欠压，高于上限提示过压。",
+            text = "正常胎压范围约 230 ~ 250 kPa；低于下限提示欠压，高于上限提示过压。",
             color = C.textSecondary,
             fontSize = 12.sp,
             lineHeight = 17.sp,
@@ -130,7 +130,7 @@ private fun TireDetailRow(position: String, tire: TireInfo?) {
         Text(position, color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
         Column(horizontalAlignment = Alignment.End) {
             Text(
-                text = tire?.pressure?.let { "$it bar" } ?: "--",
+                text = tire?.pressure?.let { "$it kPa" } ?: "--",
                 color = when {
                     tire == null -> C.textSecondary
                     tire.warning -> Color(0xFFE5484D)

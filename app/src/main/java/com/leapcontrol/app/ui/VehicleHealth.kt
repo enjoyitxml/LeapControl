@@ -217,7 +217,7 @@ object VehicleHealthDiagnostics {
             tires.forEach { tire ->
                 val pressure = cleanNumber(tire.pressure)
                 val detail = buildString {
-                    append("压力 ${tire.pressure ?: "--"}")
+                    append("压力 ${tire.pressure?.let { "$it kPa" } ?: "--"}")
                     tire.temperature?.let { append("，温度 $it") }
                 }
                 items += when {

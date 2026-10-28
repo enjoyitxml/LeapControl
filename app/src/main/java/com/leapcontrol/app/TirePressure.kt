@@ -1,5 +1,7 @@
 package com.leapcontrol.app
 
+import kotlin.math.roundToInt
+
 /**
  * 胎压的归一化与「是否偏低」判定。纯函数，可单测（见 TirePressureTest）。
  *
@@ -43,6 +45,14 @@ object TirePressure {
 
     /** 折算成 bar 并保留一位小数的展示文本（不带单位，单位由调用处统一拼）。 */
     fun formatBar(value: Any?): String? = toBar(value)?.let { "%.1f".format(it) }
+
+    /**
+     * 折算成 kPa 整数的展示文本（不带单位）。
+     *
+     * App 里所有界面的胎压统一按 kPa 显示（车主看中控和打气泵都是 kPa / bar 两制里优先 kPa，
+     * 且整数没有「2.3 还是 2.35」的小数歧义）：2.4 bar → "240"。
+     */
+    fun formatKpa(value: Any?): String? = toBar(value)?.let { (it * 100).roundToInt().toString() }
 
     /**
      * 单个车轮的状态。

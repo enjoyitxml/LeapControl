@@ -60,6 +60,24 @@ class TirePressureTest {
     }
 
     @Test
+    fun `界面统一显示 kPa 整数`() {
+        // 接口无论给 bar / 0.1bar / kPa，展示层都折成 kPa 整数
+        assertEquals("240", TirePressure.formatKpa(240))
+        assertEquals("240", TirePressure.formatKpa(2.4))
+        assertEquals("240", TirePressure.formatKpa("2.4"))
+        assertEquals("240", TirePressure.formatKpa(24))
+        assertEquals("235", TirePressure.formatKpa(2.35))
+        assertNull(TirePressure.formatKpa(null))
+        assertNull(TirePressure.formatKpa(0))
+    }
+
+    @Test
+    fun `kPa 文本参与判定时能正确折算`() {
+        assertEquals(TirePressure.State.Ok, TirePressure.stateOf("240", vehicleWarning = false))
+        assertEquals(TirePressure.State.Low, TirePressure.stateOf("190", vehicleWarning = false))
+    }
+
+    @Test
     fun `低于 2bar 判为不足`() {
         assertEquals(TirePressure.State.Low, TirePressure.stateOf("1.9", vehicleWarning = false))
         assertEquals(TirePressure.State.Low, TirePressure.stateOf("1.6", vehicleWarning = false))

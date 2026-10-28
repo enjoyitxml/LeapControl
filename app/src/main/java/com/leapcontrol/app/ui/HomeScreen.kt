@@ -1426,7 +1426,7 @@ private fun TirePressureContent(status: CarStatus) {
                             Text(label, color = LocalAppColors.current.textSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                text = tire?.pressure ?: "--",
+                                text = tire?.pressure?.let { "$it kPa" } ?: "--",
                                 color = when {
                                     tire == null -> LocalAppColors.current.textSecondary
                                     tire.warning -> Color(0xFFE5484D)

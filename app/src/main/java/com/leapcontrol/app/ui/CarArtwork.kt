@@ -183,6 +183,12 @@ fun TireCarOutline(
         val originY = size.height * frontFraction - AXLE_FRONT_Y * scaleY
         fun X(v: Float) = offX + v * scaleX
         fun Y(v: Float) = originY + v * scaleY
+        // 矩形/轮胎的宽高必须分别用 scaleX / scaleY，**不能**用两者的平均值：
+        // 左边是 X(left) 锚定的，宽度若按平均值算，横向会比车身多出 (scaleY/scaleX-1) 倍，
+        // 多出来的部分全堆在右边 —— 表现就是天幕、后尾门整体「偏右」（实测偏 1~3dp）。
+        fun W(v: Float) = v * scaleX
+        fun Hh(v: Float) = v * scaleY
+        /** 线宽、圆角用「两轴平均值」，横竖看都一样粗。 */
         fun S(v: Float) = v * (scaleX + scaleY) / 2f
 
         // ---- 车身：几乎透明的玻璃壳 ----
@@ -205,13 +211,13 @@ fun TireCarOutline(
                 endY = Y(ROOF_BOTTOM),
             ),
             topLeft = Offset(X(ROOF_LEFT), Y(ROOF_TOP)),
-            size = Size(S(ROOF_RIGHT - ROOF_LEFT), S(ROOF_BOTTOM - ROOF_TOP)),
+            size = Size(W(ROOF_RIGHT - ROOF_LEFT), Y(ROOF_BOTTOM) - Y(ROOF_TOP)),
             cornerRadius = CornerRadius(S(14f), S(14f)),
         )
         drawRoundRect(
             color = ink.copy(alpha = 0.18f),
             topLeft = Offset(X(ROOF_LEFT), Y(ROOF_TOP)),
-            size = Size(S(ROOF_RIGHT - ROOF_LEFT), S(ROOF_BOTTOM - ROOF_TOP)),
+            size = Size(W(ROOF_RIGHT - ROOF_LEFT), Y(ROOF_BOTTOM) - Y(ROOF_TOP)),
             cornerRadius = CornerRadius(S(14f), S(14f)),
             style = Stroke(width = S(0.9f)),
         )
@@ -230,13 +236,13 @@ fun TireCarOutline(
         drawRoundRect(
             color = ink.copy(alpha = 0.04f),
             topLeft = Offset(X(TRUNK_LEFT), Y(TRUNK_TOP)),
-            size = Size(S(TRUNK_RIGHT - TRUNK_LEFT), S(TRUNK_BOTTOM - TRUNK_TOP)),
+            size = Size(W(TRUNK_RIGHT - TRUNK_LEFT), Y(TRUNK_BOTTOM) - Y(TRUNK_TOP)),
             cornerRadius = CornerRadius(S(6f), S(6f)),
         )
         drawRoundRect(
             color = ink.copy(alpha = 0.15f),
             topLeft = Offset(X(TRUNK_LEFT), Y(TRUNK_TOP)),
-            size = Size(S(TRUNK_RIGHT - TRUNK_LEFT), S(TRUNK_BOTTOM - TRUNK_TOP)),
+            size = Size(W(TRUNK_RIGHT - TRUNK_LEFT), Y(TRUNK_BOTTOM) - Y(TRUNK_TOP)),
             cornerRadius = CornerRadius(S(6f), S(6f)),
             style = Stroke(width = S(0.9f)),
         )
@@ -264,14 +270,14 @@ fun TireCarOutline(
                 drawRoundRect(
                     color.copy(alpha = 0.20f),
                     topLeft = Offset(X(left - 3.5f), Y(top - 3.5f)),
-                    size = Size(S(TIRE_W + 7f), S(TIRE_H + 7f)),
+                    size = Size(W(TIRE_W + 7f), Hh(TIRE_H + 7f)),
                     cornerRadius = CornerRadius(S(7f), S(7f)),
                 )
             }
             drawRoundRect(
                 color,
                 topLeft = Offset(X(left), Y(top)),
-                size = Size(S(TIRE_W), S(TIRE_H)),
+                size = Size(W(TIRE_W), Hh(TIRE_H)),
                 cornerRadius = CornerRadius(S(5f), S(5f)),
             )
         }

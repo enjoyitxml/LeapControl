@@ -69,7 +69,11 @@ private const val CONTROL_RESULT_MAX_WAIT_MS = 20_000L
 /** 里程 / 能耗缓存有效期：15 分钟。老服务限频，不必每次进首页都打一次。 */
 private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
 
-/** 单个车轮的胎压状态。 */
+/**
+ * 单个车轮的胎压状态。
+ *
+ * [pressure] 是 **kPa 整数文本**（如 "240"），不带单位；展示层统一拼「kPa」。
+ */
 data class TireInfo(
     val position: String,
     val pressure: String?,
@@ -796,7 +800,7 @@ class AppRuntime(context: Context) {
             Triple("右后", "rightRearTirePressure", "rightRearTirePressureState"),
         )
         return layout.mapNotNull { (label, pressureKey, stateKey) ->
-            val pressure = formatPressureBar(st.opt(pressureKey))
+            val pressure = formatPressureKpa(st.opt(pressureKey))
             val prefix = pressureKey.removeSuffix("Pressure")
             val temperature = listOf(
                 "${prefix}Temperature",
@@ -1033,11 +1037,15 @@ class AppRuntime(context: Context) {
     }
 
     /**
-     * 胎压统一折算成 bar、只留一位小数、不带单位（单位由展示层拼「bar」）。
-     * 归一规则与阈值见 [com.leapcontrol.app.TirePressure]。
+     * 胎压统一折算成 **kPa 整数**、不带单位（单位由展示层拼「kPa」）。
+     * 2.4 bar → "240"。归一规则与阈值见 [com.leapcontrol.app.TirePressure]。
+     *
+     * 全部界面（首页胎压卡 / 胎压详情页 / 体检）都吃这个字符串，所以这里必须是 kPa：
+     * 体检的阈值 [com.leapcontrol.app.ui.VehicleHealthDiagnostics] 本来就是按 kPa 写的，
+     * 之前这里输出 bar（"2.3"），体检会把它当成 2.3 kPa 而一直判「胎压力偏低」。
      */
-    private fun formatPressureBar(value: Any?): String? =
-        com.leapcontrol.app.TirePressure.formatBar(value)
+    private fun formatPressureKpa(value: Any?): String? =
+        com.leapcontrol.app.TirePressure.formatKpa(value)
 
     private fun formatValue(value: Any?, unit: String): String? {
         if (value == null || value == JSONObject.NULL) return null
