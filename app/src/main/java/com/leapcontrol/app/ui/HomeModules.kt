@@ -75,7 +75,6 @@ object HomeModules {
 data class ModuleCallbacks(
     val onOpenClimate: () -> Unit = {},
     val onOpenFridge: () -> Unit = {},
-    val onOpenTire: () -> Unit = {},
     val onAcOn: () -> Unit = {},
     val onAcOff: () -> Unit = {},
     val onToggleFridge: (Boolean) -> Unit = {},
@@ -105,7 +104,8 @@ fun HomeModuleSection(
         ) {
             TireStatusCard(
                 status = status,
-                onOpen = callbacks.onOpenTire,
+                // 胎压详情页已下线：模块卡只展示，不再跳二级页
+                onOpen = {},
                 modifier = Modifier.weight(1f).height(176.dp),
             )
             VehicleStatusGridCard(

@@ -249,8 +249,6 @@ fun HomeScreen(
         var scheduledAcReturnTo by remember { mutableStateOf<String?>(null) }
         var showVehicleHealth by remember { mutableStateOf(false) }
         var showOta by remember { mutableStateOf(false) }
-        // 胎压监测独立页
-        var showTire by remember { mutableStateOf(false) }
         var acPlan by remember { mutableStateOf(com.leapcontrol.app.ScheduledAcPlan()) }
         var acPlanLoading by remember { mutableStateOf(false) }
         var acPlanLoadFailed by remember { mutableStateOf(false) }
@@ -302,7 +300,7 @@ fun HomeScreen(
         // 打开时向 MainScreen 汇报，让背景视频只在首页主界面播放
         val onMainPage = !showChargingCenter && !showSeatComfort && !showFridge && !showClimate &&
             !showAcScreen && !showScheduledAc && !showVehicleHealth && !showOta &&
-            !showControlEditor && !showTire
+            !showControlEditor
         LaunchedEffect(onMainPage) { onMainPageChange(onMainPage) }
 
         // ---- 车模滚出可视区 / 正在滑动：两个「滚动派生信号」----
@@ -875,11 +873,6 @@ fun HomeScreen(
                 },
                 onBack = { showOta = false },
             )
-        } else if (showTire) {
-            TirePressureScreen(
-                status = status,
-                onBack = { showTire = false },
-            )
         } else if (showBleKey && bleHost != null) {
             BluetoothKeyScreen(host = bleHost, onBack = { showBleKey = false })
         } else {
@@ -1237,7 +1230,7 @@ fun HomeScreen(
             )
 
             // ---- 胎压监测卡（左半）+ 近 7 天行程卡（右半）；相伴卡整行宽放在下面 ----
-            // 胎压卡点进去是胎压详情页（四轮数值 + 温度 + 状态）；
+            // 胎压卡的四个数值 + 车模已经够看，不再做二级详情页（点卡片不跳转）；
             // 近 7 天行程卡画每日里程柱状图；相伴卡的提车天数 / 累计公里都取自里程能耗接口。
             // 三张卡本身都不发指令。
             Spacer(Modifier.height(12.dp))
@@ -1245,7 +1238,6 @@ fun HomeScreen(
                 TireQuickCard(
                     status = currentStatus,
                     modifier = Modifier.weight(1f),
-                    onOpen = { showTire = true },
                 )
                 Spacer(Modifier.width(12.dp))
                 WeeklyTripCard(
@@ -1278,7 +1270,6 @@ fun HomeScreen(
                     callbacks = ModuleCallbacks(
                         onOpenClimate = { showClimate = true },
                         onOpenFridge = { showFridge = true },
-                        onOpenTire = { showTire = true },
                         onAcOn = { ensureConfirmed("开启空调") { runAcCommand(true) } },
                         onAcOff = { ensureConfirmed("关闭空调") { runAcCommand(false) } },
                         onToggleFridge = { enable ->

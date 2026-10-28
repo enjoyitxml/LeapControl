@@ -153,6 +153,9 @@ private const val TRUNK_BOTTOM = 238f
  * 卡片高度变化，把实测值传进来，前后轮才能和四个胎压数字落在同一条水平线上。
  * 后轴默认取对称位置（1 - frontFraction）。
  *
+ * 传的是 getter 而不是 Float：这样读 State 的动作发生在 [Canvas] 的绘制阶段，
+ * 实测值更新时只重绘这一块，不会因为「组合期读了会变的值」把整张卡片重组一遍。
+ *
  * 轮子配色跟随「正常就该像真轮胎」的思路：正常时是深灰实心（深色主题下换成浅灰，
  * 否则深灰压在深底上看不见），只有胎压不足才变红并带一圈红色光晕 ——
  * 绿色高亮会让四个轮子看起来一直「在报警」，反而弱化了真正的异常。
@@ -161,7 +164,7 @@ private const val TRUNK_BOTTOM = 238f
 fun TireCarOutline(
     tires: List<TireInfo>,
     modifier: Modifier = Modifier,
-    frontFraction: Float = 0.29f,
+    frontFraction: () -> Float = { 0.29f },
 ) {
     val C = LocalAppColors.current
     val ink = C.textPrimary
@@ -170,17 +173,20 @@ fun TireCarOutline(
     val tireUnknown = ink.copy(alpha = 0.16f)
 
     Canvas(modifier = modifier) {
+        // 绘制阶段读（不是组合阶段）：测量值变化只让这块 Canvas 重绘
+        val frontFraction = frontFraction()
+        val f = frontFraction.coerceIn(0.05f, 0.5f)
         // 横向按宽度等比；纵向由「前后轴要落在两侧数字中心线上」反推，
         // 差距通常不到 4%，肉眼看不出来，但车轮和数字能严丝合缝对上。
         val scaleX = size.width / TOP_W
-        val axleSpanPx = size.height * (1f - 2f * frontFraction)
+        val axleSpanPx = size.height * (1f - 2f * f)
         val scaleY = if (axleSpanPx > 1f) {
             axleSpanPx / (AXLE_REAR_Y - AXLE_FRONT_Y)
         } else {
             scaleX
         }
         val offX = (size.width - TOP_W * scaleX) / 2f
-        val originY = size.height * frontFraction - AXLE_FRONT_Y * scaleY
+        val originY = size.height * f - AXLE_FRONT_Y * scaleY
         fun X(v: Float) = offX + v * scaleX
         fun Y(v: Float) = originY + v * scaleY
         // 矩形/轮胎的宽高必须分别用 scaleX / scaleY，**不能**用两者的平均值：
