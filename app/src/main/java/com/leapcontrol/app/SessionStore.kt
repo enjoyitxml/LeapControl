@@ -490,6 +490,21 @@ class SessionStore(context: Context) {
         }
     }
 
+    fun loadBaiduAsrApiKey(): String? =
+        appPrefs.getString(BAIDU_ASR_API_KEY, null)?.trim()?.takeIf { it.isNotEmpty() }
+
+    fun loadBaiduAsrSecretKey(): String? =
+        appPrefs.getString(BAIDU_ASR_SECRET_KEY, null)?.trim()?.takeIf { it.isNotEmpty() }
+
+    fun saveBaiduAsrKeys(apiKey: String?, secretKey: String?) {
+        val api = apiKey?.trim().orEmpty()
+        val secret = secretKey?.trim().orEmpty()
+        appPrefs.edit().apply {
+            if (api.isEmpty()) remove(BAIDU_ASR_API_KEY) else putString(BAIDU_ASR_API_KEY, api)
+            if (secret.isEmpty()) remove(BAIDU_ASR_SECRET_KEY) else putString(BAIDU_ASR_SECRET_KEY, secret)
+        }.apply()
+    }
+
     fun loadBluetoothKeyFeatureEnabled(): Boolean =
         appPrefs.getBoolean(BLUETOOTH_KEY_FEATURE_ENABLED, false)
 
@@ -595,6 +610,8 @@ class SessionStore(context: Context) {
         const val HANDLED_UPDATE_VERSION = "handled_update_version"
         const val APPEARANCE_MODE = "appearance_mode"
         const val CUSTOM_AMAP_WEB_KEY = "custom_amap_web_key"
+        const val BAIDU_ASR_API_KEY = "baidu_asr_api_key"
+        const val BAIDU_ASR_SECRET_KEY = "baidu_asr_secret_key"
         const val BLUETOOTH_KEY_FEATURE_ENABLED = "bluetooth_key_feature_enabled"
         const val LAST_CHARGE_STATE = "last_charge_state"
         const val POWER_PAGER_AUTO_PLAY_ENABLED = "power_pager_auto_play_enabled"

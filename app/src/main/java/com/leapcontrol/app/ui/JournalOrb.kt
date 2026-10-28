@@ -230,6 +230,7 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
 
     if (showVoice) {
         JournalVoiceSheet(
+            onlineKeys = runtime.baiduAsrKeys(),
             onCancel = { showVoice = false },
             onTypeInstead = { reason ->
                 showVoice = false

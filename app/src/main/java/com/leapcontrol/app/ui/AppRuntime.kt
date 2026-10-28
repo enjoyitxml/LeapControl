@@ -392,6 +392,26 @@ class AppRuntime(context: Context) {
 
     fun hasAmapKey(): Boolean = amapKey().isNotBlank()
 
+    // ---------------- 语音识别（百度短语音，REST） ----------------
+
+    /**
+     * 百度语音的 API Key + Secret Key。
+     *
+     * 任一项为空就返回 null —— 此时语音走设备自带的 `SpeechRecognizer`，
+     * 只是国产 ROM 上基本不可用，所以正常使用需要把这两项填上。
+     */
+    fun baiduAsrKeys(): Pair<String, String>? {
+        val api = sessionStore.loadBaiduAsrApiKey().orEmpty()
+        val secret = sessionStore.loadBaiduAsrSecretKey().orEmpty()
+        return if (api.isNotBlank() && secret.isNotBlank()) api to secret else null
+    }
+
+    fun setBaiduAsrKeys(apiKey: String, secretKey: String) {
+        sessionStore.saveBaiduAsrKeys(apiKey, secretKey)
+    }
+
+    fun hasBaiduAsr(): Boolean = baiduAsrKeys() != null
+
     /** 搜索目的地 POI。无 Key 时返回空列表。 */
     suspend fun searchDestination(keyword: String): List<AmapPoi> = withContext(Dispatchers.IO) {
         val key = amapKey()

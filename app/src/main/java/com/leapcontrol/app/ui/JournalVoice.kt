@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -70,6 +71,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import com.leapcontrol.app.journal.BaiduAsr
+import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -86,6 +89,8 @@ import kotlin.math.sin
  */
 @Composable
 fun JournalVoiceSheet(
+    /** 填了百度 Key 就走在线识别（不依赖设备语音服务）；为 null 时退回系统的 [SpeechRecognizer]。 */
+    onlineKeys: Pair<String, String>?,
     onCancel: () -> Unit,
     onTypeInstead: (String) -> Unit,
     onResult: (String) -> Unit,
@@ -99,11 +104,193 @@ fun JournalVoiceSheet(
             decorFitsSystemWindows = false,
         ),
     ) {
-        VoiceSheetContent(
-            onCancel = onCancel,
-            onTypeInstead = onTypeInstead,
-            onResult = onResult,
+        if (onlineKeys != null) {
+            OnlineVoiceContent(
+                apiKey = onlineKeys.first,
+                secretKey = onlineKeys.second,
+                onCancel = onCancel,
+                onTypeInstead = onTypeInstead,
+                onResult = onResult,
+            )
+        } else {
+            VoiceSheetContent(
+                onCancel = onCancel,
+                onTypeInstead = onTypeInstead,
+                onResult = onResult,
+            )
+        }
+    }
+}
+
+/**
+ * 在线识别：App 自己录音，说完把 PCM 发给百度换文字。
+ *
+ * 这条路径**不依赖设备的 `android.speech.RecognitionService`** —— 国产 ROM 上那个服务
+ * 多数没实现或不对第三方开放，绑定即 `ERROR_CLIENT`。自己录 + 云端转写就没这层依赖，
+ * 顺带好处是声量直接来自采样，球跟得更紧。
+ */
+@Composable
+private fun OnlineVoiceContent(
+    apiKey: String,
+    secretKey: String,
+    onCancel: () -> Unit,
+    onTypeInstead: (String) -> Unit,
+    onResult: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val activity = context as? ComponentActivity
+    val scope = rememberCoroutineScope()
+
+    var level by remember { mutableFloatStateOf(0f) }
+    var recording by remember { mutableStateOf(false) }
+    var recognizing by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    /** 录满上限（55 秒）自动收尾，由下面那个 LaunchedEffect 接住。 */
+    var autoStop by remember { mutableStateOf(false) }
+
+    val recorder = remember {
+        VoiceRecorder(
+            onLevel = { level = it },
+            onLimitReached = { autoStop = true },
         )
+    }
+
+    val onResultLatest = rememberUpdatedState(onResult)
+    val onTypeLatest = rememberUpdatedState(onTypeInstead)
+
+    fun stopAndSend() {
+        if (!recording) return
+        recording = false
+        val pcm = recorder.stop()
+        level = 0f
+        if (pcm.size < recorder.sampleRate / 2) {
+            error = "没录到声音，再说一次吧"
+            return
+        }
+        recognizing = true
+        scope.launch {
+            val reply = BaiduAsr.recognize(pcm, apiKey, secretKey)
+            recognizing = false
+            val text = reply.text
+            if (text != null) onResultLatest.value(text) else error = reply.error ?: "识别失败，再说一次吧"
+        }
+    }
+
+    fun startRecording() {
+        error = null
+        val ok = recorder.start()
+        recording = ok
+        if (!ok) error = "录音启动失败，检查麦克风权限或有没有别的应用在占用"
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) startRecording() else onTypeLatest.value("没有麦克风权限，先用打字吧")
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { recorder.stop() }
+    }
+
+    // 遮罩全黑，浅色主题下要靠白图标才看得见状态栏（同系统识别路径）
+    DisposableEffect(Unit) {
+        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, view) }
+        val wasLight = controller?.isAppearanceLightStatusBars
+        controller?.isAppearanceLightStatusBars = false
+        onDispose { if (wasLight != null) controller?.isAppearanceLightStatusBars = wasLight }
+    }
+
+    LaunchedEffect(Unit) {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) startRecording() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    LaunchedEffect(autoStop) {
+        if (autoStop) {
+            autoStop = false
+            stopAndSend()
+        }
+    }
+
+    val failure = error
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.82f))
+            .clickable(onClick = onCancel),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .consumeClicks()
+                .padding(horizontal = 34.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                when {
+                    failure != null -> "没听清"
+                    recognizing -> "正在识别"
+                    recording -> "我在听"
+                    else -> "正在准备"
+                },
+                color = Color.White.copy(alpha = 0.92f),
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Medium,
+            )
+
+            Spacer(Modifier.height(30.dp))
+
+            // 识别中让球维持在一点微光，别一下子塌回去
+            SiriOrb(
+                level = if (recognizing) 0.14f else level,
+                modifier = Modifier.size(176.dp),
+            )
+
+            Spacer(Modifier.height(30.dp))
+
+            Text(
+                text = failure ?: if (recognizing) {
+                    "正在把语音转成文字…"
+                } else {
+                    "说一句就行，比如「今天充电花了 50」"
+                },
+                color = if (failure != null) Color.White.copy(alpha = 0.62f) else Color.White,
+                fontSize = 16.sp,
+                lineHeight = 24.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 46.dp),
+            )
+
+            Spacer(Modifier.height(34.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                when {
+                    failure != null -> {
+                        VoiceButton(text = "改用打字", primary = false) { onTypeLatest.value(failure) }
+                        VoiceButton(text = "再试一次", primary = true) { startRecording() }
+                    }
+
+                    recognizing -> VoiceButton(text = "取消", primary = false) { onCancel() }
+
+                    else -> {
+                        VoiceButton(text = "取消", primary = false) {
+                            recorder.stop()
+                            onCancel()
+                        }
+                        VoiceButton(text = "说完了", primary = true) { stopAndSend() }
+                    }
+                }
+            }
+        }
     }
 }
 

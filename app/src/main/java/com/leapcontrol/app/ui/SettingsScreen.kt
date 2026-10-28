@@ -82,6 +82,7 @@ fun SettingsScreen(
     var showRename by remember { mutableStateOf(false) }
     var showPin by remember { mutableStateOf(false) }
     var showAmapKey by remember { mutableStateOf(false) }
+    var showAsrKey by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmGate by remember { mutableStateOf(runtime.biometricConfirmEnabled()) }
     // 蓝牙钥匙详情页（从本页进入时以整页覆盖的形式出现，返回即回到设置）
@@ -129,6 +130,12 @@ fun SettingsScreen(
                 desc = if (runtime.hasAmapKey()) "已配置，可搜索目的地" else "未配置，无法搜索目的地",
                 iconRes = R.drawable.ic_key,
             ) { showAmapKey = true }
+            Spacer(Modifier.height(10.dp))
+            ClickRow(
+                title = "语音识别（百度）",
+                desc = if (runtime.hasBaiduAsr()) "已配置，长按灵感球可直接说话" else "未配置，长按说话会用系统识别",
+                iconRes = R.drawable.ic_mic,
+            ) { showAsrKey = true }
             Spacer(Modifier.height(10.dp))
             ClickRow(
                 title = "刷新车模图片",
@@ -431,6 +438,66 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showAmapKey = false }) { Text("取消", color = C.textSecondary) }
+            },
+        )
+    }
+
+    // ---- 语音识别（百度短语音） ----
+    if (showAsrKey) {
+        val current = runtime.baiduAsrKeys()
+        var apiInput by remember { mutableStateOf(current?.first.orEmpty()) }
+        var secretInput by remember { mutableStateOf(current?.second.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { showAsrKey = false },
+            containerColor = C.panelBg,
+            title = { Text("百度语音识别", color = C.textPrimary) },
+            text = {
+                Column {
+                    Text(
+                        "用于把说的一句话转成文字。到百度智能云「语音技术」创建应用后，把 API Key 与 " +
+                            "Secret Key 填在这里；个人认证每天够用，免费额度 5 万次。\n" +
+                            "留空则退回设备自带的语音识别。",
+                        color = C.textSecondary,
+                        fontSize = 12.sp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = apiInput,
+                        onValueChange = { apiInput = it.trim() },
+                        singleLine = true,
+                        placeholder = { Text("API Key", color = C.textSecondary, fontSize = 13.sp) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = C.textPrimary,
+                            unfocusedTextColor = C.textPrimary,
+                            cursorColor = C.accent,
+                            focusedBorderColor = C.accent,
+                            unfocusedBorderColor = C.border,
+                        ),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = secretInput,
+                        onValueChange = { secretInput = it.trim() },
+                        singleLine = true,
+                        placeholder = { Text("Secret Key", color = C.textSecondary, fontSize = 13.sp) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = C.textPrimary,
+                            unfocusedTextColor = C.textPrimary,
+                            cursorColor = C.accent,
+                            focusedBorderColor = C.accent,
+                            unfocusedBorderColor = C.border,
+                        ),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    runtime.setBaiduAsrKeys(apiInput, secretInput)
+                    showAsrKey = false
+                }) { Text("保存", color = C.accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAsrKey = false }) { Text("取消", color = C.textSecondary) }
             },
         )
     }
