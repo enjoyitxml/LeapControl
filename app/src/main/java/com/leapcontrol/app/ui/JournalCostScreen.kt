@@ -346,6 +346,8 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
         if (showVoice) {
             JournalVoiceSheet(
                 onlineKeys = runtime.baiduAsrKeys(),
+
+                onSaveKeys = { api, secret -> runtime.setBaiduAsrKeys(api, secret) },
                 onCancel = { showVoice = false },
                 onTypeInstead = { reason ->
                     showVoice = false

@@ -59,6 +59,7 @@ import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.QuickSwitchMode
 import com.leapcontrol.app.R
 import com.leapcontrol.app.tiles.QuickTiles
+import com.leapcontrol.app.journal.BaiduAsr
 import kotlinx.coroutines.launch
 
 /**
@@ -447,16 +448,18 @@ fun SettingsScreen(
         val current = runtime.baiduAsrKeys()
         var apiInput by remember { mutableStateOf(current?.first.orEmpty()) }
         var secretInput by remember { mutableStateOf(current?.second.orEmpty()) }
+        var checking by remember { mutableStateOf(false) }
+        var failure by remember { mutableStateOf<String?>(null) }
         AlertDialog(
-            onDismissRequest = { showAsrKey = false },
+            onDismissRequest = { if (!checking) showAsrKey = false },
             containerColor = C.panelBg,
             title = { Text("百度语音识别", color = C.textPrimary) },
             text = {
                 Column {
                     Text(
-                        "用于把说的一句话转成文字。到百度智能云「语音技术」创建应用后，把 API Key 与 " +
-                            "Secret Key 填在这里；个人认证每天够用，免费额度 5 万次。\n" +
-                            "留空则退回设备自带的语音识别。",
+                        "用于把说的一句话转成文字。到百度智能云「语音技术 → 短语音识别」创建应用后，" +
+                            "把应用列表里的 API Key 与 Secret Key 粘到这里；个人认证送 5 万次，够用很久。\n" +
+                            "保存时会先用这两个 Key 换一次 token，换得到才算配置成功。",
                         color = C.textSecondary,
                         fontSize = 12.sp,
                     )
@@ -488,16 +491,35 @@ fun SettingsScreen(
                             unfocusedBorderColor = C.border,
                         ),
                     )
+                    failure?.let {
+                        Spacer(Modifier.height(10.dp))
+                        Text(it, color = Color(0xFFD9534F), fontSize = 12.sp)
+                    }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    runtime.setBaiduAsrKeys(apiInput, secretInput)
-                    showAsrKey = false
-                }) { Text("保存", color = C.accent) }
+                    if (checking) return@TextButton
+                    checking = true
+                    failure = null
+                    scope.launch {
+                        val problem = BaiduAsr.checkCredentials(apiInput, secretInput)
+                        checking = false
+                        if (problem == null) {
+                            runtime.setBaiduAsrKeys(apiInput, secretInput)
+                            BaiduAsr.forgetToken()
+                            message = "百度语音已配置，长按灵感球可以直接说话"
+                            showAsrKey = false
+                        } else {
+                            failure = problem
+                        }
+                    }
+                }) { Text(if (checking) "校验中…" else "保存并校验", color = C.accent) }
             },
             dismissButton = {
-                TextButton(onClick = { showAsrKey = false }) { Text("取消", color = C.textSecondary) }
+                TextButton(onClick = { if (!checking) showAsrKey = false }) {
+                    Text("取消", color = C.textSecondary)
+                }
             },
         )
     }

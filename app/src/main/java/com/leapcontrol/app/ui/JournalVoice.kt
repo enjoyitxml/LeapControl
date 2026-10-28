@@ -38,6 +38,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -89,12 +91,17 @@ import kotlin.math.sin
  */
 @Composable
 fun JournalVoiceSheet(
-    /** 填了百度 Key 就走在线识别（不依赖设备语音服务）；为 null 时退回系统的 [SpeechRecognizer]。 */
+    /** 已保存的百度 Key；为 null 时进入「先配 Key」引导页，而不是硬走系统识别。 */
     onlineKeys: Pair<String, String>?,
+    /** 用户在浮层里当场填好 Key 时回调，由调用方落盘。 */
+    onSaveKeys: (String, String) -> Unit,
     onCancel: () -> Unit,
     onTypeInstead: (String) -> Unit,
     onResult: (String) -> Unit,
 ) {
+    // Key 存在本地状态里：在浮层里填完就能立刻切到在线识别，不用退出去再进来
+    var keys by remember { mutableStateOf(onlineKeys) }
+
     // 用全屏 Dialog 而不是页面内的 Box：语音遮罩要连底部导航栏一起盖住，
     // 挂在页面里会被 Scaffold 的 bottomBar 挡掉一截，Siri 那种沉浸感就没了。
     Dialog(
@@ -104,22 +111,219 @@ fun JournalVoiceSheet(
             decorFitsSystemWindows = false,
         ),
     ) {
-        if (onlineKeys != null) {
+        val current = keys
+        if (current != null) {
             OnlineVoiceContent(
-                apiKey = onlineKeys.first,
-                secretKey = onlineKeys.second,
+                apiKey = current.first,
+                secretKey = current.second,
+                onEditKeys = {
+                    BaiduAsr.forgetToken()
+                    keys = null
+                },
                 onCancel = onCancel,
                 onTypeInstead = onTypeInstead,
                 onResult = onResult,
             )
         } else {
-            VoiceSheetContent(
+            VoiceSetupContent(
+                onSaved = { api, secret ->
+                    onSaveKeys(api, secret)
+                    BaiduAsr.forgetToken()
+                    keys = api to secret
+                },
                 onCancel = onCancel,
                 onTypeInstead = onTypeInstead,
                 onResult = onResult,
             )
         }
     }
+}
+
+/**
+ * 还没配 Key 时的引导页。
+ *
+ * 这里**故意不再自动退回系统识别**：那台设备上没有可供第三方绑定的
+ * `RecognitionService`，自动退回去只会让用户看到一句「识别服务没响应」，
+ * 看不出到底哪里坏了。改成说清原因 + 当场填 Key（填完马上校验）+ 一个
+ * 明确写着「仍然试试系统语音」的出口。
+ */
+@Composable
+private fun VoiceSetupContent(
+    onSaved: (String, String) -> Unit,
+    onCancel: () -> Unit,
+    onTypeInstead: (String) -> Unit,
+    onResult: (String) -> Unit,
+) {
+    var showForm by remember { mutableStateOf(false) }
+    var systemMode by remember { mutableStateOf(false) }
+
+    if (systemMode) {
+        VoiceSheetContent(
+            onCancel = { systemMode = false },
+            onTypeInstead = onTypeInstead,
+            onResult = onResult,
+        )
+        return
+    }
+
+    val scope = rememberCoroutineScope()
+    var apiInput by remember { mutableStateOf("") }
+    var secretInput by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.88f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .consumeClicks()
+                .padding(horizontal = 30.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                if (showForm) "填百度语音 Key" else "语音还没配好",
+                color = Color.White,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+
+            Spacer(Modifier.height(14.dp))
+
+            Text(
+                text = if (showForm) {
+                    "到百度智能云「语音技术 → 短语音识别」创建应用，把应用列表里的 " +
+                        "API Key 与 Secret Key 粘到这里。个人认证送 5 万次，够用很久。"
+                } else {
+                    "这台手机没有可用的系统语音服务（长按一直报「识别服务没响应」就是它）。" +
+                        "填一次百度 Key 就能用：录音还是 App 自己录，只把音频发去转成文字。"
+                },
+                color = Color.White.copy(alpha = 0.68f),
+                fontSize = 13.sp,
+                lineHeight = 21.sp,
+                textAlign = TextAlign.Center,
+            )
+
+            if (showForm) {
+                Spacer(Modifier.height(20.dp))
+                VoiceField(
+                    value = apiInput,
+                    onValueChange = { apiInput = it.trim() },
+                    placeholder = "API Key",
+                    enabled = !checking,
+                )
+                Spacer(Modifier.height(10.dp))
+                VoiceField(
+                    value = secretInput,
+                    onValueChange = { secretInput = it.trim() },
+                    placeholder = "Secret Key",
+                    enabled = !checking,
+                )
+                error?.let {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        it,
+                        color = Color(0xFFFF8A8A),
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(26.dp))
+
+            if (showForm) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    VoiceButton(text = "返回", primary = false) {
+                        if (!checking) {
+                            showForm = false
+                            error = null
+                        }
+                    }
+                    VoiceButton(
+                        text = if (checking) "校验中…" else "校验并开始",
+                        primary = true,
+                        enabled = !checking,
+                    ) {
+                        if (checking) return@VoiceButton
+                        if (apiInput.isBlank() || secretInput.isBlank()) {
+                            error = "两个 Key 都要填"
+                            return@VoiceButton
+                        }
+                        checking = true
+                        error = null
+                        scope.launch {
+                            val problem = BaiduAsr.checkCredentials(apiInput, secretInput)
+                            checking = false
+                            if (problem == null) onSaved(apiInput, secretInput) else error = problem
+                        }
+                    }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    VoiceButton(text = "改用打字", primary = false) { onTypeInstead("") }
+                    VoiceButton(text = "填百度 Key", primary = true) { showForm = true }
+                }
+                Spacer(Modifier.height(14.dp))
+                // 零配置的第三条路：输入法键盘上都有麦克风键，那条链路是输入法自己接的云端，
+                // 跟系统的 RecognitionService 无关，这台设备上反而能用
+                Text(
+                    "也可以点「改用打字」，再用输入法键盘上的麦克风键说话",
+                    color = Color.White.copy(alpha = 0.42f),
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "仍然试试系统语音",
+                    color = Color.White.copy(alpha = 0.42f),
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { systemMode = true }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 深色浮层里的输入框：白字、细边框，和遮罩风格一致。 */
+@Composable
+private fun VoiceField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    enabled: Boolean,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        enabled = enabled,
+        singleLine = true,
+        placeholder = { Text(placeholder, color = Color.White.copy(alpha = 0.38f), fontSize = 14.sp) },
+        shape = RoundedCornerShape(12.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = Color.White,
+            unfocusedTextColor = Color.White,
+            disabledTextColor = Color.White.copy(alpha = 0.6f),
+            cursorColor = Color.White,
+            focusedBorderColor = Color.White.copy(alpha = 0.72f),
+            unfocusedBorderColor = Color.White.copy(alpha = 0.24f),
+            disabledBorderColor = Color.White.copy(alpha = 0.18f),
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
+            disabledContainerColor = Color.Transparent,
+        ),
+    )
 }
 
 /**
@@ -133,6 +337,8 @@ fun JournalVoiceSheet(
 private fun OnlineVoiceContent(
     apiKey: String,
     secretKey: String,
+    /** 凭据失效时回到「填 Key」页，别让用户自己去设置里找。 */
+    onEditKeys: () -> Unit,
     onCancel: () -> Unit,
     onTypeInstead: (String) -> Unit,
     onResult: (String) -> Unit,
@@ -289,6 +495,20 @@ private fun OnlineVoiceContent(
                         VoiceButton(text = "说完了", primary = true) { stopAndSend() }
                     }
                 }
+            }
+
+            // 报错时给两条出口：确认是 Key 的问题就直接回到填 Key 页
+            if (failure != null) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "重新填 Key",
+                    color = Color.White.copy(alpha = 0.55f),
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onEditKeys() }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                )
             }
         }
     }
@@ -484,18 +704,23 @@ private fun VoiceSheetContent(
 }
 
 @Composable
-private fun VoiceButton(text: String, primary: Boolean, onClick: () -> Unit) {
+private fun VoiceButton(
+    text: String,
+    primary: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     val accent = LocalAppColors.current.accent
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(26.dp))
-            .background(if (primary) accent else Color.White.copy(alpha = 0.14f))
+            .background(if (primary) accent.copy(alpha = if (enabled) 1f else 0.45f) else Color.White.copy(alpha = 0.14f))
             .border(
                 1.dp,
                 if (primary) Color.Transparent else Color.White.copy(alpha = 0.20f),
                 RoundedCornerShape(26.dp),
             )
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 26.dp, vertical = 13.dp),
         contentAlignment = Alignment.Center,
     ) {
