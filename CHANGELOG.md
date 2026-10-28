@@ -11,7 +11,16 @@
 ## [0.2.40] - 2026-10-28
 
 ### 修复
-- 语音识别连不上识别服务（ERROR_CLIENT），灵感球改右下角并去掉「记」字
+- **语音识别一直报「识别被打断」（ERROR_CLIENT）**：
+  - `createSpeechRecognizer()` 是异步绑定，原来紧接着就 `startListening()`，多数 ROM 直接判客户端错误 → 现在创建后留 90ms 再收音
+  - 旧实例 `destroy()` 后立刻重建同样会撞窗口期 → 现在隔 240ms 再建
+  - `EXTRA_SPEECH_INPUT_*_MILLIS` 按规范应为 Int，原来传的是 Long，个别 ROM 读不到值会抛错 → 已改为 Int
+  - `ERROR_CLIENT` / `ERROR_RECOGNIZER_BUSY` 不再立刻弹错，静默重试最多 3 次；另加「4 秒无任何回调即判定没连上」的看门狗
+  - 改用 Activity 的 Context 连识别服务（少数 ROM 拒绝 applicationContext）
+  - 彻底失败时多一条「用系统语音」兜底，走系统听写 App，至少能把话说出来
+
+### UI 调整
+- 零记首页的灵感球从底部正中挪到**右下角**，并去掉球心那个「记」字；上方提示条改为右对齐、超长省略
 
 ### 其他
 - 补全 v0.2.39 变更记录
