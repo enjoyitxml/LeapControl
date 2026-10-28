@@ -304,11 +304,21 @@ fun HomeScreen(
         // 这里提升到页面层，是因为概览条与展开面板各有一颗加减号，必须共用同一份温度。
         val acOnNow = status?.acOn == true
         val remoteAcTemp = AcTempDraft.parse(status?.acTargetTemp)
-        // 开机后车端回报同一个温度 = 草稿已生效，交还给车端，避免下次关空调又被旧草稿盖掉
-        LaunchedEffect(acOnNow, remoteAcTemp, pendingAcTempDraft) {
-            if (acOnNow && pendingAcTempDraft != null && remoteAcTemp == pendingAcTempDraft) {
-                pendingAcTempDraft = null
+        // 草稿什么时候交还给车端（配合 AcTempDraft.shown 的「草稿优先」）：
+        // ① 车端回报了同一个温度 → 指令已生效，草稿没用了；
+        // ② 车端回报了一个「新出现的、和草稿不同」的温度 → 有人直接在车机上改了，以车端为准。
+        // 只判 ① 的话，用户点完温度又去车机上改，界面会一直卡在草稿上不动。
+        var lastRemoteAcTemp by remember { mutableStateOf(remoteAcTemp) }
+        LaunchedEffect(remoteAcTemp, pendingAcTempDraft) {
+            val draft = pendingAcTempDraft
+            if (draft != null) {
+                if (remoteAcTemp == draft) {
+                    pendingAcTempDraft = null
+                } else if (remoteAcTemp != null && remoteAcTemp != lastRemoteAcTemp) {
+                    pendingAcTempDraft = null
+                }
             }
+            lastRemoteAcTemp = remoteAcTemp
         }
         val acTargetTemp = AcTempDraft.shown(acOnNow, remoteAcTemp, pendingAcTempDraft)
 
@@ -435,7 +445,7 @@ fun HomeScreen(
         }
 
         /** 空调模块：按指定温度下发空调指令（参考原项目 Commands.buildAc）。 */
-        fun runAcTemperature(temp: Int) {
+        fun runAcTemperature(temp: Int, onFailed: (() -> Unit)? = null) {
             scope.launch {
                 controlling = "acTemp"
                 actionMessage = null
@@ -446,6 +456,8 @@ fun HomeScreen(
                     pendingAcTemp = temp
                     showPinDialog = true
                 } catch (e: Exception) {
+                    // 没发出去就把界面上刚跳的温度退回去，别让页面显示一个车上根本没有的温度
+                    onFailed?.invoke()
                     actionMessage = friendlyError(e)
                 }
                 controlling = null
@@ -453,13 +465,20 @@ fun HomeScreen(
         }
 
         /**
-         * 空调设定温度加减：空调**开着**就是调温（立即下发），**关着**只改本地草稿，
-         * 等点电源时才把草稿温度带下去。判据见 [AcTempDraft.sendOnArrow]。
+         * 空调设定温度加减：**点一下就确认、确认就下发**，不再攒成草稿等点电源。
+         *
+         * 以前空调关着时只改本地草稿，页面上温度变了、车上没变，要等返回首页点电源才带上，
+         * 看上去就像「指令要等返回才发出去」。这里统一成一条路径：
+         * 空调开着 = 改设定温度；关着 = 开空调并把温度设成这个值，两者都要先问一句。
          */
         fun stepAcTemp(delta: Int) {
             val next = AcTempDraft.step(acTargetTemp, delta)
             if (next == acTargetTemp) return
-            if (AcTempDraft.sendOnArrow(acOnNow)) runAcTemperature(next) else pendingAcTempDraft = next
+            ensureConfirmed(if (acOnNow) "设定温度 $next℃" else "开启空调并设定 $next℃") {
+                // 先乐观显示，车端回读到同一个值后会自动交还给车端（见上面的 LaunchedEffect）
+                pendingAcTempDraft = next
+                runAcTemperature(next) { pendingAcTempDraft = null }
+            }
         }
 
         /**
@@ -469,18 +488,22 @@ fun HomeScreen(
          * 风量 / 出风方向 / 循环用 [com.leapcontrol.app.Commands.acSettingName] 合成，
          * 座椅类用 `driverSeatHeating_2` 这种「前缀:档位」），这里只负责下发 + 回拉车况。
          */
-        fun runAcPanelCommand(commandName: String) {
+        fun runAcPanelCommand(commandName: String, onFailed: (() -> Unit)? = null) {
             scope.launch {
                 controlling = commandName
                 actionMessage = null
                 try {
                     actionMessage = runtime.control(commandName)
                 } catch (e: NeedPinException) {
+                    // 密码框取消才会真的失败，这里先不回滚：用户补完密码会重发同一条
                     pendingAcPanelCommand = commandName
                     showPinDialog = true
                     controlling = null
                     return@launch
                 } catch (e: Exception) {
+                    // 下发失败：把界面上已经乐观改掉的那一项退回原值。
+                    // 不回滚的话，界面显示 3 档、车上还是 0 档，两边对不上。
+                    onFailed?.invoke()
                     actionMessage = friendlyError(e)
                 }
                 // 先放开按钮（不阻塞用户继续操作），回拉放在后面：
@@ -909,8 +932,8 @@ fun HomeScreen(
                     ) { runAcCommand(on, acTargetTemp) }
                 },
                 // 空调页里的每一条指令（场景 / 风量 / 出风 / 舒适件）都先过二次确认
-                onCommand = { name ->
-                    ensureConfirmed(acCommandLabel(name)) { runAcPanelCommand(name) }
+                onCommand = { name, rollback ->
+                    ensureConfirmed(acCommandLabel(name)) { runAcPanelCommand(name, rollback) }
                 },
                 onOpenScheduledAc = {
                     scheduledAcReturnTo = "ac"
