@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件底卡：澎湃原生那种「浅色玻璃」观感。
+     标准小组件拿不到系统的高级材质（模糊）能力，只能用近乎不透明的浅色渐变 + 极细描边模拟。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:endColor="#E9F0FA"
+        android:startColor="#F7FAFF" />
+    <corners android:radius="24dp" />
+    <stroke
+        android:width="0.8dp"
+        android:color="#14121A2A" />
+</shape>

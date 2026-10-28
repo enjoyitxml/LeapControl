@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  桌面小组件 4x2 · 上半「续航 + 车模」，下半四等分按键。
+  视觉参照澎湃原生小组件：大圆角浅色卡、大字号数值、细电量条、发丝级分割线。
+  RemoteViews 只支持这几种基础控件（LinearLayout / TextView / ImageView / ProgressBar），
+  所以全部用它们拼，不涉及 Compose。
+
+  版式按「最小可用高度 110dp」倒推：续航行 + 电量条 + 状态行（状态与更新时间同排，
+  省掉一整行的垂直空间），下半四格 44dp。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_card"
+    android:orientation="vertical">
+
+    <!-- 上半区：点它打开 App -->
+    <LinearLayout
+        android:id="@+id/wg_top"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="4dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="bottom"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/wg_range"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:color="#12141A"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:text="--"
+                    android:textSize="24sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/wg_unit"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginBottom="2dp"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:text="km"
+                    android:textColor="#6C7480"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <ProgressBar
+                android:id="@+id/wg_bar"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="104dp"
+                android:layout_height="3dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_bar" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="5dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/wg_state"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:text="正在同步车况…"
+                    android:textColor="#12141A"
+                    android:textSize="11.5sp" />
+
+                <TextView
+                    android:id="@+id/wg_time"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:text="尚未同步"
+                    android:textColor="#8A9099"
+                    android:textSize="9sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 车模：官方图是透明底 PNG，fitCenter 不会变形 -->
+        <ImageView
+            android:id="@+id/wg_car"
+            android:layout_width="118dp"
+            android:layout_height="66dp"
+            android:layout_gravity="center_vertical"
+            android:layout_marginStart="2dp"
+            android:contentDescription="车辆"
+            android:scaleType="fitCenter"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/wg_divider_h"
+        android:layout_width="match_parent"
+        android:layout_height="1px"
+        android:background="#14121A2A" />
+
+    <!-- 下半区：四个等分按键（图标 + 小号标签，标签写的是「点下去会发生什么」） -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="42dp"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:id="@+id/wg_cell_lock"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@drawable/widget_cell"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/wg_icon_lock"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:contentDescription="锁车"
+                android:src="@drawable/ic_wg_unlock" />
+
+            <TextView
+                android:id="@+id/wg_label_lock"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="解锁"
+                android:textColor="#8A9099"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="1px"
+            android:layout_height="match_parent"
+            android:background="#14121A2A" />
+
+        <LinearLayout
+            android:id="@+id/wg_cell_ac"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@drawable/widget_cell"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/wg_icon_ac"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:contentDescription="空调"
+                android:src="@drawable/ic_wg_ac" />
+
+            <TextView
+                android:id="@+id/wg_label_ac"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="开空调"
+                android:textColor="#8A9099"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="1px"
+            android:layout_height="match_parent"
+            android:background="#14121A2A" />
+
+        <LinearLayout
+            android:id="@+id/wg_cell_trunk"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@drawable/widget_cell"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/wg_icon_trunk"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:contentDescription="后备箱"
+                android:src="@drawable/ic_wg_trunk" />
+
+            <TextView
+                android:id="@+id/wg_label_trunk"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="开后备箱"
+                android:textColor="#8A9099"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="1px"
+            android:layout_height="match_parent"
+            android:background="#14121A2A" />
+
+        <LinearLayout
+            android:id="@+id/wg_cell_horn"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@drawable/widget_cell"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/wg_icon_horn"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:contentDescription="鸣笛寻车"
+                android:src="@drawable/ic_wg_horn" />
+
+            <TextView
+                android:id="@+id/wg_label_horn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="鸣笛寻车"
+                android:textColor="#8A9099"
+                android:textSize="9sp" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
