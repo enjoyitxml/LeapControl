@@ -284,11 +284,25 @@ object EnergyFormat {
         return "$month/$day"
     }
 
-    /** 车型名归一化：「零跑C11」→「C11」，空则退回「零跑」。 */
+    /**
+     * 车型名归一化：「零跑C11」→「C11」，空则退回「零跑」。
+     *
+     * ### 为什么还要一张别名表
+     * 车辆列表接口下发的 `carType` 是**内部项目代号**，不一定是宣传名：
+     * Lafa5 下发的是 `B05`（预研代号），直接显示会出现「超越全国 50% 的 B05 车主」
+     * 这种车主自己都不认识的车型。这里把已知代号折回宣传名，其余原样显示。
+     */
     fun carModelName(raw: String?): String {
         val text = raw?.trim().orEmpty()
             .removePrefix("零跑")
             .trim()
-        return text.ifEmpty { "零跑" }
+        if (text.isEmpty()) return "零跑"
+        return MODEL_ALIASES[text.uppercase()] ?: text
     }
+
+    /** 内部代号 → 宣传名。新增车型时在这里补一行即可（键用大写比较）。 */
+    private val MODEL_ALIASES = mapOf(
+        "B05" to "Lafa5",   // 零跑 Lafa5：车辆接口下发的是项目代号 B05
+        "LAFA5" to "Lafa5", // 已经是宣传名时统一成官方写法
+    )
 }
