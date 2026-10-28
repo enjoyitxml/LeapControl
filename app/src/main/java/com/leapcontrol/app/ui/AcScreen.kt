@@ -82,7 +82,7 @@ fun AcScreen(
     /** 点电源：true = 开空调（带当前设定温度）。 */
     onPower: (Boolean) -> Unit,
     /** 其它一切指令（场景 / 风量 / 循环 / 出风方向 / 座椅…）都走这里，参数是命令名。 */
-    onCommand: (String) -> Unit,
+    onCommand: (String, rollback: (() -> Unit)?) -> Unit,
     onOpenScheduledAc: () -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -373,21 +373,21 @@ fun AcScreen(
                 label = "极速降温",
                 modifier = Modifier.weight(1f),
                 enabled = !busy,
-                onClick = { onCommand("quickCool") },
+                onClick = { onCommand("quickCool", null) },
             )
             AcSceneTile(
                 glyph = AcGlyph.Sun,
                 label = "一键制热",
                 modifier = Modifier.weight(1f),
                 enabled = !busy,
-                onClick = { onCommand("quickHeat") },
+                onClick = { onCommand("quickHeat", null) },
             )
             AcSceneTile(
                 glyph = AcGlyph.Defrost,
                 label = "前挡除霜",
                 modifier = Modifier.weight(1f),
                 enabled = !busy,
-                onClick = { onCommand("defrost") },
+                onClick = { onCommand("defrost", null) },
             )
             AcSceneTile(
                 glyph = AcGlyph.Circulation,
@@ -397,7 +397,10 @@ fun AcScreen(
                 active = circle == "out",
                 enabled = !busy,
                 onClick = {
-                    onCommand(adjustName("circle", targetCircle = if (circle == "out") "in" else "out"))
+                    onCommand(
+                        adjustName("circle", targetCircle = if (circle == "out") "in" else "out"),
+                        null,
+                    )
                 },
             )
         }
@@ -410,7 +413,7 @@ fun AcScreen(
                 label = "快速除味",
                 modifier = Modifier.weight(1f),
                 enabled = !busy,
-                onClick = { onCommand("deodorize") },
+                onClick = { onCommand("deodorize", null) },
             )
             AcWideTile(
                 glyph = AcGlyph.Timer,
@@ -437,8 +440,12 @@ fun AcScreen(
                             .background(if (selected) C.accent else C.textPrimary.copy(alpha = 0.045f))
                             .clickable(enabled = !busy) {
                                 if (level != wind) {
+                                    // 先按当前值拼好指令，再改本地值：反过来的话
+                                    // adjustName 会读到已经改过的 wind，把「旧值」当成新值发出去
+                                    val command = adjustName("wind", windLevel = level)
+                                    val previous = wind
                                     wind = level
-                                    onCommand(adjustName("wind", windLevel = level))
+                                    onCommand(command) { wind = previous }
                                 }
                             },
                         contentAlignment = Alignment.Center,
@@ -480,8 +487,10 @@ fun AcScreen(
                     modifier = Modifier.weight(1f),
                 ) {
                     if (position != "all") {
+                        val command = adjustName("position", targetPosition = "all")
+                        val previous = position
                         position = "all"
-                        onCommand(adjustName("position", targetPosition = "all"))
+                        onCommand(command) { position = previous }
                     }
                 }
                 AcChoiceTile(
@@ -492,8 +501,10 @@ fun AcScreen(
                     modifier = Modifier.weight(1f),
                 ) {
                     if (position != "wshld") {
+                        val command = adjustName("position", targetPosition = "wshld")
+                        val previous = position
                         position = "wshld"
-                        onCommand(adjustName("position", targetPosition = "wshld"))
+                        onCommand(command) { position = previous }
                     }
                 }
             }
@@ -515,12 +526,14 @@ fun AcScreen(
                                 enabled = !busy,
                                 modifier = Modifier.weight(1f),
                                 onHeating = { lvl ->
+                                    val previous = seatHeatDriver
                                     seatHeatDriver = lvl
-                                    onCommand("driverSeatHeating_$lvl")
+                                    onCommand("driverSeatHeating_$lvl") { seatHeatDriver = previous }
                                 },
                                 onVentilation = { lvl ->
+                                    val previous = seatVentDriver
                                     seatVentDriver = lvl
-                                    onCommand("driverSeatVentilation_$lvl")
+                                    onCommand("driverSeatVentilation_$lvl") { seatVentDriver = previous }
                                 },
                             )
                         }
@@ -532,12 +545,14 @@ fun AcScreen(
                                 enabled = !busy,
                                 modifier = Modifier.weight(1f),
                                 onHeating = { lvl ->
+                                    val previous = seatHeatPassenger
                                     seatHeatPassenger = lvl
-                                    onCommand("passengerSeatHeating_$lvl")
+                                    onCommand("passengerSeatHeating_$lvl") { seatHeatPassenger = previous }
                                 },
                                 onVentilation = { lvl ->
+                                    val previous = seatVentPassenger
                                     seatVentPassenger = lvl
-                                    onCommand("passengerSeatVentilation_$lvl")
+                                    onCommand("passengerSeatVentilation_$lvl") { seatVentPassenger = previous }
                                 },
                             )
                         }
@@ -557,12 +572,9 @@ fun AcScreen(
                                 // 0 关 → 1 弱 → 2 强 → 0 关
                                 onClick = {
                                     val next = (steeringLevel + 1) % 3
+                                    val previous = steeringLevel
                                     steeringLevel = next
-                                    onCommand("steeringWheelHeating_$next")
-                                },
-                                onSelect = { lvl ->
-                                    steeringLevel = lvl
-                                    onCommand("steeringWheelHeating_$lvl")
+                                    onCommand("steeringWheelHeating_$next") { steeringLevel = previous }
                                 },
                             )
                         }
@@ -578,18 +590,12 @@ fun AcScreen(
                                 enabled = !busy,
                                 onClick = {
                                     val next = if (mirrorLevel > 0) 0 else 1
+                                    val previous = mirrorLevel
                                     mirrorLevel = next
                                     onCommand(
                                         if (next > 0) "rearviewMirrorHeating_on"
                                         else "rearviewMirrorHeating_off",
-                                    )
-                                },
-                                onSelect = { lvl ->
-                                    mirrorLevel = lvl
-                                    onCommand(
-                                        if (lvl > 0) "rearviewMirrorHeating_on"
-                                        else "rearviewMirrorHeating_off",
-                                    )
+                                    ) { mirrorLevel = previous }
                                 },
                             )
                         }
@@ -876,7 +882,6 @@ private fun AcSeatBlock(
                 compact = true,
                 // 0 → 1 → 2 → 3 → 0
                 onClick = { onHeating((heatingLevel + 1) % 4) },
-                onSelect = { onHeating(it) },
             )
             if (ventilationLevel != null) Spacer(Modifier.height(6.dp))
         }
@@ -889,7 +894,6 @@ private fun AcSeatBlock(
                 enabled = enabled,
                 compact = true,
                 onClick = { onVentilation((ventilationLevel + 1) % 4) },
-                onSelect = { onVentilation(it) },
             )
         }
     }
@@ -944,7 +948,6 @@ private fun AcLevelRow(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     onClick: () -> Unit,
-    onSelect: (Int) -> Unit,
 ) {
     val C = LocalAppColors.current
     val on = level > 0
@@ -976,47 +979,29 @@ private fun AcLevelRow(
             maxLines = 1,
             modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.width(6.dp))
-        // 档位分段：第 0 格是「关」，其余是 1..max（方向盘两档显示「弱 / 强」）
-        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            for (i in 0..maxLevel) {
-                val selected = i == level
+        Spacer(Modifier.width(if (compact) 8.dp else 10.dp))
+        // 档位点阵：亮几颗就是几档（1 档 1 颗绿点、2 档 2 颗…）。
+        // 之前那版是「关 / 1 / 2 / 3」四个文字格，摆在座位卡里跟图标、文字挤成一条，
+        // 几乎连在一起 —— 点阵只占三十几 dp，而且「亮了几颗」一眼就能数出来。
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for (i in 1..maxLevel) {
+                val lit = i <= level
                 Box(
                     modifier = Modifier
-                        .size(
-                            width = if (compact) 20.dp else 24.dp,
-                            height = if (compact) 20.dp else 22.dp,
-                        )
-                        .clip(RoundedCornerShape(6.dp))
+                        .size(if (compact) 6.dp else 7.dp)
+                        .clip(CircleShape)
                         .background(
                             when {
-                                selected -> content
-                                else -> C.textPrimary.copy(alpha = if (enabled) 0.06f else 0.03f)
+                                lit -> content
+                                else -> C.textPrimary.copy(alpha = if (enabled) 0.14f else 0.07f)
                             },
-                        )
-                        // 已选中的格子不必再点一次，省掉一次无意义的空指令
-                        .clickable(enabled = enabled && !selected) { onSelect(i) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = levelCellLabel(i, maxLevel),
-                        // 选中格是实底色，字必须反白（深色主题下 accent 也够深）
-                        color = if (selected) Color.White else content.copy(alpha = 0.85f),
-                        fontSize = if (compact) 9.5.sp else 10.5.sp,
-                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                        maxLines = 1,
-                    )
-                }
+                        ),
+                )
             }
         }
     }
-}
-
-/** 档位分段的格子文案：0 = 关；2 档的方向盘用「弱 / 强」更直观。 */
-private fun levelCellLabel(index: Int, maxLevel: Int): String = when {
-    index == 0 -> "关"
-    maxLevel == 1 -> "开"
-    maxLevel == 2 -> if (index == 1) "弱" else "强"
-    else -> index.toString()
 }
 

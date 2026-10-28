@@ -62,9 +62,16 @@ class AcTempDraftTest {
     }
 
     @Test
-    fun runningAcFollowsTheCar() {
-        // 开着的时候以车端为准：车机上改了温度，界面要跟上
-        assertEquals(21, AcTempDraft.shown(acOn = true, remote = 21, pending = 26))
+    fun runningAcShowsTheDraftTheUserJustClicked() {
+        // 点一下加减号，界面必须立刻变成新温度 —— 哪怕车端还在回报旧值。
+        // 「开着时以车端为准」会让刚点完的两三秒里数字纹丝不动，用户以为没点上。
+        assertEquals(26, AcTempDraft.shown(acOn = true, remote = 21, pending = 26))
+    }
+
+    @Test
+    fun runningAcFollowsTheCarOnceDraftIsCleared() {
+        // 车端回报了不同的值（有人在车机上改了温度）→ 调用方清掉草稿，界面跟着车端走
+        assertEquals(21, AcTempDraft.shown(acOn = true, remote = 21, pending = null))
     }
 
     @Test
@@ -110,14 +117,5 @@ class AcTempDraftTest {
     fun supportedRangeIs16To32() {
         assertEquals(16, AcTempDraft.MIN)
         assertEquals(32, AcTempDraft.MAX)
-    }
-
-    // ---- sendOnArrow ----
-
-    @Test
-    fun arrowSendsOnlyWhenAcIsRunning() {
-        // 这是本次修复的核心：空调关着时调温不能下发（否则会顺手开空调）
-        assertFalse(AcTempDraft.sendOnArrow(acOn = false))
-        assertTrue(AcTempDraft.sendOnArrow(acOn = true))
     }
 }

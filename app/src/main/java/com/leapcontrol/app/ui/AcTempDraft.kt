@@ -53,14 +53,18 @@ object AcTempDraft {
      *
      * @param acOn 空调当前是否开启（含「点击后意图开启、车端尚未回报」的那几秒）
      * @param remote 车端上报的设定温度
-     * @param pending 用户在关机态调整的草稿
+     * @param pending 用户刚点出来的目标温度（点击即下发，等车端回报的那几秒就是它顶着）
      *
-     * 空调开着时以车端为准（车机上改了温度这里要能跟上），车端还没回报再退回草稿；
-     * 关着时草稿优先——否则每次刷新车况都会把用户刚调的数字冲回车端旧值。
+     * **草稿优先**：点一下加减号，界面必须立刻变成新温度，否则用户看到的是「点了没反应」，
+     * 要等两三秒车端回报才有变化。草稿什么时候交还给车端由调用方判断（HomeScreen 里
+     * 车端回报同值 = 生效、回报了别的值 = 有人在车机上改了，两种情况都会清掉草稿）。
+     * [acOn] 保留在签名里是为了调用处语义清楚，判定不再依赖它。
      */
+    @Suppress("UNUSED_PARAMETER")
     fun shown(acOn: Boolean, remote: Int?, pending: Int?): Int = when {
-        acOn -> remote ?: pending ?: DEFAULT
-        else -> pending ?: remote ?: DEFAULT
+        pending != null -> pending
+        remote != null -> remote
+        else -> DEFAULT
     }
 
     /**
@@ -73,12 +77,4 @@ object AcTempDraft {
     /** 还能不能继续降低 / 升高，用于箭头置灰。 */
     fun canStep(current: Int, delta: Int): Boolean =
         if (delta < 0) current > MIN else current < MAX
-
-    /**
-     * 点温度箭头时是否要立刻下发指令。
-     *
-     * 空调开着 = 用户在调温，必须下发（否则界面和车端不一致，用户也调不动）；
-     * 空调关着 = 用户只是在预设待开机温度，不发——这就是这次要修的那个问题。
-     */
-    fun sendOnArrow(acOn: Boolean): Boolean = acOn
 }
