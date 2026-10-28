@@ -1,10 +1,14 @@
 package com.leapcontrol.app.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -12,7 +16,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -33,7 +36,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -53,11 +55,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -118,6 +120,8 @@ private fun VoiceSheetContent(
     var partial by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var listening by remember { mutableStateOf(false) }
+    /** 正在连识别服务（含自动重试的那几次）。此时不能报错，否则会闪一下「被打断」。 */
+    var preparing by remember { mutableStateOf(true) }
     var level by remember { mutableFloatStateOf(0f) }
 
     val onResultLatest = rememberUpdatedState(onResult)
@@ -126,15 +130,20 @@ private fun VoiceSheetContent(
     val session = remember {
         VoiceSession(
             context = context,
+            onPreparing = { preparing = true },
             onPartial = { partial = it },
             onLevel = { level = it },
             onResult = { text -> onResultLatest.value(text) },
             onFail = { message ->
                 listening = false
+                preparing = false
                 level = 0f
                 error = message
             },
-            onListening = { listening = it },
+            onListening = { active ->
+                listening = active
+                if (active) preparing = false
+            },
         )
     }
 
@@ -159,6 +168,31 @@ private fun VoiceSheetContent(
         } else {
             onTypeLatest.value("没有麦克风权限，先用打字吧")
         }
+    }
+
+    // 兜底：进程内识别三次都连不上时，交给系统听写 App —— 界面不是我们的，但至少能说出话
+    val dictation = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val text = result.data
+            ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            ?.firstOrNull()
+        if (result.resultCode == Activity.RESULT_OK && !text.isNullOrBlank()) {
+            onResultLatest.value(text)
+        } else {
+            error = "系统语音也没返回结果，改用打字吧"
+        }
+    }
+
+    fun systemDictation() {
+        session.release()
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "说一句：今天充电花了 50")
+        }
+        val ok = runCatching { dictation.launch(intent) }.isSuccess
+        if (!ok) error = "这台手机没有系统语音，改用打字吧"
     }
 
     LaunchedEffect(Unit) {
@@ -190,6 +224,7 @@ private fun VoiceSheetContent(
                 when {
                     error != null -> "没听清"
                     listening -> "我在听"
+                    preparing -> "正在准备"
                     else -> "正在整理"
                 },
                 color = Color.White.copy(alpha = 0.92f),
@@ -208,9 +243,7 @@ private fun VoiceSheetContent(
 
             // 实时文本：识别过程中逐字长出来，静止时给一句示例
             Text(
-                text = partial.ifBlank {
-                    error ?: "比如「今天充电花了 50」"
-                },
+                text = partial.ifBlank { error ?: "比如「今天充电花了 50」" },
                 color = if (error != null) Color.White.copy(alpha = 0.62f) else Color.White,
                 fontSize = 16.sp,
                 lineHeight = 24.sp,
@@ -245,6 +278,20 @@ private fun VoiceSheetContent(
                     },
                 )
             }
+
+            // 只在识别彻底失败后才露出这条，别让正常路径多出一个选择
+            if (error != null) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "还是不行？用系统语音",
+                    color = Color.White.copy(alpha = 0.55f),
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { systemDictation() }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                )
+            }
         }
     }
 }
@@ -277,7 +324,7 @@ private fun VoiceButton(text: String, primary: Boolean, onClick: () -> Unit) {
 /**
  * 那个会呼吸、会跟着声音起伏的球。
  *
- * 三层叠出来：外圈柔光（有声音时张开）→ 旋转的扫掠渐变球体 → 三圈错相波纹。
+ * 三层叠出来：外圈柔光（有声音时张开）→ 球内几团绕球心旋转的彩云 → 上沿一道细高光。
  * 振幅来自识别服务的 `onRmsChanged`，已经过 [animateFloatAsState] 平滑，
  * 否则每 50ms 一个跳变，看着像在抖。
  */
@@ -290,12 +337,6 @@ private fun SiriOrb(level: Float, modifier: Modifier = Modifier) {
         targetValue = 360f,
         animationSpec = infiniteRepeatable(tween(5600, easing = LinearEasing)),
         label = "spin",
-    )
-    val breath by transition.animateFloat(
-        initialValue = 0.97f,
-        targetValue = 1.03f,
-        animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Reverse),
-        label = "breath",
     )
     val smooth by animateFloatAsState(
         targetValue = level.coerceIn(0f, 1f),
@@ -392,83 +433,41 @@ private val BLOBS = listOf(
 /**
  * 进程内的语音识别会话。
  *
- * 生命周期由 Composable 的 `DisposableEffect` 管：进浮层创建、退出销毁。
- * 单独抽成类是为了让「识别服务」这件事跟重绘彻底分开 —— 它不持有任何 Compose 状态，
- * 只往外回调。
+ * 这里踩过的坑，动之前先看一眼：
+ *  - `createSpeechRecognizer()` 的绑定是**异步**的。紧接着 `startListening()`，在多数 ROM 上
+ *    会直接回 `ERROR_CLIENT` —— 界面上就是「识别被打断了，再说一次吧」。创建后要等一拍再 start；
+ *  - 每次都想 `destroy()` 重建同样会撞窗口期，旧实例销毁后必须隔一会儿再建新的；
+ *  - `EXTRA_SPEECH_INPUT_*_MILLIS` 这几个 extra 规范里是 **Int**，传 Long 时服务端
+ *    `getIntExtra` 读不到值，个别 ROM 直接抛异常，错误码还是 `ERROR_CLIENT`；
+ *  - 以上都可能偶发，所以 `ERROR_CLIENT` / `ERROR_RECOGNIZER_BUSY` 一律静默重试（最多 3 次），
+ *    再配一个「4 秒内没有任何回调就当没连上」的看门狗。
  */
 private class VoiceSession(
     context: Context,
+    private val onPreparing: () -> Unit,
     private val onPartial: (String) -> Unit,
     private val onLevel: (Float) -> Unit,
     private val onResult: (String) -> Unit,
     private val onFail: (String) -> Unit,
     private val onListening: (Boolean) -> Unit,
 ) {
-    private val appContext = context.applicationContext
+    // 尽量用 Activity 的 Context 去连识别服务：少数 ROM 拿 applicationContext 会被拒
+    private val host: Context = context.hostContext()
+    private val handler = Handler(Looper.getMainLooper())
+
     private var recognizer: SpeechRecognizer? = null
+    private var generation = 0
+    private var tries = 0
+    private var connectedGen = -1
+    private var released = false
 
     val available: Boolean
-        get() = runCatching { SpeechRecognizer.isRecognitionAvailable(appContext) }.getOrDefault(false)
+        get() = runCatching { SpeechRecognizer.isRecognitionAvailable(host) }.getOrDefault(false)
 
     fun start() {
-        release()
-        val created = runCatching { SpeechRecognizer.createSpeechRecognizer(appContext) }.getOrNull()
-        if (created == null) {
-            onFail("这台手机没有语音识别服务，直接打字吧")
-            return
-        }
-        recognizer = created
-        created.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) = onListening(true)
-
-            override fun onBeginningOfSpeech() = Unit
-
-            override fun onRmsChanged(rmsdB: Float) {
-                // 实测范围大致 -2dB（安静）~ 10dB（贴嘴说话），映射到 0~1
-                onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
-            }
-
-            override fun onBufferReceived(buffer: ByteArray?) = Unit
-
-            override fun onEndOfSpeech() = onListening(false)
-
-            override fun onError(error: Int) {
-                onListening(false)
-                onFail(humanError(error))
-            }
-
-            override fun onResults(results: Bundle?) {
-                onListening(false)
-                val text = results
-                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull()
-                    .orEmpty()
-                if (text.isBlank()) onFail("没听清，再说一次吧") else onResult(text)
-            }
-
-            override fun onPartialResults(partialResults: Bundle?) {
-                val text = partialResults
-                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull()
-                if (!text.isNullOrBlank()) onPartial(text)
-            }
-
-            override fun onEvent(eventType: Int, params: Bundle?) = Unit
-        })
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-            // 半截结果：球下面那行字要跟着说话长出来，不能等整句结束才出现
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, appContext.packageName)
-            // 停顿 1.5 秒才判「说完了」；再短会把人换气当成结束
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-            putExtra("android.speech.extra.DICTATION_MODE", true)
-        }
-        runCatching { created.startListening(intent) }
-            .onFailure { onFail("语音识别启动失败，直接打字吧") }
+        released = false
+        tries = 0
+        attempt()
     }
 
     /** 用户点「说完了」：不再收音，等识别服务把最终结果送回来。 */
@@ -477,10 +476,166 @@ private class VoiceSession(
     }
 
     fun release() {
-        runCatching { recognizer?.cancel() }
-        runCatching { recognizer?.destroy() }
+        released = true
+        generation++
+        val dead = recognizer
         recognizer = null
+        handler.removeCallbacksAndMessages(null)
+        runCatching { dead?.cancel() }
+        runCatching { dead?.destroy() }
     }
+
+    // ---- 连接：销毁旧实例 → 重建 → 等绑定 → 收音 ----
+
+    private fun attempt() {
+        tries++
+        val gen = ++generation
+        onPreparing()
+        onListening(false)
+        val dead = recognizer
+        recognizer = null
+        if (dead != null) {
+            runCatching { dead.cancel() }
+            runCatching { dead.destroy() }
+        }
+        // 刚 destroy 完立刻 create，服务端还没断干净，给它 240ms
+        handler.postDelayed({ if (alive(gen)) create(gen) }, if (dead == null) 0L else 240L)
+    }
+
+    private fun create(gen: Int) {
+        val created = runCatching { SpeechRecognizer.createSpeechRecognizer(host) }.getOrNull()
+        if (created == null) {
+            fail(gen, "这台手机没有语音识别服务，直接打字吧")
+            return
+        }
+        recognizer = created
+        created.setRecognitionListener(listener(gen))
+        // 绑定完成前 startListening 会被判成客户端错误，先让 90ms
+        handler.postDelayed({
+            if (!alive(gen)) return@postDelayed
+            val ok = runCatching { created.startListening(speechIntent()) }.isSuccess
+            if (!ok) {
+                retryOrFail(gen, "语音识别启动失败")
+                return@postDelayed
+            }
+            // 看门狗：4 秒内一个回调都没来，说明服务压根没连上
+            handler.postDelayed({
+                if (alive(gen) && connectedGen != gen) retryOrFail(gen, "识别服务没响应")
+            }, 4000L)
+        }, 90L)
+    }
+
+    @Suppress("TooManyFunctions")
+    private fun listener(gen: Int) = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {
+            markConnected(gen)
+            if (alive(gen)) onListening(true)
+        }
+
+        override fun onBeginningOfSpeech() = markConnected(gen)
+
+        override fun onRmsChanged(rmsdB: Float) {
+            markConnected(gen)
+            if (!alive(gen)) return
+            // 实测范围大致 -2dB（安静）~ 10dB（贴嘴说话），映射到 0~1
+            onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
+        }
+
+        override fun onBufferReceived(buffer: ByteArray?) = Unit
+
+        override fun onEndOfSpeech() {
+            if (alive(gen)) onListening(false)
+        }
+
+        override fun onError(error: Int) {
+            if (!alive(gen)) return
+            onListening(false)
+            onLevel(0f)
+            when (error) {
+                SpeechRecognizer.ERROR_CLIENT,
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+                -> retryOrFail(gen, humanError(error))
+
+                else -> fail(gen, humanError(error))
+            }
+        }
+
+        override fun onResults(results: Bundle?) {
+            if (!alive(gen)) return
+            onListening(false)
+            val text = results
+                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+                .orEmpty()
+            if (text.isBlank()) {
+                fail(gen, "没听清，再说一次吧")
+            } else {
+                // 拿到结果就收工：先把这一代作废，避免收尾时再蹦出一条错误
+                released = true
+                generation++
+                runCatching { recognizer?.cancel() }
+                onResult(text)
+            }
+        }
+
+        override fun onPartialResults(partialResults: Bundle?) {
+            if (!alive(gen)) return
+            val text = partialResults
+                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+            if (!text.isNullOrBlank()) onPartial(text)
+        }
+
+        override fun onEvent(eventType: Int, params: Bundle?) = Unit
+    }
+
+    private fun speechIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+        // 半截结果：球下面那行字要跟着说话长出来，不能等整句结束才出现
+        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        // 停顿 1.5 秒才判「说完了」；再短会把人换气当成结束。
+        // 这三个 extra 必须是 Int —— 传 Long 会被服务端读歪（见类注释）
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000)
+        putExtra("android.speech.extra.DICTATION_MODE", true)
+    }
+
+    /** 有些服务不发 `onReadyForSpeech` 直接开始报声量，收到任何一个回调都算连上了。 */
+    private fun markConnected(gen: Int) {
+        if (gen == generation) connectedGen = gen
+    }
+
+    private fun retryOrFail(gen: Int, why: String) {
+        if (!alive(gen)) return
+        if (tries < MAX_TRIES) attempt() else fail(gen, why)
+    }
+
+    private fun fail(gen: Int, message: String) {
+        if (!alive(gen)) return
+        onListening(false)
+        onLevel(0f)
+        onFail(message)
+    }
+
+    /** 这一代尝试是否还算数：重试或退出后，旧实例的回调一律丢掉。 */
+    private fun alive(gen: Int) = gen == generation && !released
+
+    private companion object {
+        const val MAX_TRIES = 3
+    }
+}
+
+/** 顺着 ContextWrapper 往上找 Activity；找不到就退回 applicationContext。 */
+private fun Context.hostContext(): Context {
+    var cursor: Context = this
+    while (cursor is ContextWrapper) {
+        if (cursor is Activity) return cursor
+        cursor = cursor.baseContext
+    }
+    return applicationContext
 }
 
 private fun humanError(code: Int): String = when (code) {

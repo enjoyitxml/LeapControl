@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,6 +56,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.journal.CostStats
@@ -62,7 +64,7 @@ import com.leapcontrol.app.journal.QuickLog
 import kotlinx.coroutines.delay
 
 /**
- * 零记首页底部中间的「灵感球」。
+ * 零记首页右下角的「灵感球」。
  *
  * 记录这件事不该先想「进哪个页面、点哪个按钮」——想说什么就直接说：
  *  - **点一下**：弹出输入框，打字记；
@@ -133,7 +135,8 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
 
     Column(
         modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
+        // 球贴在右下角，提示条要跟着往右靠，否则会被挤到屏幕中间显得脱节
+        horizontalAlignment = Alignment.End,
     ) {
         OrbHint(text = hint, emphasized = flash != null)
         Spacer(Modifier.height(10.dp))
@@ -206,12 +209,6 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
                         style = Stroke(width = hairline, cap = StrokeCap.Round),
                     )
                 }
-                Text(
-                    "记",
-                    color = readableOn(C.accent),
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
             }
         }
     }
@@ -265,6 +262,7 @@ private fun OrbHint(text: String, emphasized: Boolean) {
     ) { (value, strong) ->
         Box(
             modifier = Modifier
+                .widthIn(max = 250.dp)
                 .clip(shape)
                 // 实心底 + 发丝描边：半透明白压在季节渐变上会泛暖灰，一屏里就有两种白
                 .background(C.panelBg)
@@ -276,6 +274,7 @@ private fun OrbHint(text: String, emphasized: Boolean) {
                 color = if (strong) C.accent else C.textSecondary,
                 fontSize = 11.5.sp,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
