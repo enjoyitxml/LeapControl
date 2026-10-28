@@ -1329,6 +1329,9 @@ object Commands {
 
     const val SCHEDULED_AC_CMD_ID = "171"
 
+    /** 预约电池预热（PTC 加热计划）指令号，与 171 共用 getappointment 查询通道。 */
+    const val BATTERY_PREHEAT_CMD_ID = "161"
+
     /** 官方抓包 `[681]` 的 cmdid=171 预约空调 payload。 */
     fun buildScheduledAc(
         plan: ScheduledAcPlan,

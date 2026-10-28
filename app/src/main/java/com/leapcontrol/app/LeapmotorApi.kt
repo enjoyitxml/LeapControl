@@ -2232,6 +2232,58 @@ class LeapmotorApi internal constructor(
     }
 
     /**
+     * 查询预约电池预热计划（cmdid=161）。
+     *
+     * 与 171 共用 `getappointment` 通道（官方抓包里两者只差 cmdid）。
+     * 返回 null = 查询失败；hasSchedule=false = 车端确实没有预约项。
+     * 页面靠它回显真实开关状态，而不是只在本地 SharedPreferences 里记一笔
+     * ——换机/清数据后就对不上车了。
+     */
+    fun getScheduledBatteryPreheat(): ScheduledPreheatState? {
+        val data = fetchAppointment(Commands.BATTERY_PREHEAT_CMD_ID) ?: return null
+        return ChargeSchedule.parsePreheatState(data)
+    }
+
+    /**
+     * GET getappointment：返回 `data` 原始值（可能是 JSON 字符串或对象）。
+     * 网关 result 非 0 视为失败，返回 null 让调用方保留本地状态。
+     */
+    private fun fetchAppointment(cmdId: String): Any? {
+        requireVin()
+        try {
+            ensureFreshOldToken()
+        } catch (_: Exception) {}
+        val route = ensureRoute()
+        val params = LinkedHashMap<String, String>()
+        params["cmdid"] = cmdId
+        params["carvin"] = session.selectedVin
+
+        val signedBody = oldSignedParams(params)
+        val headers = combinedAppAndGatewayHeaders(signedBody, needLogin = true)
+        val host = if (route.appCenter.isNotBlank()) route.appCenter else route.appRegion
+        val candidates = listOf(
+            "https://appgateway.leapmotor.com/carownerservice/v3/api/appremotectl/getappointment",
+            "$host/carownerservice/v3/api/appremotectl/getappointment"
+        ).distinct()
+
+        var lastException: Exception? = null
+        for (url in candidates) {
+            try {
+                val resp = http(url, headers = headers, query = signedBody)
+                val result = resp.opt("result")
+                if (result != null && result != JSONObject.NULL && result.toString() != "0") {
+                    return null
+                }
+                return resp.opt("data") ?: JSONObject.NULL
+            } catch (e: Exception) {
+                lastException = e
+            }
+        }
+        lastException?.let { throw it }
+        return null
+    }
+
+    /**
      * 定时空调预约（cmdid=171）。
      * 官方抓包：POST {appCenter}/carownerservice/v3/api/appremotectl/appointment
      */

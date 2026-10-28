@@ -115,6 +115,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.collectAsState
+import com.leapcontrol.app.ChargePlanCyclesHelper
+import com.leapcontrol.app.ChargeSchedule
 import com.leapcontrol.app.QuickSwitchPrefs
 import com.leapcontrol.app.QuickTarget
 import com.leapcontrol.app.R
@@ -225,20 +227,16 @@ fun HomeScreen(
         var vinKey by remember { mutableStateOf(runtime.session.selectedVin) }
         var vehicles by remember { mutableStateOf<List<com.leapcontrol.app.Vehicle>>(emptyList()) }
         var showVehicleMenu by remember { mutableStateOf(false) }
-        // 充电中心二级页状态
+        // ---- 充电中心（二级页 + 两个三级页）----
+        // 页面上所有改动先落到 chargeDraft，点「保存并下发设置」才发指令：
+        // 健康充电 / 190 预约充电 / 161 电池预热三条连发很容易撞网关限流。
         var showChargingCenter by remember { mutableStateOf(false) }
-        var healthyCharge by remember { mutableStateOf(false) }
-        var chargeLimit by remember { mutableStateOf(100) }
-        var reserveCharge by remember { mutableStateOf(false) }
-        var batteryPreheat by remember { mutableStateOf(false) }
+        var chargeDraft by remember { mutableStateOf(com.leapcontrol.app.ChargeCenterDraft()) }
+        var chargeLoading by remember { mutableStateOf(false) }
+        var chargeLoadFailed by remember { mutableStateOf(false) }
         var chargeSaving by remember { mutableStateOf(false) }
-        var chargeResult by remember { mutableStateOf<String?>(null) }
-        // 预约充电计划（进入充电中心时从车端回填，避免写死 23:00 / 07:00）
-        var planStart by remember { mutableStateOf("23:00") }
-        var planEnd by remember { mutableStateOf("07:00") }
-        var planTargetSoc by remember { mutableStateOf(80) }
-        var preheatStart by remember { mutableStateOf("07:00") }
-        var planLoaded by remember { mutableStateOf(false) }
+        var showChargeSchedule by remember { mutableStateOf(false) }
+        var showPreheatSchedule by remember { mutableStateOf(false) }
         // 充电枪操作指令在 PIN 验证完成后重放
         var pendingChargeGun by remember { mutableStateOf<String?>(null) }
         // 二级页面：座椅舒适 / 车载冰箱 / 完整空调
@@ -505,41 +503,81 @@ fun HomeScreen(
             }
         }
 
-        /** 充电中心：保存并下发设置（健康充电/预约充电/预约电池预热，参考原项目实现）。 */
-        fun saveCharging() {
+        /**
+         * 回读车端充电设置，用来填页面草稿（不用本地缓存冒充真值）：
+         * - 健康充电开关 → 车况信号 48
+         * - 充电上限 / 预约充电时段与重复日 → 云端 commonConfig 的充电计划
+         * - 电池预热 → `cmdid=161` getappointment
+         *
+         * 两个云端来源都失败才置 [chargeLoadFailed]，页面据此显示「重试」；
+         * 只失败一项时保留草稿里的旧值，不把用户的设置清掉。
+         */
+        fun loadChargeCenter() {
+            if (chargeLoading) return
             scope.launch {
-                chargeSaving = true
-                chargeResult = runCatching {
-                    runtime.applyChargingSettings(
-                        healthyCharge = healthyCharge,
-                        chargeLimit = chargeLimit,
-                        reserveCharge = reserveCharge,
-                        batteryPreheat = batteryPreheat,
-                        scheduledStart = planStart,
-                        scheduledEnd = planEnd,
-                        scheduledTargetSoc = planTargetSoc,
-                        preheatStart = preheatStart,
-                    )
-                }.fold(
-                    onSuccess = { "充电设置已下发：$it" },
-                    onFailure = { friendlyError(it) },
+                chargeLoading = true
+                chargeLoadFailed = false
+                // 先静默拉一次车况：健康充电开关（信号 48）与电量 / 电池温度都来自车况，
+                // 只读组合期捕获的 status 会拿到进入页面之前那一份旧值
+                runCatching { runtime.refreshStatus() }
+                val live = runtime.statusFlow.value
+                val plan = runCatching { runtime.loadChargePlan() }.getOrNull()
+                val preheat = runCatching { runtime.loadBatteryPreheatSchedule() }.getOrNull()
+                if (plan == null && preheat == null) chargeLoadFailed = true
+                val current = chargeDraft
+                chargeDraft = current.copy(
+                    healthy = live?.healthyChargeEnabled ?: current.healthy,
+                    limitSoc = plan?.percent ?: current.limitSoc,
+                    scheduledEnabled = plan?.isEnable ?: current.scheduledEnabled,
+                    scheduledStart = ChargeSchedule.timeOfDay(plan?.beginTime) ?: current.scheduledStart,
+                    scheduledEnd = ChargeSchedule.timeOfDay(plan?.endTime) ?: current.scheduledEnd,
+                    scheduledDays = plan?.cycles
+                        ?.let { ChargePlanCyclesHelper.parseToDaySet(it) }
+                        ?: current.scheduledDays,
+                    continueUntilLimit = plan?.recharge ?: current.continueUntilLimit,
+                    preheatEnabled = preheat?.hasSchedule ?: current.preheatEnabled,
+                    preheatStart = preheat?.startTime ?: current.preheatStart,
+                    preheatDays = preheat?.days
+                        ?.let { ChargePlanCyclesHelper.parseToDaySet(it) }
+                        ?: current.preheatDays,
                 )
-                chargeSaving = false
+                chargeLoading = false
             }
         }
 
-        // 进入充电中心时回填车端已保存的计划（只拉一次，用户手动改过之后不再覆盖）
-        LaunchedEffect(showChargingCenter) {
-            if (showChargingCenter && !planLoaded) {
-                val plan = runCatching { runtime.loadChargePlan() }.getOrNull()
-                if (plan != null) {
-                    reserveCharge = plan.isEnable
-                    plan.beginTime?.let { planStart = it }
-                    plan.endTime?.let { planEnd = it }
-                    plan.percent?.let { planTargetSoc = it.coerceIn(50, 100) }
-                }
-                planLoaded = true
+        /** 充电中心：一次性下发健康充电 / 预约充电 / 电池预热，再回读车端真实值。 */
+        fun saveCharging() {
+            if (chargeSaving) return
+            scope.launch {
+                chargeSaving = true
+                actionMessage = null
+                val draft = chargeDraft
+                actionMessage = runCatching {
+                    runtime.applyChargingSettings(
+                        healthyCharge = draft.healthy,
+                        chargeLimit = draft.limitSoc,
+                        reserveCharge = draft.scheduledEnabled,
+                        batteryPreheat = draft.preheatEnabled,
+                        scheduledStart = draft.scheduledStart,
+                        scheduledEnd = draft.scheduledEnd,
+                        continueUntilLimit = draft.continueUntilLimit,
+                        scheduledDays = draft.scheduledDays,
+                        preheatStart = draft.preheatStart,
+                        preheatDays = draft.preheatDays,
+                    )
+                }.fold(
+                    onSuccess = { "充电设置：$it" },
+                    onFailure = { friendlyError(it) },
+                )
+                chargeSaving = false
+                // 下发后回读：车端可能纠正（比如设的值被取整），让界面显示车端真值
+                loadChargeCenter()
             }
+        }
+
+        // 进入充电中心时回读车端设置；离开再进来会再读一次，方便在车上改过之后同步
+        LaunchedEffect(showChargingCenter) {
+            if (showChargingCenter) loadChargeCenter()
         }
 
         /** 定时空调：进入页面时拉回车端计划回填；失败时保留默认草稿让用户手动下发。 */
@@ -630,7 +668,6 @@ fun HomeScreen(
             scope.launch {
                 controlling = "chargeGun"
                 actionMessage = null
-                chargeResult = null
                 try {
                     val msg = when (action) {
                         "unlock" -> runtime.unlockCharger()
@@ -734,31 +771,54 @@ fun HomeScreen(
                     showScheduledAc = true
                 },
             )
+        } else if (showChargeSchedule) {
+            // 预约充电三级页：只改草稿，确定后回到充电中心，仍要点「保存并下发设置」
+            ScheduledChargeScreen(
+                start = chargeDraft.scheduledStart,
+                end = chargeDraft.scheduledEnd,
+                days = chargeDraft.scheduledDays,
+                continueUntilLimit = chargeDraft.continueUntilLimit,
+                onConfirm = { newStart, newEnd, newDays, newContinue ->
+                    chargeDraft = chargeDraft.copy(
+                        scheduledStart = newStart,
+                        scheduledEnd = newEnd,
+                        scheduledDays = newDays,
+                        continueUntilLimit = newContinue,
+                    )
+                    showChargeSchedule = false
+                },
+                onClose = { showChargeSchedule = false },
+            )
+        } else if (showPreheatSchedule) {
+            ScheduledPreheatScreen(
+                start = chargeDraft.preheatStart,
+                days = chargeDraft.preheatDays,
+                onConfirm = { newStart, newDays ->
+                    chargeDraft = chargeDraft.copy(preheatStart = newStart, preheatDays = newDays)
+                    showPreheatSchedule = false
+                },
+                onClose = { showPreheatSchedule = false },
+            )
         } else if (showChargingCenter) {
-            ChargingCenterScreen(
+            ChargingScreen(
                 status = status,
-                healthyCharge = healthyCharge,
-                onHealthyChargeChange = { healthyCharge = it },
-                chargeLimit = chargeLimit,
-                onChargeLimitChange = { chargeLimit = it },
-                reserveCharge = reserveCharge,
-                onReserveChargeChange = { reserveCharge = it },
-                planStart = planStart,
-                onPlanStartChange = { planStart = it },
-                planEnd = planEnd,
-                onPlanEndChange = { planEnd = it },
-                planTargetSoc = planTargetSoc,
-                onPlanTargetSocChange = { planTargetSoc = it },
-                batteryPreheat = batteryPreheat,
-                onBatteryPreheatChange = { batteryPreheat = it },
-                preheatStart = preheatStart,
-                onPreheatStartChange = { preheatStart = it },
-                onChargeGun = { runChargeGun(it) },
-                gunBusy = controlling == "chargeGun",
-                onSave = { saveCharging() },
+                draft = chargeDraft,
+                onDraftChange = { chargeDraft = it },
+                loading = chargeLoading,
+                loadFailed = chargeLoadFailed,
                 saving = chargeSaving,
-                saveResult = chargeResult,
-                onBack = { showChargingCenter = false },
+                gunBusy = controlling == "chargeGun",
+                onGunAction = { runChargeGun(it) },
+                onRetryLoad = { loadChargeCenter() },
+                onOpenScheduled = { showChargeSchedule = true },
+                onOpenPreheat = { showPreheatSchedule = true },
+                onSave = { saveCharging() },
+                // 退出时把三级页开关一并复位，否则下次进来会直接落在三级页
+                onBack = {
+                    showChargeSchedule = false
+                    showPreheatSchedule = false
+                    showChargingCenter = false
+                },
             )
         } else if (showScheduledAc) {
             ScheduledAcScreen(
@@ -2385,507 +2445,6 @@ private fun ChargingCenterEntry(onClick: () -> Unit) {
                 modifier = Modifier.size(14.dp),
             )
         }
-    }
-}
-
-/** 开关行：左标题 + 右开关（充电中心二级页用）。 */
-@Composable
-private fun ChargeSwitchRow(
-    title: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    val C = LocalAppColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = title,
-            color = C.textPrimary,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedTrackColor = C.accent,
-                uncheckedTrackColor = C.barTrack,
-            ),
-        )
-    }
-}
-
-/** 充电枪连接状态文案（信号缺失时给出中性的未知提示，不猜测）。 */
-private fun chargeConnectionText(status: CarStatus?): String = when {
-    status?.charging == true -> "正在充电中"
-    status?.chargeCableConnected == true -> "充电枪已连接，未开始充电"
-    status?.chargeCableConnected == false -> "充电枪未连接"
-    else -> "充电枪连接状态未知"
-}
-
-/** 单项读数格：上标题下数值，数值缺失显示「--」。 */
-@Composable
-private fun ChargeReadingCell(title: String, value: String?, modifier: Modifier = Modifier) {
-    val C = LocalAppColors.current
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = title, color = C.textSecondary, fontSize = 11.5.sp)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = value ?: "--",
-            color = C.textPrimary,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-/** 充电枪操作按钮：竖排图标 + 文案。 */
-@Composable
-private fun GunActionButton(
-    label: String,
-    icon: ImageVector,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val C = LocalAppColors.current
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(C.iconBg)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = if (enabled) C.accent else C.textSecondary,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = label,
-            color = if (enabled) C.textPrimary else C.textSecondary,
-            fontSize = 11.5.sp,
-        )
-    }
-}
-
-/** 时间选择行：左右两个下拉（小时 / 分钟），分钟按 5 分钟步进到整刻。 */
-@Composable
-private fun TimePickerRow(
-    label: String,
-    time: String,
-    onTimeChange: (String) -> Unit,
-) {
-    val C = LocalAppColors.current
-    val parts = time.split(":")
-    val hour = parts.getOrNull(0)?.toIntOrNull() ?: 0
-    val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            color = C.textPrimary,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
-        TimeDropdown(
-            value = hour,
-            range = 0..23,
-            step = 1,
-            onValueChange = { onTimeChange(String.format(Locale.CHINA, "%02d:%02d", it, minute)) },
-        )
-        Text(":", color = C.textPrimary, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 4.dp))
-        TimeDropdown(
-            value = minute,
-            range = 0..59,
-            step = 5,
-            onValueChange = { onTimeChange(String.format(Locale.CHINA, "%02d:%02d", hour, it)) },
-        )
-    }
-}
-
-/** 单个时间的下拉选择器。 */
-@Composable
-private fun TimeDropdown(
-    value: Int,
-    range: IntRange,
-    step: Int,
-    onValueChange: (Int) -> Unit,
-) {
-    val C = LocalAppColors.current
-    var expanded by remember { mutableStateOf(false) }
-    val options = remember(range, step) { range.step(step).toList() }
-    val display = String.format(Locale.CHINA, "%02d", options.indexOf(value).let { if (it >= 0) value else options.first() })
-    Box {
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(C.iconBg)
-                .clickable { expanded = true }
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(text = display, color = C.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.width(2.dp))
-            Icon(
-                imageVector = Icons.Filled.KeyboardArrowDown,
-                contentDescription = null,
-                tint = C.textSecondary,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(String.format(Locale.CHINA, "%02d", option)) },
-                    onClick = { onValueChange(option); expanded = false },
-                )
-            }
-        }
-    }
-}
-
-/**
- * 充电中心二级页（参考官网 App）：
- * 大字 SOC + 电池示意 + 充电实时读数 + 充电枪操作 + 健康充电 / 充电上限 /
- * 预约充电（可配时间）/ 预约电池预热 / 绑桩。
- */
-@Composable
-private fun ChargingCenterScreen(
-    status: CarStatus?,
-    healthyCharge: Boolean,
-    onHealthyChargeChange: (Boolean) -> Unit,
-    chargeLimit: Int,
-    onChargeLimitChange: (Int) -> Unit,
-    reserveCharge: Boolean,
-    onReserveChargeChange: (Boolean) -> Unit,
-    planStart: String,
-    onPlanStartChange: (String) -> Unit,
-    planEnd: String,
-    onPlanEndChange: (String) -> Unit,
-    planTargetSoc: Int,
-    onPlanTargetSocChange: (Int) -> Unit,
-    batteryPreheat: Boolean,
-    onBatteryPreheatChange: (Boolean) -> Unit,
-    preheatStart: String,
-    onPreheatStartChange: (String) -> Unit,
-    onChargeGun: (String) -> Unit,
-    gunBusy: Boolean = false,
-    onSave: () -> Unit,
-    saving: Boolean = false,
-    saveResult: String? = null,
-    onBack: () -> Unit,
-) {
-    val C = LocalAppColors.current
-    val soc = status?.soc
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .statusBarsPadding()
-            .padding(horizontal = 22.dp),
-    ) {
-        // 顶栏：左返回 + 居中标题
-        Box(modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp)) {
-            Text(
-                text = "充电中心",
-                color = C.textPrimary,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.align(Alignment.Center),
-            )
-            Surface(
-                shape = CircleShape,
-                color = C.iconBg,
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onBack),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.ChevronLeft,
-                        contentDescription = "返回",
-                        tint = C.textPrimary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            }
-        }
-
-        // 大字 SOC
-        Spacer(Modifier.height(26.dp))
-        Row(
-            modifier = Modifier.align(Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            Text(
-                text = soc?.toString() ?: "--",
-                color = C.textPrimary,
-                fontSize = 46.sp,
-                fontWeight = FontWeight.Light,
-            )
-            Text(
-                text = "%",
-                color = C.textSecondary,
-                fontSize = 16.sp,
-                modifier = Modifier.padding(bottom = 9.dp),
-            )
-        }
-        // 电池示意条（绿色渐变填充）
-        Spacer(Modifier.height(18.dp))
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .fillMaxWidth(0.72f)
-                .height(30.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(C.barTrack),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(((soc ?: 0) / 100f).coerceIn(0f, 1f))
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(Color(0xFF2FCC71), Color(0xFF7BE09B)),
-                        ),
-                    ),
-            )
-        }
-
-        // 充电实时读数：功率 / 剩余时间 / 电压 / 电流 / 电池温度
-        Spacer(Modifier.height(18.dp))
-        AppCard {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                ChargeReadingCell("功率", status?.chargingPower, Modifier.weight(1f))
-                ChargeReadingCell("剩余时间", status?.chargeTimeLeft, Modifier.weight(1f))
-                ChargeReadingCell("电压", status?.chargeVoltage, Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                ChargeReadingCell("电流", status?.chargeCurrent, Modifier.weight(1f))
-                ChargeReadingCell("电池温度", status?.batteryTemp, Modifier.weight(1f))
-                Box(Modifier.weight(1f))
-            }
-        }
-
-        // 充电枪操作：开始 / 停止 / 解锁
-        Spacer(Modifier.height(12.dp))
-        AppCard {
-            Text(
-                text = chargeConnectionText(status),
-                color = C.textSecondary,
-                fontSize = 12.sp,
-                lineHeight = 16.sp,
-            )
-            Spacer(Modifier.height(10.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                GunActionButton(
-                    label = "开始充电",
-                    icon = Icons.Filled.PlayArrow,
-                    enabled = !gunBusy,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onChargeGun("start") },
-                )
-                Spacer(Modifier.width(8.dp))
-                GunActionButton(
-                    label = "停止充电",
-                    icon = Icons.Filled.Stop,
-                    enabled = !gunBusy,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onChargeGun("stop") },
-                )
-                Spacer(Modifier.width(8.dp))
-                GunActionButton(
-                    label = "解锁充电枪",
-                    icon = Icons.Filled.LockOpen,
-                    enabled = !gunBusy,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onChargeGun("unlock") },
-                )
-            }
-        }
-
-        // 健康充电 + 充电上限
-        Spacer(Modifier.height(14.dp))
-        AppCard {
-            ChargeSwitchRow("健康充电", healthyCharge, onHealthyChargeChange)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "打开后，将根据车辆电池状态，自动为您调整充电上限，以保持电池健康",
-                color = C.textSecondary,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-            )
-            Spacer(Modifier.height(14.dp))
-            Text(
-                text = "充电上限$chargeLimit%",
-                color = C.textPrimary,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-            )
-            Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("80%", color = C.textSecondary, fontSize = 12.sp)
-                Slider(
-                    value = chargeLimit.toFloat(),
-                    onValueChange = { onChargeLimitChange(it.roundToInt()) },
-                    valueRange = 80f..100f,
-                    steps = 4,
-                    modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
-                )
-                Text("100%", color = C.textSecondary, fontSize = 12.sp)
-            }
-            Text(
-                text = "最佳阈值 90%",
-                color = C.textSecondary,
-                fontSize = 12.sp,
-                modifier = Modifier.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally),
-            )
-        }
-
-        // 预约充电
-        Spacer(Modifier.height(14.dp))
-        AppCard {
-            ChargeSwitchRow("预约充电", reserveCharge, onReserveChargeChange)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "插枪后会根据设定时间充电，仅支持慢充",
-                color = C.textSecondary,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-            )
-            if (reserveCharge) {
-                Spacer(Modifier.height(14.dp))
-                TimePickerRow("开始时间", planStart, onPlanStartChange)
-                Spacer(Modifier.height(10.dp))
-                TimePickerRow("结束时间", planEnd, onPlanEndChange)
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    text = "充电至$planTargetSoc%",
-                    color = C.textPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("50%", color = C.textSecondary, fontSize = 12.sp)
-                    Slider(
-                        value = planTargetSoc.toFloat(),
-                        onValueChange = { onPlanTargetSocChange(it.roundToInt()) },
-                        valueRange = 50f..100f,
-                        steps = 9,
-                        modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
-                    )
-                    Text("100%", color = C.textSecondary, fontSize = 12.sp)
-                }
-            }
-        }
-
-        // 预约电池预热
-        Spacer(Modifier.height(14.dp))
-        AppCard {
-            ChargeSwitchRow("预约电池预热", batteryPreheat, onBatteryPreheatChange)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "寒冷天气时，电池系统会自动调节电池温度，以提升电池续航和性能。达到理想温度时自动停止预热。",
-                color = C.textSecondary,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-            )
-            if (batteryPreheat) {
-                Spacer(Modifier.height(14.dp))
-                TimePickerRow("预热开始", preheatStart, onPreheatStartChange)
-            }
-        }
-
-        // 绑桩
-        Spacer(Modifier.height(14.dp))
-        AppCard {
-            Row(
-                modifier = Modifier.fillMaxWidth().clickable { /* 绑桩流程暂未开放 */ },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "绑桩",
-                    color = C.textPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(
-                    imageVector = Icons.Filled.ChevronRight,
-                    contentDescription = null,
-                    tint = C.textSecondary,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "绑桩后，插枪即可进行充电，安全省心。",
-                color = C.textSecondary,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = "暂无绑桩",
-                color = C.textSecondary,
-                fontSize = 12.sp,
-            )
-        }
-
-        // 保存并下发设置
-        Spacer(Modifier.height(20.dp))
-        Button(
-            onClick = onSave,
-            enabled = !saving,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = C.accent),
-        ) {
-            if (saving) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                    color = Color.White,
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("下发中…", color = Color.White, fontSize = 15.sp)
-            } else {
-                Text("保存并下发设置", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            }
-        }
-        if (saveResult != null) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = saveResult!!,
-                color = C.textSecondary,
-                fontSize = 12.5.sp,
-                lineHeight = 17.sp,
-                modifier = Modifier.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally),
-            )
-        }
-        Spacer(Modifier.height(24.dp))
-        Spacer(Modifier.navigationBarsPadding())
     }
 }
 
