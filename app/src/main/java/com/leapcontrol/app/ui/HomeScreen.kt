@@ -1,5 +1,10 @@
 package com.leapcontrol.app.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -197,6 +202,12 @@ fun HomeScreen(
         // 开启空调时随指令下发的设定温度（PIN 弹窗关掉后要能原样补发，
         // 不能退回「用默认温度开」）
         var pendingAcOnTemp by remember { mutableStateOf<Int?>(null) }
+        // 空调卡片是否向下展开详细设置面板（风量 / 出风方向 / 座椅舒适…）
+        var acExpanded by remember { mutableStateOf(false) }
+        // 展开面板里的指令在 PIN 验证完成后重放（记录命令名，含 acSetting: 合成命令）
+        var pendingAcPanelCommand by remember { mutableStateOf<String?>(null) }
+        // 设定温度的本地草稿：概览条与展开面板共用同一份，两处加减号才不会各调各的
+        var pendingAcTempDraft by remember { mutableStateOf<Int?>(null) }
         var controlLayout by remember { mutableStateOf(runtime.controlLayout()) }
         var showControlEditor by remember { mutableStateOf(false) }
         // 车辆配置（冰箱/天窗/哨兵/座椅…）：已持久化的识别结果，不依赖当次车况
@@ -229,6 +240,8 @@ fun HomeScreen(
         var showClimate by remember { mutableStateOf(false) }
         // 定时空调 / 车辆体检 / 系统升级
         var showScheduledAc by remember { mutableStateOf(false) }
+        // 定时空调是从「首页空调展开面板」进来的吗（决定返回时回首页还是回温控页）
+        var scheduledAcFromPanel by remember { mutableStateOf(false) }
         var showVehicleHealth by remember { mutableStateOf(false) }
         var showOta by remember { mutableStateOf(false) }
         // 胎压监测独立页
@@ -265,6 +278,18 @@ fun HomeScreen(
             if (!confirmGate) { action(); return }
             pendingConfirm = label to action
         }
+
+        // ---- 空调设定温度：车端真值 + 本地草稿（规则见 AcTempDraft）----
+        // 这里提升到页面层，是因为概览条与展开面板各有一颗加减号，必须共用同一份温度。
+        val acOnNow = status?.acOn == true
+        val remoteAcTemp = AcTempDraft.parse(status?.acTargetTemp)
+        // 开机后车端回报同一个温度 = 草稿已生效，交还给车端，避免下次关空调又被旧草稿盖掉
+        LaunchedEffect(acOnNow, remoteAcTemp, pendingAcTempDraft) {
+            if (acOnNow && pendingAcTempDraft != null && remoteAcTemp == pendingAcTempDraft) {
+                pendingAcTempDraft = null
+            }
+        }
+        val acTargetTemp = AcTempDraft.shown(acOnNow, remoteAcTemp, pendingAcTempDraft)
 
         LaunchedEffect(Unit) { vehicles = runCatching { runtime.vehicles() }.getOrDefault(emptyList()) }
 
@@ -396,6 +421,40 @@ fun HomeScreen(
                     refresh(force = true)
                 } catch (e: NeedPinException) {
                     pendingAcTemp = temp
+                    showPinDialog = true
+                } catch (e: Exception) {
+                    actionMessage = friendlyError(e)
+                }
+                controlling = null
+            }
+        }
+
+        /**
+         * 空调设定温度加减：空调**开着**就是调温（立即下发），**关着**只改本地草稿，
+         * 等点电源时才把草稿温度带下去。判据见 [AcTempDraft.sendOnArrow]。
+         */
+        fun stepAcTemp(delta: Int) {
+            val next = AcTempDraft.step(acTargetTemp, delta)
+            if (next == acTargetTemp) return
+            if (AcTempDraft.sendOnArrow(acOnNow)) runAcTemperature(next) else pendingAcTempDraft = next
+        }
+
+        /**
+         * 空调展开面板里的指令统一入口。
+         *
+         * 命令名由面板按当前车况拼好（快捷场景直接用 `quickCool` / `defrost` 这类，
+         * 风量 / 出风方向 / 循环用 [com.leapcontrol.app.Commands.acSettingName] 合成，
+         * 座椅类用 `driverSeatHeating_2` 这种「前缀:档位」），这里只负责下发 + 回拉车况。
+         */
+        fun runAcPanelCommand(commandName: String) {
+            scope.launch {
+                controlling = commandName
+                actionMessage = null
+                try {
+                    actionMessage = runtime.control(commandName)
+                    refresh(force = true)
+                } catch (e: NeedPinException) {
+                    pendingAcPanelCommand = commandName
                     showPinDialog = true
                 } catch (e: Exception) {
                     actionMessage = friendlyError(e)
@@ -641,6 +700,7 @@ fun HomeScreen(
                 },
                 // 定时空调是同级二级页：必须先收起空调页，否则会被上面的分支挡住不显示
                 onOpenScheduledAc = {
+                    scheduledAcFromPanel = false
                     showClimate = false
                     showScheduledAc = true
                 },
@@ -691,10 +751,11 @@ fun HomeScreen(
                 result = acPlanResult,
                 onSave = { saveScheduledAc(acPlan) },
                 onCancel = { saveScheduledAc(acPlan.copy(enabled = false)) },
-                // 定时空调现在只从「车内温控」页进入，返回时回到该页而不是首页
+                // 定时空调有两个入口：车内温控页与首页展开面板。
+                // 从温控页进来时返回温控页；从首页面板进来时回首页（不能把人空投到温控页）
                 onBack = {
                     showScheduledAc = false
-                    showClimate = true
+                    if (!scheduledAcFromPanel) showClimate = true
                 },
             )
         } else if (showVehicleHealth) {
@@ -1050,19 +1111,50 @@ fun HomeScreen(
             Spacer(Modifier.height(12.dp))
             ScrollHintBar(state = listState, itemCount = cells.size, visibleCount = 4)
 
-            // ---- 空调概览条：◀ 设定温度 ▶ / 车内温度 / 风扇开关 ----
-            // 温度箭头在关机态只改界面上的预设值，点右侧风扇开关才带着这个温度下发开启指令
+            // ---- 空调概览条：车内温度 / ◀ 设定温度 ▶ / 风扇开关 ----
+            // 点加减号只改温度（关机态是草稿），点右侧风扇开关才带着温度下发开启指令。
+            // 点卡片空白处向下展开详细设置（风量 / 出风方向 / 座椅舒适…）
             Spacer(Modifier.height(14.dp))
             AcQuickCard(
                 status = currentStatus,
-                busy = controlling == "acOn" || controlling == "acOff",
+                busy = controlling != null,
+                target = acTargetTemp,
+                onStep = { stepAcTemp(it) },
                 onToggle = { turnOn, temp ->
                     ensureConfirmed(
                         if (turnOn) "开启空调（${temp}℃）" else "关闭空调",
                     ) { runAcCommand(turnOn, temp) }
                 },
-                onTempChange = { runAcTemperature(it) },
+                expanded = acExpanded,
+                onToggleExpand = { acExpanded = !acExpanded },
             )
+            AnimatedVisibility(
+                visible = acExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                Column {
+                    Spacer(Modifier.height(8.dp))
+                    AcExpandedPanel(
+                        status = currentStatus,
+                        caps = capabilities,
+                        busy = controlling != null,
+                        targetTemp = acTargetTemp,
+                        onTempStep = { stepAcTemp(it) },
+                        onPower = { on ->
+                            ensureConfirmed(
+                                if (on) "开启空调（${acTargetTemp}℃）" else "关闭空调",
+                            ) { runAcCommand(on, acTargetTemp) }
+                        },
+                        onCommand = { name -> runAcPanelCommand(name) },
+                        // 从首页展开面板进的定时空调：返回时要回首页（面板还开着），不能跳去温控页
+                        onOpenScheduledAc = {
+                            scheduledAcFromPanel = true
+                            showScheduledAc = true
+                        },
+                    )
+                }
+            }
 
             // ---- 胎压监测卡（左半）+ 近 7 天行程卡（右半）；相伴卡整行宽放在下面 ----
             // 胎压卡点进去是胎压详情页（四轮数值 + 温度 + 状态）；
@@ -1272,7 +1364,13 @@ fun HomeScreen(
                                     val acCmd = pendingAcCommand
                                     // 开启指令要连同用户设定的温度一起补发
                                     val acOnTemp = pendingAcOnTemp
+                                    // 空调展开面板里的指令（风量 / 出风方向 / 座椅…）
+                                    val acPanelCmd = pendingAcPanelCommand
                                     when {
+                                        acPanelCmd != null -> {
+                                            pendingAcPanelCommand = null
+                                            runAcPanelCommand(acPanelCmd)
+                                        }
                                         acCmd != null -> {
                                             val turnOn = acCmd == "acOn"
                                             pendingAcCommand = null

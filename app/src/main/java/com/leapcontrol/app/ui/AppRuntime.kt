@@ -146,6 +146,13 @@ data class CarStatus(
     val acTargetTemp: String? = null,
     val acWindLevel: String? = null,
     val acCircle: String? = null,
+    /**
+     * 出风方向（acSetting.position）：`all` 全车出风 / `wshld` 前挡出风。
+     * 车端没有独立信号，只能从 acSetting 里读；缺失为 null（UI 不高亮任何一段）。
+     */
+    val acPosition: String? = null,
+    /** 冷热模式（acSetting.mode）：cold / hot / nohotcold。调风量、风向时要原样带下去。 */
+    val acMode: String? = null,
     /** 后备箱是否开启（信号缺失时为 null，不允许猜测成已关）。 */
     val trunkOpen: Boolean? = null,
     /** 是否有车窗未关（信号缺失时为 null）。 */
@@ -720,6 +727,8 @@ class AppRuntime(context: Context) {
         } else {
             VehicleStatusMapper.remainingRange(st, session.selectedCarType)
         }
+        // acSetting 是一个 JSON 串，解析一次给下面几个字段共用（以前每个字段各解析一次）
+        val acSetting = parseAcSetting(st)
         return CarStatus(
             soc = VehicleStatusMapper.soc(st),
             range = range,
@@ -739,10 +748,16 @@ class AppRuntime(context: Context) {
             tires = parseTires(st),
             latitude = parseLocation(st).first,
             longitude = parseLocation(st).second,
-            acTargetTemp = parseAcSetting(st)["temperature"],
-            acWindLevel = parseAcSetting(st)["windlevel"],
-            acCircle = parseAcSetting(st)["circle"]?.let {
+            acTargetTemp = acSetting["temperature"],
+            acWindLevel = acSetting["windlevel"],
+            acCircle = acSetting["circle"]?.let {
                 when (it) { "in", "1" -> "内循环"; "out", "0" -> "外循环"; else -> null }
+            },
+            acPosition = acSetting["position"]?.trim()?.takeIf {
+                it == "all" || it == "wshld"
+            },
+            acMode = acSetting["mode"]?.trim()?.takeIf {
+                it in com.leapcontrol.app.Commands.AC_MODES
             },
             trunkOpen = parseTrunkOpen(st),
             windowOpen = parseWindowOpen(st, session.selectedCarType),

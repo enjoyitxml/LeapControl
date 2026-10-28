@@ -203,7 +203,7 @@ fun TireCarOutline(
         // ---- 前风挡 ----
         drawPath(windshieldPath(::X, ::Y), ink.copy(alpha = 0.07f))
 
-        // ---- 天幕：一整块玻璃车顶（竖向渐变 + 一道斜向反光）----
+        // ---- 天幕：一整块玻璃车顶（竖向渐变）----
         drawRoundRect(
             brush = Brush.verticalGradient(
                 colors = listOf(ink.copy(alpha = 0.15f), ink.copy(alpha = 0.05f)),
@@ -221,14 +221,6 @@ fun TireCarOutline(
             cornerRadius = CornerRadius(S(14f), S(14f)),
             style = Stroke(width = S(0.9f)),
         )
-        // 反光：从左前斜向右后的一道光带，玻璃感全靠它
-        drawLine(
-            color = Color.White.copy(alpha = if (C.isDark) 0.10f else 0.55f),
-            start = Offset(X(42f), Y(103f)),
-            end = Offset(X(58f), Y(133f)),
-            strokeWidth = S(3.2f),
-        )
-
         // ---- 后风挡 ----
         drawPath(rearWindowPath(::X, ::Y), ink.copy(alpha = 0.07f))
 
@@ -310,7 +302,7 @@ fun TireTopView(
         drawPath(windshieldPath(::X, ::Y), Color(0xFF23262C))
         drawPath(rearWindowPath(::X, ::Y), Color(0xFF23262C))
 
-        // ---- 天幕：比车漆更亮的深色玻璃 + 斜向反光 ----
+        // ---- 天幕：比车漆更亮的深色玻璃 ----
         drawRoundRect(
             brush = Brush.verticalGradient(
                 colors = listOf(Color(0xFF3A4356), Color(0xFF242B3A)),
@@ -327,12 +319,6 @@ fun TireTopView(
             size = Size(S(ROOF_RIGHT - ROOF_LEFT), S(ROOF_BOTTOM - ROOF_TOP)),
             cornerRadius = CornerRadius(S(14f), S(14f)),
             style = Stroke(width = S(1f)),
-        )
-        drawLine(
-            color = Color(0xFFB9C6E0).copy(alpha = 0.22f),
-            start = Offset(X(42f), Y(101f)),
-            end = Offset(X(60f), Y(135f)),
-            strokeWidth = S(4f),
         )
 
         // ---- 后备箱盖 ----
