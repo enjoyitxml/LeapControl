@@ -9,7 +9,7 @@ import com.leapcontrol.app.widget.VehicleWidget
 class LeapApplication : Application() {
 
     /**
-     * 系统深浅模式一变，小组件要跟着换配色与背景（日间 6 张 / 夜间 4 张）。
+     * 系统深浅模式一变，小组件要跟着换配色（浅底深字 / 深底浅字）。
      *
      * 只能用运行时注册：CONFIGURATION_CHANGED 是受保护广播，
      * 在清单里声明收不到。App 进程活着时（用 App 的人几乎都活着）这一下就够了，
