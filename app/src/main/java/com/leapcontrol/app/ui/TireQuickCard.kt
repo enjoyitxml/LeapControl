@@ -47,6 +47,15 @@ private object TireCarGeometry {
 /** 布局期的临时量具。刻意不用 snapshot state：写入不触发重组，也不引起二次布局。 */
 private class TireMeasure {
     var rowCoords: LayoutCoordinates? = null
+
+    /**
+     * 已经量过的那次行高（px）。
+     *
+     * 滚动时 `onGloballyPositioned` 每一帧都会回调（节点在根坐标里的位置变了），
+     * 但「格子中心在卡片里的相对比例」只跟布局有关、跟滚动无关 ——
+     * 行高没变就说明布局没变，直接跳过，省掉每帧两次 positionInRoot 读取。
+     */
+    var measuredHeight = -1
 }
 
 /**
@@ -91,10 +100,13 @@ fun TireQuickCard(
      */
     fun calibrate(coords: LayoutCoordinates) {
         val row = measure.rowCoords ?: return
-        val height = row.size.height.toFloat()
-        if (height <= 0f) return
+        val height = row.size.height
+        if (height <= 0) return
+        // 布局没变就不重量（滚动期间这个回调每帧都会来）
+        if (height == measure.measuredHeight) return
         val centerY = coords.positionInRoot().y + coords.size.height / 2f - row.positionInRoot().y
-        val next = (centerY / height).coerceIn(0.15f, 0.45f)
+        val next = (centerY / height.toFloat()).coerceIn(0.15f, 0.45f)
+        measure.measuredHeight = height
         // 门槛 0.004（卡高 152dp ≈ 0.6dp）：亚像素级的差异不值得写值，避免反复触发绘制
         if (abs(next - TireCarGeometry.frontFraction) > 0.004f) {
             TireCarGeometry.frontFraction = next

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -19,6 +20,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -116,10 +119,13 @@ fun MainScreen(
     var homeOnMainPage by remember { mutableStateOf(true) }
     // 车模是否滑出视口：HomeScreen 通过 onCarModelGoneChange 上报。
     // 车模消失后视频背景也要跟着隐去、换成纯色，避免画面细节干扰下方文字，提高可读性。
-    var carModelGone by remember { mutableStateOf(false) }
+    // 刻意**不**用 by 解包：这两个值每次滑动都会变一次，在 MainScreen 的组合期读它们，
+    // 会让整页（HomeScreen 两百多个节点）跟着重组 —— 而那一刻用户正好在滑动。
+    // 以 State 形式传给下面专门的小 composable，让它们各自在自己的作用域里读。
+    val carModelGone = remember { mutableStateOf(false) }
     // 首页是否正在滑动：滑动期间冻结动态场景。
     // 24s 一循环的慢动画在滑动时根本看不清，却要和滚动抢同一帧预算，冻结它最划算。
-    var homeScrolling by remember { mutableStateOf(false) }
+    val homeScrolling = remember { mutableStateOf(false) }
     var appearance by remember { mutableStateOf(runtime.appearanceMode()) }
     // 两个主题槽位：浅色槽 / 深色槽。外观模式只决定「现在取哪一格」。
     // 跟随系统时两格都参与（白天一格、夜里一格），锁定模式只用得到对应那一格。
@@ -127,6 +133,8 @@ fun MainScreen(
     var darkThemeId by remember { mutableStateOf(runtime.darkThemeId()) }
     // 快捷切换配置（小白点 / 点击切换 / 关闭）：读 State 才能「设置里一改、退回首页立刻生效」
     val quickSwitch by runtime.quickSwitch
+    // 实时帧率浮层（设置 → 显示 → 显示帧率）
+    val frameStatsVisible by runtime.frameStatsVisible
     // App 是否在前台：进后台就暂停解码，别在看不见的时候继续耗电
     var resumed by remember { mutableStateOf(true) }
     // 版本更新弹窗：检测到 GitHub 新版本且未忽略该版本时，启动后自动弹出
@@ -293,17 +301,12 @@ fun MainScreen(
                 // ---- 主题场景：只画在页面上半部分，往下淡出到看不见 ----
                 // 场景覆盖「屏幕顶端 → 空调控件上沿」，车模与快捷控车压在已经淡化的画面上；
                 // 不在首页主界面 / 进后台 / 正在滑动时都改用固定相位，完全静止、省电、也省帧。
-                val sceneAnimated = tab == 0 && homeOnMainPage && resumed && !homeScrolling
-                // 车模滑出视口后画面已经没有承托，场景跟着淡下去，让下方卡片落在干净底色上。
-                // 注意这里【不能】用 by 解包：alpha 在 420ms 动画里每帧都在变，
-                // 组合期读它会让整个 MainScreen（含首页近 3000 行）每帧重组，
-                // 而这段动画恰好发生在用户向上滑动的那一刻。改成 graphicsLayer 里读，
-                // 只更新图层属性，零重组、零重新布局。
-                val sceneAlpha = animateFloatAsState(
-                    targetValue = if (carModelGone) 0.30f else 1f,
-                    animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-                    label = "sceneAlpha",
-                )
+                //
+                // 「是否在滑动」「车模是否滑出」这两个值都会在滑动过程中变化，绝不能在本函数
+                // 的组合期直接读：一读就让整个 MainScreen 重组（连带 HomeScreen 两百多个节点），
+                // 而那一刻正好是用户手指在屏上的时候，表现出来就是「滑动一起手先卡一下」。
+                // 所以把它们以 State 形式交给下面两个小 composable，让重组只发生在它们内部。
+                val sceneAlpha: State<Float> = rememberSceneAlpha(carModelGone)
                 // ---- 雾化遮罩：以车模正中心为圆心，向外圆弧发散 ----
                 // 圆心处完全通透（车模不被压灰），越往四周越浓，屏幕顶端最浓。
                 // 取主题渐变的最顶色，画面是「淡出进背景」而不是被压上一块别的颜色。
@@ -318,26 +321,16 @@ fun MainScreen(
                 // 场景层统一用 graphicsLayer 做透明度，动画期间不触发重组
                 val sceneModifier = Modifier.graphicsLayer { alpha = sceneAlpha.value }
 
-                if (season.video) {
-                    // ---- 视频主题（旧版四季 / 星空实拍视频，排在动态主题之后）----
-                    // 满屏播放，同样用雾化 + 下缘渐隐收到空调卡上沿，
-                    // 和其他主题一样不压住宿主内容。
-                    ThemeVideoBackdrop(
-                        theme = season,
-                        dark = dark,
-                        paused = !resumed || !sceneAnimated,
-                        veilBrush = veilBrush,
-                        modifier = sceneModifier,
-                    )
-                } else if (season.scene != SceneKind.NONE) {
-                    ThemeBackdrop(
-                        theme = season,
-                        dark = dark,
-                        animate = sceneAnimated,
-                        veilBrush = veilBrush,
-                        modifier = sceneModifier,
-                    )
-                }
+                SceneLayer(
+                    theme = season,
+                    dark = dark,
+                    // 这里读的是低频状态（切 Tab、进出二级页、前后台），不会每帧变
+                    active = tab == 0 && homeOnMainPage && resumed,
+                    resumed = resumed,
+                    scrolling = homeScrolling,
+                    veilBrush = veilBrush,
+                    modifier = sceneModifier,
+                )
                 Scaffold(
                     containerColor = Color.Transparent,
                     // 关掉 Scaffold 自带的状态栏/导航栏 inset，避免和页面内 statusBarsPadding 叠加
@@ -372,8 +365,8 @@ fun MainScreen(
                                 onRandomBackdrop = { runtime.randomizeOwnershipBackdrop() },
                                 quickSwitch = quickSwitch,
                                 onMainPageChange = { homeOnMainPage = it },
-                                onCarModelGoneChange = { carModelGone = it },
-                                onScrollingChange = { homeScrolling = it },
+                                onCarModelGoneChange = { carModelGone.value = it },
+                                onScrollingChange = { homeScrolling.value = it },
                             )
 
                             else -> ProfileScreen(
@@ -383,6 +376,21 @@ fun MainScreen(
                             )
                         }
                     }
+                }
+            }
+
+            // ---- 实时帧率浮层（设置里可关，默认不显示）----
+            // 放在 Scaffold 之后：要盖在内容与 Dock 之上，才看得到真实出帧情况
+            val frameStats = rememberFrameStats(frameStatsVisible)
+            if (frameStatsVisible) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    FrameStatsBadge(
+                        stats = frameStats,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .statusBarsPadding()
+                            .padding(top = 6.dp, end = 14.dp),
+                    )
                 }
             }
 
@@ -435,6 +443,61 @@ fun MainScreen(
         }
     }
 }
+
+/**
+ * 背景场景层（视频主题 / 手绘动态主题）。
+ *
+ * 单独抽成一个 composable 只为一件事：`scrolling` 这个 State 在[这里]读，
+ * 而不是在 [MainScreen] 里读。开始/结束滑动各会改一次这个值，如果在 MainScreen 读，
+ * 每次都要把整页（含 HomeScreen）重组一遍 —— 那一下正好发生在手指刚按下的时候，
+ * 手感上就是「滑动起步顿一下」。收进这里之后，重组只影响这一小块背景。
+ */
+@Composable
+private fun SceneLayer(
+    theme: SeasonTheme,
+    dark: Boolean,
+    active: Boolean,
+    resumed: Boolean,
+    scrolling: State<Boolean>,
+    veilBrush: Brush?,
+    modifier: Modifier = Modifier,
+) {
+    val scrollingNow by scrolling
+    val animate = active && !scrollingNow
+    if (theme.video) {
+        // ---- 视频主题（四季 / 星空实拍视频）----
+        // 满屏播放，用雾化 + 下缘渐隐收到空调卡上沿，和其他主题一样不压住宿主内容。
+        ThemeVideoBackdrop(
+            theme = theme,
+            dark = dark,
+            paused = !resumed || !animate,
+            veilBrush = veilBrush,
+            modifier = modifier,
+        )
+    } else if (theme.scene != SceneKind.NONE) {
+        ThemeBackdrop(
+            theme = theme,
+            dark = dark,
+            animate = animate,
+            veilBrush = veilBrush,
+            modifier = modifier,
+        )
+    }
+}
+
+/**
+ * 场景层透明度：车模滑出视口后淡到 30%。
+ *
+ * 同样要单独成一个 composable：`gone` 在读的这一刻属于本函数的重组作用域，
+ * 车模滑出时只有这里重组 + 420ms 的动画在 graphicsLayer 里跑，不会牵动整页。
+ */
+@Composable
+private fun rememberSceneAlpha(gone: State<Boolean>): State<Float> =
+    animateFloatAsState(
+        targetValue = if (gone.value) 0.30f else 1f,
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "sceneAlpha",
+    )
 
 /**
  * 以「车模正中心」为圆心的椭圆形雾化遮罩。
