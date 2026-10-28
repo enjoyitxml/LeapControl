@@ -42,22 +42,43 @@ object CarModelStore {
     fun file(context: Context, vin: String): File =
         File(context.filesDir, "car_custom_${vin.ifBlank { "default" }}.png")
 
+    /**
+     * 原始导入图：抠掉背景、裁掉透明边之后的样子，**没有**按官方模板重排。
+     *
+     * 存它是为了留一条后路：成品一旦被裁坏 / 官方模板换了，还能从这个源重新摆一遍，
+     * 不必让用户再翻相册导一次。它只在导入和换色时写，平时永不改动。
+     */
+    fun rawFile(context: Context, vin: String): File =
+        File(context.filesDir, "car_custom_${vin.ifBlank { "default" }}_raw.png")
+
     fun exists(context: Context, vin: String): Boolean =
         file(context, vin).let { it.isFile && it.length() > 0L }
 
+    fun hasRaw(context: Context, vin: String): Boolean =
+        rawFile(context, vin).let { it.isFile && it.length() > 0L }
+
+    fun loadRaw(context: Context, vin: String): Bitmap? = decode(rawFile(context, vin))
+
     /** 读取自定义车模；没有或损坏都返回 null，调用方回落到官方图。 */
-    fun load(context: Context, vin: String): Bitmap? = runCatching {
-        val f = file(context, vin)
-        if (!f.isFile) return null
+    fun load(context: Context, vin: String): Bitmap? = decode(file(context, vin))
+
+    private fun decode(target: File): Bitmap? = runCatching {
+        if (!target.isFile) return null
         BitmapFactory.decodeFile(
-            f.absolutePath,
+            target.absolutePath,
             BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 },
         )
     }.getOrNull()
 
     /** 保存自定义车模。先写 .tmp 再 rename，中途失败不会留下半张坏图。 */
-    fun save(context: Context, vin: String, bitmap: Bitmap): Boolean = runCatching {
-        val target = file(context, vin)
+    fun save(context: Context, vin: String, bitmap: Bitmap): Boolean =
+        write(file(context, vin), bitmap)
+
+    /** 保存原始导入图（[import] 与换色都会写一份，保证成品的来源永远在）。 */
+    fun saveRaw(context: Context, vin: String, bitmap: Bitmap): Boolean =
+        write(rawFile(context, vin), bitmap)
+
+    private fun write(target: File, bitmap: Bitmap): Boolean = runCatching {
         val temp = File(target.parentFile, target.name + ".tmp")
         FileOutputStream(temp).use { out ->
             // 必须 PNG：车模是透明底，JPEG 会把背景压成白块
@@ -69,6 +90,19 @@ object CarModelStore {
 
     fun clear(context: Context, vin: String) {
         runCatching { file(context, vin).delete() }
+        runCatching { rawFile(context, vin).delete() }
+    }
+
+    /**
+     * 成品里的车模是否已经顶到画布边上（= 保存时被切掉了一截）。
+     *
+     * 对齐后的成品四周一定有留白（模板里车模只占画布约四分之三），
+     * 所以「内容贴着画布边」只可能是被裁了，而不是原图本来就长这样。
+     */
+    fun isClipped(bitmap: Bitmap): Boolean {
+        val box = contentBoxOf(bitmap) ?: return false
+        return box.left <= 1 || box.top <= 1 ||
+            box.right >= bitmap.width - 2 || box.bottom >= bitmap.height - 2
     }
 
     /**
@@ -108,8 +142,13 @@ object CarModelStore {
             val scaled = scaleDown(decoded, MAX_SIDE)
             val cut = cutout(scaled)
             val trimmed = trimTransparent(cut.second)
+            // 原始图先落盘：成品是从它派生的，将来无论官方模板怎么变都能重摆一次，
+            // 不用再让用户翻相册。（以前不存源，成品一旦被裁就彻底没救了。）
+            saveRaw(context, vin, trimmed)
             val aligned = template?.let { alignToTemplate(trimmed, it) }
-            val result = aligned ?: trimmed
+            // 对齐结果反而顶到了画布边（极端比例 / 模板本身贴边）→ 退回未对齐的紧裁图。
+            // 宁可车大一圈，也不能交一张被切过的图给用户。
+            val result = aligned?.takeIf { !isClipped(it) } ?: trimmed
             if (!save(context, vin, result)) return@runCatching null
             // 这里不主动 recycle：解码出来的中间图马上就没引用，交给 GC 处理。
             // Android 10 起 Bitmap 像素在 Java 堆上，GC 能回收；手动 recycle 反而容易
@@ -143,10 +182,27 @@ object CarModelStore {
         base.getPixels(tp, 0, tw, 0, 0, tw, th)
         val tBox = CarCutout.contentBox(tp, tw, th, ALPHA_THRESHOLD) ?: return null
 
-        val fit = CarCutout.containRect(cBox, tBox)
+        // 模板的内容框再往里收一圈（约 0.5% 画布）作为落位范围。理由是留白：
+        // 车模正好落在模板框的边上，成品里就一个像素的余量，之后任何一次缩放/重采样
+        // 都可能蹭到画布边缘，看起来就像被切了一刀。
+        val inset = maxOf(1, minOf(tw, th) / 200)
+        val target = CarCutout.Box(
+            tBox.left + inset,
+            tBox.top + inset,
+            tBox.right - inset,
+            tBox.bottom - inset,
+        )
+        if (target.width <= 0 || target.height <= 0) return null
+
+        // 落位：先缩进目标框，再夹在画布内（见 CarCutout.placeRect —— 越界就会切车身）
+        val fit = CarCutout.placeRect(cBox, target, tw, th)
         val dw = fit.width.roundToInt().coerceAtLeast(1)
         val dh = fit.height.roundToInt().coerceAtLeast(1)
         if (!fit.width.isFinite() || !fit.height.isFinite() || dw <= 0 || dh <= 0) return null
+
+        // 取整后可能多出不到 1px，再夹一次，保证 drawBitmap 不会画到画布外
+        val left = minOf(fit.left, (tw - dw).coerceAtLeast(0).toFloat())
+        val top = minOf(fit.top, (th - dh).coerceAtLeast(0).toFloat())
 
         val out = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
@@ -162,7 +218,7 @@ object CarModelStore {
         } else {
             Bitmap.createScaledBitmap(content.subsetOrSelf(src), dw, dh, true)
         }
-        canvas.drawBitmap(body, fit.left, fit.top, paint)
+        canvas.drawBitmap(body, left, top, paint)
         out
     }.getOrNull()
 
@@ -182,7 +238,9 @@ object CarModelStore {
         val customShare = customBox.width.toFloat() / custom.width
         val templateShare = templateBox.width.toFloat() / base.width
         if (templateShare <= 0f) return custom
-        if (kotlin.math.abs(customShare - templateShare) / templateShare < 0.03f) return custom
+        // 6% 而不是 3%：这个判据只看「宽度占比」，比例偏瘦的图（宽高比和官方差得多）
+        // 对齐之后宽度占比本来就会略低，判太紧会反复判定「没对齐」→ 反复重采样掉画质。
+        if (kotlin.math.abs(customShare - templateShare) / templateShare < 0.06f) return custom
         return alignToTemplate(custom, base) ?: custom
     }
 

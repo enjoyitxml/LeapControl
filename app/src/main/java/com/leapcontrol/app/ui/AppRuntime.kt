@@ -1537,26 +1537,66 @@ class AppRuntime(context: Context) {
         val vin = session.selectedVin
         if (vin.isBlank()) return@withContext null
         val loaded = CarModelStore.load(appContext, vin) ?: return@withContext null
-        // 老版本导入的图没有对齐官方比例（车会比官方大一圈、贴边），首次读到时就地补一次摆位。
-        // 比例已经对上的（换色生成的图）会原样返回，所以这步是幂等的，重复跑不会掉画质。
-        val fixed = runCatching { normalizeCustomCarModel(loaded) }.getOrNull() ?: loaded
+        val fixed = runCatching { repairCustomCarModel(loaded, vin) }.getOrNull() ?: loaded
         customCarCache = fixed
         customCarCacheVin = vin
         fixed
     }
 
+    /** 「这个 VIN 的历史遗留已经处理过」的标记。 */
+    private fun carModelMigratedKey(vin: String) = "car_model_migrated_$vin"
+
     /**
-     * 把一张比例与官方不一致的自定义图重新摆位并落盘。
+     * 修复历史遗留的车模图，**每个 VIN 只做一次**，之后永不改写用户的车模文件。
      *
-     * 失败（离线且官方图没缓存 / 找不到车模外框）就原样返回，不影响显示。
+     * 以前这里每次启动都会拿官方图重算一遍比例并覆盖落盘。官方图的缓存、尺寸、取景
+     * 任何一点变化都会让结果跟着变，表现出来就是用户说的「每次更新之后车模就被切了，
+     * 得重新导入」——文件被反复重采样、反复重摆，最后贴着画布边像被切过。
+     *
+     * 现在只做两件事，做完打标记：
+     *  1. 成品已经顶到画布边（被裁过）：有原始导入图就用它重摆一遍；老数据没存过原始图，
+     *     就先就地备份一份，以后还有机会救；
+     *  2. 老版本导入的图（车比官方大一圈、贴边）按官方比例摆一次。
      */
-    private suspend fun normalizeCustomCarModel(custom: Bitmap): Bitmap {
-        val official = fetchCarImage() ?: return custom
+    private suspend fun repairCustomCarModel(custom: Bitmap, vin: String): Bitmap {
+        // ---- 1) 被裁过：用原始导入图重摆 ----
+        if (CarModelStore.isClipped(custom)) {
+            val raw = CarModelStore.loadRaw(appContext, vin)
+            if (raw != null) {
+                val official = runCatching { fetchCarImage() }.getOrNull()
+                val repaired = official?.let { CarModelStore.alignToTemplate(raw, it) }
+                // 重摆后仍然顶边 → 原图本身就贴着画布边，接受它，别再反复重采样掉画质
+                if (repaired != null &&
+                    !CarModelStore.isClipped(repaired) &&
+                    CarModelStore.save(appContext, vin, repaired)
+                ) {
+                    return repaired
+                }
+            } else {
+                CarModelStore.saveRaw(appContext, vin, custom)
+            }
+        }
+
+        // ---- 2) 一次性迁移 ----
+        if (namingPrefs.getBoolean(carModelMigratedKey(vin), false)) return custom
+        val official = runCatching { fetchCarImage() }.getOrNull() ?: return custom
         val fixed = CarModelStore.normalizeToTemplate(custom, official) ?: return custom
-        if (fixed === custom) return custom
-        val vin = session.selectedVin
-        if (vin.isNotBlank() && CarModelStore.save(appContext, vin, fixed)) return fixed
-        return custom
+        if (fixed === custom) {
+            namingPrefs.edit().putBoolean(carModelMigratedKey(vin), true).apply()
+            return custom
+        }
+        // 迁移完反而顶到画布边了（极端比例 / 模板本身就贴边）：不落盘，
+        // 宁可维持现状，也不能把用户唯一的一份图改坏。
+        if (CarModelStore.isClipped(fixed)) {
+            namingPrefs.edit().putBoolean(carModelMigratedKey(vin), true).apply()
+            return custom
+        }
+        return if (CarModelStore.save(appContext, vin, fixed)) {
+            namingPrefs.edit().putBoolean(carModelMigratedKey(vin), true).apply()
+            fixed
+        } else {
+            custom
+        }
     }
 
     /** 当前该显示哪张车模：改过色就用自定义的，否则用官方图。 */
@@ -1572,6 +1612,9 @@ class AppRuntime(context: Context) {
         if (vin.isBlank()) return@withContext false
         val ok = CarModelStore.save(appContext, vin, bitmap)
         if (ok) {
+            // 原始图跟着一起换掉：不然这张新图和上一张导入图的「源」对不上，
+            // 万一将来需要重摆，会拿旧源把车模重新摆回旧样子。
+            CarModelStore.saveRaw(appContext, vin, bitmap)
             customCarCache = bitmap
             customCarCacheVin = vin
             _carModelRevision.value += 1
@@ -1612,6 +1655,7 @@ class AppRuntime(context: Context) {
         if (vin.isBlank()) return@withContext false
         val ok = CarModelStore.save(appContext, vin, tinted)
         if (ok) {
+            CarModelStore.saveRaw(appContext, vin, tinted)
             customCarCache = tinted
             customCarCacheVin = vin
             _carModelRevision.value += 1
