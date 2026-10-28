@@ -7,11 +7,5 @@
             android:exported="true"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.LeapBuddy" />
-        <!-- 桌面小组件版式预览页（同样是调试专用） -->
-        <activity
-            android:name=".widget.WidgetPreviewActivity"
-            android:exported="true"
-            android:screenOrientation="portrait"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     </application>
 </manifest>
