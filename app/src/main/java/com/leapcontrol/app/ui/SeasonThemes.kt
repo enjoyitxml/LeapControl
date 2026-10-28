@@ -5,13 +5,13 @@ import androidx.compose.ui.graphics.Color
 /**
  * 背景主题。
  *
- * 共 25 套：日间 10 套、夜间 10 套（各含 6 套静态 + 4 套动态），外加 5 套视频主题。
+ * 共 40 套：日间 20 套、夜间 20 套，各含 **10 套静态 + 10 套动态**。
  *
- * 实时绘制的 20 套 = 整页基础渐变 + 上半屏的场景画面（[scene]，由 [paintScene] 实时绘制）+
+ * 每一套 = 整页基础渐变 + 上半屏的场景画面（[scene]，由 [paintScene] 实时绘制）+
  * 一个主题色（[accent]，作用于卡片底色、柱状图、强调元素）。
- * 另外 5 套（[VIDEO]）保留最初那批实拍视频背景，排在动态主题之后，`video = true`。
  *
- * 场景画面上限固定在上半屏，并做了两重衰减（场景自身淡出 + 顶部雾化），
+ * 全部是实时绘制，**不含任何图片或视频**：静态场景画一次，动态场景只把「时间进度 t」
+ * 当参数重绘。场景画面上限固定在上半屏，并做了两重衰减（场景自身淡出 + 顶部雾化），
  * 所以车名 / 续航 / 车模 / 快捷控车都压在很淡的画面上，不会被「糊住」。
  */
 data class SeasonTheme(
@@ -29,13 +29,6 @@ data class SeasonTheme(
     val accentDark: Color,
     /** 上半屏画什么 */
     val scene: SceneKind,
-    /**
-     * 视频主题：播放打包在 res/raw 里的自带视频，不再绘制 [scene]。
-     *
-     * 这是最初那 5 套「四季 + 星空」的实拍视频背景，改版后作为独立分类保留在
-     * 动态主题之后 —— 喜欢旧版的用户可以继续用，新用户默认走实时绘制的 20 套。
-     */
-    val video: Boolean = false,
     /** 是否属于夜间主题（夜间自动切换只会选这一类） */
     val night: Boolean = false,
     /**
@@ -68,7 +61,7 @@ data class SeasonTheme(
 object SeasonThemes {
 
     // ========================================================================
-    // 日间 · 静态 6 套
+    // 日间 · 静态 10 套
     // ========================================================================
 
     /** 晨雾青山：淡青底 + 三层山脊 + 山间雾 */
@@ -167,8 +160,72 @@ object SeasonThemes {
         sceneInk = Color(0xFF5E8B97),
     )
 
+    /** 麦浪金黄：暖黄底 + 三层麦田 */
+    val WHEAT_FIELD = SeasonTheme(
+        id = "wheat",
+        label = "麦浪金黄",
+        mood = "暖黄 · 麦田",
+        gradient = listOf(Color(0xFFFBEBCB), Color(0xFFFCF3E1), Color(0xFFFEFBF5)),
+        gradientDark = listOf(Color(0xFF2A2011), Color(0xFF17120B), Color(0xFF0C0A06)),
+        accent = Color(0xFFC08A2E),
+        accentDark = Color(0xFFE5AE55),
+        scene = SceneKind.WHEAT_FIELD,
+        sceneA = Color(0xFFE7C179),
+        sceneB = Color(0xFFD9A64F),
+        sceneC = Color(0xFFFFD98C),
+        sceneInk = Color(0xFF9A7333),
+    )
+
+    /** 湖光倒影：淡青底 + 平静湖面与倒影 */
+    val LAKE_MIRROR = SeasonTheme(
+        id = "lake",
+        label = "湖光倒影",
+        mood = "淡青 · 湖面",
+        gradient = listOf(Color(0xFFDFEEF3), Color(0xFFECF5F8), Color(0xFFFAFCFD)),
+        gradientDark = listOf(Color(0xFF0C1E24), Color(0xFF081318), Color(0xFF05090B)),
+        accent = Color(0xFF2E8FA6),
+        accentDark = Color(0xFF52B9D0),
+        scene = SceneKind.LAKE_MIRROR,
+        sceneA = Color(0xFFA9C9D4),
+        sceneB = Color(0xFFC6E0E8),
+        sceneC = Color(0xFFFFF2CE),
+        sceneInk = Color(0xFF6E93A0),
+    )
+
+    /** 竹影清风：竹绿底 + 一排竹竿与竹叶 */
+    val BAMBOO = SeasonTheme(
+        id = "bamboo",
+        label = "竹影清风",
+        mood = "竹绿 · 疏影",
+        gradient = listOf(Color(0xFFE4F0DE), Color(0xFFF0F8EC), Color(0xFFFAFDF8)),
+        gradientDark = listOf(Color(0xFF13241A), Color(0xFF0D1710), Color(0xFF080D0A)),
+        accent = Color(0xFF4A8B4E),
+        accentDark = Color(0xFF6FBE72),
+        scene = SceneKind.BAMBOO_GROVE,
+        sceneA = Color(0xFF92B98A),
+        sceneB = Color(0xFFB4D3AC),
+        sceneC = Color(0xFFF2FBDA),
+        sceneInk = Color(0xFF4C6E4A),
+    )
+
+    /** 沙丘暖阳：暖沙底 + 四层沙丘 */
+    val DESERT = SeasonTheme(
+        id = "dune",
+        label = "沙丘暖阳",
+        mood = "暖沙 · 丘脊",
+        gradient = listOf(Color(0xFFFBE3D2), Color(0xFFFCEDE2), Color(0xFFFDF8F2)),
+        gradientDark = listOf(Color(0xFF2B1D12), Color(0xFF18110B), Color(0xFF0D0906)),
+        accent = Color(0xFFC97A3C),
+        accentDark = Color(0xFFEAA05F),
+        scene = SceneKind.DESERT_DUNE,
+        sceneA = Color(0xFFE8B183),
+        sceneB = Color(0xFFF0C9A5),
+        sceneC = Color(0xFFFFDCA8),
+        sceneInk = Color(0xFFA16C42),
+    )
+
     // ========================================================================
-    // 日间 · 动态 4 套
+    // 日间 · 动态 10 套
     // ========================================================================
 
     /** 流云漫步：云团横向缓慢漂移 */
@@ -235,8 +292,104 @@ object SeasonThemes {
         sceneInk = Color(0xFF71879A),
     )
 
+    /** 涟漪湖面：水面涟漪外扩 + 波光缓移 */
+    val RIPPLING_LAKE = SeasonTheme(
+        id = "ripple",
+        label = "涟漪湖面",
+        mood = "动态 · 涟漪",
+        gradient = listOf(Color(0xFFDCEEF6), Color(0xFFEAF4FA), Color(0xFFF9FCFE)),
+        gradientDark = listOf(Color(0xFF0A1C26), Color(0xFF071219), Color(0xFF04080B)),
+        accent = Color(0xFF2C89A8),
+        accentDark = Color(0xFF4FB4D0),
+        scene = SceneKind.RIPPLING_LAKE,
+        sceneA = Color(0xFF9FC6D6),
+        sceneB = Color(0xFFC2E0EA),
+        sceneC = Color(0xFFFFF3D0),
+        sceneInk = Color(0xFF6B8FA0),
+    )
+
+    /** 飞鸟掠空：云慢慢飘，一群雁横掠扇翅 */
+    val BIRDS = SeasonTheme(
+        id = "birds",
+        label = "飞鸟掠空",
+        mood = "动态 · 飞鸟",
+        gradient = listOf(Color(0xFFDCEAFA), Color(0xFFEBF3FC), Color(0xFFFAFCFF)),
+        gradientDark = listOf(Color(0xFF0C1A2A), Color(0xFF08111B), Color(0xFF05080D)),
+        accent = Color(0xFF3F7FC0),
+        accentDark = Color(0xFF66A6E0),
+        scene = SceneKind.BIRDS_FLY,
+        sceneA = Color(0xFFAEC9E4),
+        sceneB = Color(0xFFCFDFF2),
+        sceneC = Color(0xFFFFF0C6),
+        sceneInk = Color(0xFF7E93AD),
+    )
+
+    /** 蒲公英舞：白色种子边升边摆 */
+    val DANDELION = SeasonTheme(
+        id = "dandelion",
+        label = "蒲公英舞",
+        mood = "动态 · 飞絮",
+        gradient = listOf(Color(0xFFEDF5E6), Color(0xFFF5FAF0), Color(0xFFFCFEFA)),
+        gradientDark = listOf(Color(0xFF16220F), Color(0xFF0E160A), Color(0xFF080C06)),
+        accent = Color(0xFF74A34A),
+        accentDark = Color(0xFF9CC96E),
+        scene = SceneKind.DANDELION,
+        sceneA = Color(0xFFC3D9AC),
+        sceneB = Color(0xFFDEEBCE),
+        sceneC = Color(0xFFFFFBDA),
+        sceneInk = Color(0xFF83986B),
+    )
+
+    /** 晨雾流动：雾团沿山腰横向漂移 */
+    val MIST_FLOW = SeasonTheme(
+        id = "mistflow",
+        label = "晨雾流动",
+        mood = "动态 · 雾流",
+        gradient = listOf(Color(0xFFE6EEF0), Color(0xFFF1F6F7), Color(0xFFFBFCFD)),
+        gradientDark = listOf(Color(0xFF101B1E), Color(0xFF0A1214), Color(0xFF060A0B)),
+        accent = Color(0xFF5C8A93),
+        accentDark = Color(0xFF85B3BB),
+        scene = SceneKind.MIST_FLOW,
+        sceneA = Color(0xFFB7C9CD),
+        sceneB = Color(0xFFD6E3E6),
+        sceneC = Color(0xFFFFF6DC),
+        sceneInk = Color(0xFF7C9296),
+    )
+
+    /** 树影斑驳：叶隙光斑在地面上呼吸、轻微晃动 */
+    val TREE_SHADOW = SeasonTheme(
+        id = "treeshadow",
+        label = "树影斑驳",
+        mood = "动态 · 光斑",
+        gradient = listOf(Color(0xFFF4F0DE), Color(0xFFFAF7EC), Color(0xFFFEFDF8)),
+        gradientDark = listOf(Color(0xFF221D10), Color(0xFF14110A), Color(0xFF0B0906)),
+        accent = Color(0xFF9A8B3E),
+        accentDark = Color(0xFFC0B25C),
+        scene = SceneKind.TREE_SHADOW,
+        sceneA = Color(0xFFCFC58F),
+        sceneB = Color(0xFFE5DEBB),
+        sceneC = Color(0xFFFFF3BE),
+        sceneInk = Color(0xFF7A7343),
+    )
+
+    /** 云海日出：太阳在云海上呼吸 + 云海横向漂 */
+    val SUNRISE = SeasonTheme(
+        id = "sunrise",
+        label = "云海日出",
+        mood = "动态 · 日出",
+        gradient = listOf(Color(0xFFFBE3D0), Color(0xFFFDF0E2), Color(0xFFFFF9F2)),
+        gradientDark = listOf(Color(0xFF2A1812), Color(0xFF1A0E0A), Color(0xFF0C0605)),
+        accent = Color(0xFFD2733A),
+        accentDark = Color(0xFFF0985D),
+        scene = SceneKind.SUNRISE_GLOW,
+        sceneA = Color(0xFFE8A87E),
+        sceneB = Color(0xFFF5C9A8),
+        sceneC = Color(0xFFFFD98A),
+        sceneInk = Color(0xFFA9704D),
+    )
+
     // ========================================================================
-    // 夜间 · 静态 6 套
+    // 夜间 · 静态 10 套
     // ========================================================================
 
     /** 浩瀚星空：星点 + 细月 */
@@ -353,8 +506,84 @@ object SeasonThemes {
         scrimAlphaScale = 0.85f,
     )
 
+    /** 松林夜雾：星空明月 + 三排塔形松 */
+    val PINE_NIGHT = SeasonTheme(
+        id = "pinenight",
+        label = "松林夜雾",
+        mood = "墨绿 · 松林",
+        gradient = listOf(Color(0xFF0C1620), Color(0xFF070F16), Color(0xFF04080C)),
+        gradientDark = listOf(Color(0xFF091219), Color(0xFF050C11), Color(0xFF020508)),
+        accent = Color(0xFF5E8C7E),
+        accentDark = Color(0xFF85B7A6),
+        scene = SceneKind.PINE_NIGHT,
+        night = true,
+        sceneA = Color(0xFF2E4A46),
+        sceneB = Color(0xFF203634),
+        sceneC = Color(0xFFCFE8DC),
+        sceneInk = Color(0xFF040A0B),
+        veilAlphaScale = 0.12f,
+        scrimAlphaScale = 0.85f,
+    )
+
+    /** 雪夜村落：雪坡上几间亮着窗灯的房子 */
+    val SNOW_VILLAGE = SeasonTheme(
+        id = "village",
+        label = "雪夜村落",
+        mood = "暖灯 · 雪坡",
+        gradient = listOf(Color(0xFF0E1726), Color(0xFF081020), Color(0xFF04070E)),
+        gradientDark = listOf(Color(0xFF0A121D), Color(0xFF060C17), Color(0xFF030509)),
+        accent = Color(0xFFC7975E),
+        accentDark = Color(0xFFE8B87C),
+        scene = SceneKind.SNOW_VILLAGE,
+        night = true,
+        sceneA = Color(0xFF3B4F6C),
+        sceneB = Color(0xFF26344F),
+        sceneC = Color(0xFFFFC978),
+        sceneInk = Color(0xFF05080F),
+        veilAlphaScale = 0.12f,
+        scrimAlphaScale = 0.85f,
+    )
+
+    /** 孤塔灯塔：海面岬角 + 灯塔与光束 */
+    val LIGHTHOUSE = SeasonTheme(
+        id = "lighthouse",
+        label = "孤塔灯塔",
+        mood = "暖光 · 灯塔",
+        gradient = listOf(Color(0xFF0A1522), Color(0xFF06101A), Color(0xFF030810)),
+        gradientDark = listOf(Color(0xFF08111B), Color(0xFF040C14), Color(0xFF02060A)),
+        accent = Color(0xFFE0A35A),
+        accentDark = Color(0xFFFFC77E),
+        scene = SceneKind.LIGHTHOUSE,
+        night = true,
+        sceneA = Color(0xFF1D3145),
+        sceneB = Color(0xFF12202F),
+        sceneC = Color(0xFFFFD79A),
+        sceneInk = Color(0xFF04070C),
+        veilAlphaScale = 0.12f,
+        scrimAlphaScale = 0.85f,
+    )
+
+    /** 湖映星空：星空倒映在湖面上 */
+    val LAKE_STARS = SeasonTheme(
+        id = "lakestars",
+        label = "湖映星空",
+        mood = "静水 · 星影",
+        gradient = listOf(Color(0xFF0A1224), Color(0xFF060C19), Color(0xFF03060C)),
+        gradientDark = listOf(Color(0xFF070D1C), Color(0xFF040811), Color(0xFF020408)),
+        accent = Color(0xFF6E8FE8),
+        accentDark = Color(0xFF91AFFF),
+        scene = SceneKind.LAKE_STARS,
+        night = true,
+        sceneA = Color(0xFF223258),
+        sceneB = Color(0xFF131D36),
+        sceneC = Color(0xFFDCE6FF),
+        sceneInk = Color(0xFF03060B),
+        veilAlphaScale = 0.12f,
+        scrimAlphaScale = 0.85f,
+    )
+
     // ========================================================================
-    // 夜间 · 动态 4 套
+    // 夜间 · 动态 10 套
     // ========================================================================
 
     /** 极光流淌：三道光带缓缓流动 */
@@ -433,120 +662,156 @@ object SeasonThemes {
         scrimAlphaScale = 0.85f,
     )
 
-    // ========================================================================
-    // 视频主题 5 套（旧版「四季 + 星空」实拍视频，改版后原样保留）
-    // ========================================================================
-
-    /** 春日花枝：视频主景在屏幕上部，需要较浓的雾把文字底下压干净 */
-    val VIDEO_SPRING = SeasonTheme(
-        id = "video_spring",
-        label = "春日",
-        mood = "视频 · 花枝",
-        gradient = listOf(Color(0xFFD9F0E0), Color(0xFFEDF7EF), Color(0xFFF9FBF9)),
-        gradientDark = listOf(Color(0xFF11251A), Color(0xFF0D1410), Color(0xFF0B0E0C)),
-        accent = Color(0xFF2FA85C),
-        accentDark = Color(0xFF46D27C),
-        scene = SceneKind.NONE,
-        video = true,
-        veilAlphaScale = 1f,
-    )
-
-    /** 夏日晴空 */
-    val VIDEO_SUMMER = SeasonTheme(
-        id = "video_summer",
-        label = "夏日",
-        mood = "视频 · 晴空",
-        gradient = listOf(Color(0xFFD3E9FB), Color(0xFFE7F3FC), Color(0xFFF8FBFE)),
-        gradientDark = listOf(Color(0xFF0E2030), Color(0xFF0C141C), Color(0xFF0B0E11)),
-        accent = Color(0xFF2C7BE5),
-        accentDark = Color(0xFF5AA0F5),
-        scene = SceneKind.NONE,
-        video = true,
-        veilAlphaScale = 1f,
-    )
-
-    /** 秋日暖叶 */
-    val VIDEO_AUTUMN = SeasonTheme(
-        id = "video_autumn",
-        label = "秋日",
-        mood = "视频 · 暖叶",
-        gradient = listOf(Color(0xFFFAE7CF), Color(0xFFFCF2E4), Color(0xFFFDF9F3)),
-        gradientDark = listOf(Color(0xFF2A1E11), Color(0xFF16110C), Color(0xFF0D0B09)),
-        accent = Color(0xFFCE6E28),
-        accentDark = Color(0xFFF0924A),
-        scene = SceneKind.NONE,
-        video = true,
-        veilAlphaScale = 1f,
-    )
-
-    /** 冬日飘雪 */
-    val VIDEO_WINTER = SeasonTheme(
-        id = "video_winter",
-        label = "冬日",
-        mood = "视频 · 飘雪",
-        gradient = listOf(Color(0xFFE3E8F0), Color(0xFFEFF2F7), Color(0xFFFAFBFD)),
-        gradientDark = listOf(Color(0xFF1A222E), Color(0xFF12161D), Color(0xFF0C0E11)),
-        accent = Color(0xFF52779F),
-        accentDark = Color(0xFF8AAFCB),
-        scene = SceneKind.NONE,
-        video = true,
-        veilAlphaScale = 1f,
-    )
-
-    /** 星空夜幕：视频本身够暗，雾只压住文字底下的星点，不能把星星糊掉 */
-    val VIDEO_STARS = SeasonTheme(
-        id = "video_stars",
-        label = "星空",
-        mood = "视频 · 夜空",
-        gradient = listOf(Color(0xFF0B1226), Color(0xFF070C18), Color(0xFF04060C)),
-        gradientDark = listOf(Color(0xFF070C1A), Color(0xFF04070F), Color(0xFF020408)),
-        accent = Color(0xFF6C8CFF),
-        accentDark = Color(0xFF8AA4FF),
-        scene = SceneKind.NONE,
-        video = true,
+    /** 星轨流转：同心弧缓慢旋转 */
+    val STAR_TRAILS = SeasonTheme(
+        id = "startrail",
+        label = "星轨流转",
+        mood = "动态 · 星轨",
+        gradient = listOf(Color(0xFF0B1020), Color(0xFF060A16), Color(0xFF03050B)),
+        gradientDark = listOf(Color(0xFF080C19), Color(0xFF04060F), Color(0xFF010307)),
+        accent = Color(0xFF8C9BE8),
+        accentDark = Color(0xFFAEBBFF),
+        scene = SceneKind.STAR_TRAILS,
         night = true,
-        veilAlphaScale = 0.35f,
+        sceneA = Color(0xFF2A3358),
+        sceneB = Color(0xFF171D36),
+        sceneC = Color(0xFFE6ECFF),
+        sceneInk = Color(0xFF04060D),
+        veilAlphaScale = 0.12f,
+        scrimAlphaScale = 0.85f,
+    )
+
+    /** 月影涟漪：月光在水面被打碎又聚拢 */
+    val MOON_RIPPLE = SeasonTheme(
+        id = "moonripple",
+        label = "月影涟漪",
+        mood = "动态 · 月影",
+        gradient = listOf(Color(0xFF0B1826), Color(0xFF07111C), Color(0xFF040A10)),
+        gradientDark = listOf(Color(0xFF08121C), Color(0xFF050D16), Color(0xFF02060A)),
+        accent = Color(0xFF7FA8C8),
+        accentDark = Color(0xFFA6CBE8),
+        scene = SceneKind.MOON_RIPPLE,
+        night = true,
+        sceneA = Color(0xFF1F3448),
+        sceneB = Color(0xFF122334),
+        sceneC = Color(0xFFDCEBFA),
+        sceneInk = Color(0xFF03080D),
+        veilAlphaScale = 0.12f,
+        scrimAlphaScale = 0.85f,
+    )
+
+    /** 城市车流：楼群剪影 + 双向流动的车灯 */
+    val NIGHT_TRAFFIC = SeasonTheme(
+        id = "traffic",
+        label = "城市车流",
+        mood = "动态 · 车流",
+        gradient = listOf(Color(0xFF151826), Color(0xFF0D1019), Color(0xFF07080D)),
+        gradientDark = listOf(Color(0xFF101220), Color(0xFF0A0C14), Color(0xFF05060A)),
+        accent = Color(0xFFE08A3C),
+        accentDark = Color(0xFFFFA95C),
+        scene = SceneKind.NIGHT_TRAFFIC,
+        night = true,
+        sceneA = Color(0xFF323759),
+        sceneB = Color(0xFF20233A),
+        sceneC = Color(0xFFFFC167),
+        sceneInk = Color(0xFF06080E),
+        veilAlphaScale = 0.12f,
+        scrimAlphaScale = 0.85f,
+    )
+
+    /** 夜雪纷飞：雪点下落 + 雪脊 */
+    val SNOW_FALL = SeasonTheme(
+        id = "snowfall",
+        label = "夜雪纷飞",
+        mood = "动态 · 落雪",
+        gradient = listOf(Color(0xFF101A28), Color(0xFF0A121D), Color(0xFF050910)),
+        gradientDark = listOf(Color(0xFF0C141F), Color(0xFF070D16), Color(0xFF03060A)),
+        accent = Color(0xFF7FA6C9),
+        accentDark = Color(0xFFA6C8E4),
+        scene = SceneKind.SNOW_FALL,
+        night = true,
+        sceneA = Color(0xFF26384E),
+        sceneB = Color(0xFF172537),
+        sceneC = Color(0xFFFFFFFF),
+        sceneInk = Color(0xFF040810),
+        veilAlphaScale = 0.12f,
+        scrimAlphaScale = 0.85f,
+    )
+
+    /** 云遮明月：暗云缓缓掠过月亮 */
+    val CLOUD_MOON = SeasonTheme(
+        id = "cloudmoon",
+        label = "云遮明月",
+        mood = "动态 · 云度月",
+        gradient = listOf(Color(0xFF0C1424), Color(0xFF081020), Color(0xFF04080F)),
+        gradientDark = listOf(Color(0xFF091120), Color(0xFF050B18), Color(0xFF02050B)),
+        accent = Color(0xFF9AA8D8),
+        accentDark = Color(0xFFBCC8F2),
+        scene = SceneKind.CLOUD_MOON,
+        night = true,
+        sceneA = Color(0xFF2C3D63),
+        sceneB = Color(0xFF1F2C50),
+        sceneC = Color(0xFFFFF2C7),
+        sceneInk = Color(0xFF03060D),
+        veilAlphaScale = 0.12f,
+        scrimAlphaScale = 0.85f,
+    )
+
+    /** 潮汐夜浪：一排排浪线向岸边推进 */
+    val NIGHT_WAVES = SeasonTheme(
+        id = "nightwaves",
+        label = "潮汐夜浪",
+        mood = "动态 · 夜浪",
+        gradient = listOf(Color(0xFF08131F), Color(0xFF050D16), Color(0xFF02060B)),
+        gradientDark = listOf(Color(0xFF06101A), Color(0xFF040A11), Color(0xFF010408)),
+        accent = Color(0xFF4E92B8),
+        accentDark = Color(0xFF74BCDC),
+        scene = SceneKind.NIGHT_WAVES,
+        night = true,
+        sceneA = Color(0xFF24425C),
+        sceneB = Color(0xFF16303F),
+        sceneC = Color(0xFFCFE9FA),
+        sceneInk = Color(0xFF02060A),
+        veilAlphaScale = 0.12f,
         scrimAlphaScale = 0.85f,
     )
 
     // ========================================================================
 
-    /** 日间 10 套（6 静态 + 4 动态） */
+    /** 日间 20 套（10 静态 + 10 动态） */
     val DAY = listOf(
         MIST_HILLS, CLEAR_SKY, SAKURA, AUTUMN, WINTER, SEASIDE,
+        WHEAT_FIELD, LAKE_MIRROR, BAMBOO, DESERT,
         CLOUD_DRIFT, PETAL_FALL, SUN_DUST, LIGHT_RAIN,
+        RIPPLING_LAKE, BIRDS, DANDELION, MIST_FLOW, TREE_SHADOW, SUNRISE,
     )
 
-    /** 夜间 10 套（6 静态 + 4 动态） */
+    /** 夜间 20 套（10 静态 + 10 动态） */
     val NIGHT_ALL = listOf(
         STARRY, CITY_NIGHT, MOON_VALLEY, NIGHT_SEA, MILKY_WAY, NIGHT_HILLS,
+        PINE_NIGHT, SNOW_VILLAGE, LIGHTHOUSE, LAKE_STARS,
         AURORA, METEOR, FIREFLY, NIGHT_RAIN,
+        STAR_TRAILS, MOON_RIPPLE, NIGHT_TRAFFIC, SNOW_FALL, CLOUD_MOON, NIGHT_WAVES,
     )
 
-    /**
-     * 视频主题的浅色一组（春夏秋冬四支实拍视频）。
-     * 深色时配的是下面那唯一一套 [VIDEO_DARK]，两者成对使用。
-     */
-    val VIDEO_LIGHT = listOf(VIDEO_SPRING, VIDEO_SUMMER, VIDEO_AUTUMN, VIDEO_WINTER)
-
-    /** 视频主题的深色一套（星空夜幕）。 */
-    val VIDEO_DARK = VIDEO_STARS
-
-    /** 视频主题 5 套（旧版四季 + 星空，排在动态主题之后） */
-    val VIDEO = VIDEO_LIGHT + VIDEO_DARK
-
-    val ALL = DAY + NIGHT_ALL + VIDEO
+    val ALL = DAY + NIGHT_ALL
 
     /**
      * 老版本存下来的主题 id。
-     * 改名后旧偏好还要能落到对应主题上，不能让用户升级后主题突然被重置。
+     * 改名 / 删主题后旧偏好还要能落到最接近的一套上，不能让用户升级后主题突然被重置。
      *
-     * spring / summer 当初对应的是**视频**四季，所以直接落回视频版，
-     * 升级后画面跟之前一模一样；autumn / winter / stars 的 id 没变，天然兼容。
+     * 视频主题（四色四季 + 星空）已整体移除，这里把它们折回**画风最接近的实时绘制主题**：
+     * 春日 → 春樱漫野、夏日 → 晴空云絮、秋日 → 秋色森林、冬日 → 雪霁初晴、星空 → 浩瀚星空。
+     * `autumn / winter / stars` 的 id 一直没变，天然兼容。
      */
     private val LEGACY_IDS = mapOf(
-        "spring" to VIDEO_SPRING.id,
-        "summer" to VIDEO_SUMMER.id,
+        "spring" to SAKURA.id,
+        "summer" to CLEAR_SKY.id,
+        "video_spring" to SAKURA.id,
+        "video_summer" to CLEAR_SKY.id,
+        "video_autumn" to AUTUMN.id,
+        "video_winter" to WINTER.id,
+        "video_stars" to STARRY.id,
     )
 
     fun byId(id: String?): SeasonTheme {

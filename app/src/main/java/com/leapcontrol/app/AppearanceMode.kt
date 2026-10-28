@@ -8,9 +8,6 @@ package com.leapcontrol.app
  *    搭配使用 —— 白天用日间那套、夜里用夜间那套，随手机自动切。
  *  - [LIGHT] 始终浅色：明暗锁定浅色，只能选浅色主题。
  *  - [DARK] 始终深色：明暗锁定深色，只能选深色主题。
- *
- * 视频主题是唯一例外：它自带「浅色一组（春夏秋冬）+ 深色一套（星空）」的搭配，
- * 选到任意一套外观都会切回 [SYSTEM]，见 `ThemeResolver.pick`。
  */
 enum class AppearanceMode(
     val label: String,

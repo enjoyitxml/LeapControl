@@ -51,7 +51,7 @@ import kotlinx.coroutines.launch
 // ============================================================================
 // 雾化遮罩（以车模正中心为圆心的椭圆）—— 调参入口，改这里即可，不用动下面的布局
 // ----------------------------------------------------------------------------
-// 作用：视频主景（花枝/树冠/落叶/飘雪）落在视频上部 38%，而首页文字（车名 /
+// 作用：场景主景（山脊 / 云团 / 星点 / 灯）落在上半屏 38% 以上，而首页文字（车名 /
 //       续航大字 / 里程行）正好在它后面，不加这层小字会被画面细节吃掉。
 // 形状：圆心在「车模正中心」，越往外越浓。车模所在的位置最通透，往四周呈圆弧发散
 //       逐渐起雾 —— 过渡是一条圆弧而不是一条横直线，衔接更自然，车模也不会被压灰。
@@ -106,7 +106,7 @@ enum class SettingsPage {
     PRIVACY,
 }
 
-/** 底部 Dock：首页 / 我的 */
+/** 底部 Dock：零控 / 零记 / 我的 */
 @Composable
 fun MainScreen(
     runtime: AppRuntime,
@@ -115,10 +115,10 @@ fun MainScreen(
     var tab by remember { mutableIntStateOf(0) }
     var settingsPage by remember { mutableStateOf<SettingsPage?>(null) }
     // 首页是否停在「主界面」（打开充电中心 / 空调 / 体检等二级页时为 false）。
-    // 动态背景视频只在零控首页主界面播放，其余界面一律用主题色渐变。
+    // 动态场景只在零控首页主界面跑动画，其余界面一律用主题色渐变。
     var homeOnMainPage by remember { mutableStateOf(true) }
     // 车模是否滑出视口：HomeScreen 通过 onCarModelGoneChange 上报。
-    // 车模消失后视频背景也要跟着隐去、换成纯色，避免画面细节干扰下方文字，提高可读性。
+    // 车模消失后场景层也要跟着隐去、换成纯色，避免画面细节干扰下方文字，提高可读性。
     // 刻意**不**用 by 解包：这两个值每次滑动都会变一次，在 MainScreen 的组合期读它们，
     // 会让整页（HomeScreen 两百多个节点）跟着重组 —— 而那一刻用户正好在滑动。
     // 以 State 形式传给下面专门的小 composable，让它们各自在自己的作用域里读。
@@ -154,7 +154,7 @@ fun MainScreen(
     val activeSeasonId = season.id
     // ---- 快捷换壁纸（车模右上角的呼吸小白点）----
     // 在当前壁纸所属的池子里随机换一套：浅色只在日间池、深色只在夜间池、
-    // 视频只在视频池，规则见 ThemeResolver.randomSwitch。
+    // 只在当前明暗那一侧的主题池里换，规则见 ThemeResolver.randomSwitch。
     // 只写「正在显示的那一侧槽位」，也不改外观模式 —— 用户点的是换张壁纸，不是换模式。
     // 注意：相伴卡上的那个点是换「卡片背景」，走 runtime.randomizeOwnershipBackdrop，别接到这里。
     val randomizeTheme = {
@@ -227,7 +227,7 @@ fun MainScreen(
             colorScheme = materialScheme,
         ) {
             // 二级页（设置 / 个性化 / 车模外观 / 关于，关于内嵌 免责声明 与 隐私条款 两个子页）：
-            // 不播视频，统一铺当前季节的主题色渐变
+            // 非首页一律铺当前主题的主题色渐变（不跑场景动画）
             if (settingsPage != null) {
                 Box(
                     modifier = Modifier
@@ -326,7 +326,6 @@ fun MainScreen(
                     dark = dark,
                     // 这里读的是低频状态（切 Tab、进出二级页、前后台），不会每帧变
                     active = tab == 0 && homeOnMainPage && resumed,
-                    resumed = resumed,
                     scrolling = homeScrolling,
                     veilBrush = veilBrush,
                     modifier = sceneModifier,
@@ -341,9 +340,8 @@ fun MainScreen(
                             onSelect = { tab = it },
                             items = listOf(
                                 NavItem("零控", iconRes = R.drawable.ic_nav_car),
-                                // 「零记」页暂时下线：该板块待后续版本开发，当前版本优先把控车做稳。
-                                // 恢复时把下面这行加回来，并把 when(tab) 的分支改回去即可。
-                                // NavItem("零记", iconRes = R.drawable.ic_nav_map),
+                                // 「零记」：用车目标 / 用车成本 / 城市打卡，数据全部只存本机
+                                NavItem("零记", iconRes = R.drawable.ic_nav_map),
                                 NavItem("我的", iconRes = R.drawable.ic_nav_person),
                             ),
                         )
@@ -354,7 +352,6 @@ fun MainScreen(
                             .fillMaxSize()
                             .padding(padding),
                     ) {
-                        // 「零记」已下线，tab=1 现在是「我的」
                         when (tab) {
                             0 -> HomeScreen(
                                 runtime = runtime,
@@ -368,6 +365,8 @@ fun MainScreen(
                                 onCarModelGoneChange = { carModelGone.value = it },
                                 onScrollingChange = { homeScrolling.value = it },
                             )
+
+                            1 -> JournalScreen(runtime = runtime)
 
                             else -> ProfileScreen(
                                 runtime = runtime,
@@ -445,7 +444,7 @@ fun MainScreen(
 }
 
 /**
- * 背景场景层（视频主题 / 手绘动态主题）。
+ * 背景场景层（手绘静态 / 动态主题）。
  *
  * 单独抽成一个 composable 只为一件事：`scrolling` 这个 State 在[这里]读，
  * 而不是在 [MainScreen] 里读。开始/结束滑动各会改一次这个值，如果在 MainScreen 读，
@@ -457,24 +456,13 @@ private fun SceneLayer(
     theme: SeasonTheme,
     dark: Boolean,
     active: Boolean,
-    resumed: Boolean,
     scrolling: State<Boolean>,
     veilBrush: Brush?,
     modifier: Modifier = Modifier,
 ) {
     val scrollingNow by scrolling
     val animate = active && !scrollingNow
-    if (theme.video) {
-        // ---- 视频主题（四季 / 星空实拍视频）----
-        // 满屏播放，用雾化 + 下缘渐隐收到空调卡上沿，和其他主题一样不压住宿主内容。
-        ThemeVideoBackdrop(
-            theme = theme,
-            dark = dark,
-            paused = !resumed || !animate,
-            veilBrush = veilBrush,
-            modifier = modifier,
-        )
-    } else if (theme.scene != SceneKind.NONE) {
+    if (theme.scene != SceneKind.NONE) {
         ThemeBackdrop(
             theme = theme,
             dark = dark,

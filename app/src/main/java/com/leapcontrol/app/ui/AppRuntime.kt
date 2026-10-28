@@ -231,6 +231,14 @@ class AppRuntime(context: Context) {
     val sessionStore = SessionStore(appContext)
     val session: Session = sessionStore.load()
 
+    /**
+     * 「零记」运行时（用车目标 / 用车成本 / 城市打卡）。
+     *
+     * 数据按 VIN 隔离、全部存本地，和控车链路完全解耦：
+     * 零记这边出任何问题都不该影响车况与控车，所以它是独立持有的一个对象。
+     */
+    val journal = com.leapcontrol.app.journal.JournalRuntime(appContext) { session.selectedVin }
+
     // 车辆自定义命名（按 VIN 独立存储，登出不清除）
     private val namingPrefs = appContext.getSharedPreferences("leapcontrol_naming", Context.MODE_PRIVATE)
 

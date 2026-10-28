@@ -15,7 +15,7 @@ import kotlin.math.sin
 /**
  * 主题背景场景。
  *
- * 20 套主题全部用 Canvas 实时绘制，没有一张图片、也没有视频文件：
+ * 40 套主题全部用 Canvas 实时绘制，没有一张图片、也没有视频文件：
  *  - 静态场景在布局阶段画一次，之后零开销；
  *  - 动态场景只把「时间进度 t」当参数，重绘走 draw 阶段，不触发 recomposition。
  *
@@ -28,33 +28,53 @@ import kotlin.math.sin
 enum class SceneKind(val animated: Boolean) {
     NONE(false),
 
-    // ---- 日间静态 ----
+    // ---- 日间静态 10 ----
     MIST_HILLS(false),
     CLEAR_SKY(false),
     BLOSSOM(false),
     AUTUMN_WOODS(false),
     SNOW_FIELD(false),
     SEASIDE(false),
+    WHEAT_FIELD(false),
+    LAKE_MIRROR(false),
+    BAMBOO_GROVE(false),
+    DESERT_DUNE(false),
 
-    // ---- 日间动态 ----
+    // ---- 日间动态 10 ----
     CLOUD_DRIFT(true),
     PETAL_FALL(true),
     SUN_DUST(true),
     LIGHT_RAIN(true),
+    RIPPLING_LAKE(true),
+    BIRDS_FLY(true),
+    DANDELION(true),
+    MIST_FLOW(true),
+    TREE_SHADOW(true),
+    SUNRISE_GLOW(true),
 
-    // ---- 夜间静态 ----
+    // ---- 夜间静态 10 ----
     STARRY(false),
     CITY_NIGHT(false),
     MOON_VALLEY(false),
     NIGHT_SEA(false),
     MILKY_WAY(false),
     NIGHT_HILLS(false),
+    PINE_NIGHT(false),
+    SNOW_VILLAGE(false),
+    LIGHTHOUSE(false),
+    LAKE_STARS(false),
 
-    // ---- 夜间动态 ----
+    // ---- 夜间动态 10 ----
     AURORA(true),
     METEOR(true),
     FIREFLY(true),
     NIGHT_RAIN(true),
+    STAR_TRAILS(true),
+    MOON_RIPPLE(true),
+    NIGHT_TRAFFIC(true),
+    SNOW_FALL(true),
+    CLOUD_MOON(true),
+    NIGHT_WAVES(true),
 }
 
 /**
@@ -77,7 +97,7 @@ data class ScenePalette(
 // ============================================================================
 
 /** 确定性伪随机：同一个 i 永远得到同一个 0~1，动画不会抖动、每次进入画面一致。 */
-private fun rnd(seed: Int, i: Int): Float {
+internal fun rnd(seed: Int, i: Int): Float {
     var x = i * 374761393 + seed * 668265263
     x = (x xor (x shr 13)) * 1274126177
     x = x xor (x shr 16)
@@ -85,7 +105,7 @@ private fun rnd(seed: Int, i: Int): Float {
 }
 
 /** 柔和光斑（太阳 / 月亮 / 萤火 / 云团）。中心最亮，外圈化开。 */
-private fun DrawScope.softGlow(cx: Float, cy: Float, radius: Float, color: Color, alpha: Float) {
+internal fun DrawScope.softGlow(cx: Float, cy: Float, radius: Float, color: Color, alpha: Float) {
     if (radius <= 1f || alpha <= 0f) return
     drawCircle(
         brush = Brush.radialGradient(
@@ -108,7 +128,7 @@ private fun DrawScope.softGlow(cx: Float, cy: Float, radius: Float, color: Color
  *
  * @param rim 传了颜色就给山脊画一条描边（月光、极光下的山脊轮廓光）
  */
-private fun DrawScope.ridge(
+internal fun DrawScope.ridge(
     baseline: Float,
     amplitude: Float,
     phase: Float,
@@ -150,7 +170,7 @@ private fun DrawScope.ridge(
 }
 
 /** 横向雾带：中间浓、两端化开，用来分隔山层。 */
-private fun DrawScope.mistBand(cy: Float, height: Float, color: Color, alpha: Float) {
+internal fun DrawScope.mistBand(cy: Float, height: Float, color: Color, alpha: Float) {
     drawRect(
         brush = Brush.verticalGradient(
             colors = listOf(Color.Transparent, color.copy(alpha = alpha), Color.Transparent),
@@ -168,7 +188,7 @@ private fun DrawScope.mistBand(cy: Float, height: Float, color: Color, alpha: Fl
  * 白底上画纯白云是看不见的，所以先用 [shade] 在下方铺一层淡影，
  * 再把主体白色压上去，云才有体积。
  */
-private fun DrawScope.cloud(
+internal fun DrawScope.cloud(
     cx: Float,
     cy: Float,
     scale: Float,
@@ -186,7 +206,7 @@ private fun DrawScope.cloud(
 }
 
 /** 一片花瓣 / 落叶：小椭圆，按角度转一下。 */
-private fun DrawScope.petal(cx: Float, cy: Float, w: Float, h: Float, deg: Float, color: Color, alpha: Float) {
+internal fun DrawScope.petal(cx: Float, cy: Float, w: Float, h: Float, deg: Float, color: Color, alpha: Float) {
     rotate(degrees = deg, pivot = Offset(cx, cy)) {
         drawOval(
             brush = Brush.linearGradient(
@@ -201,7 +221,7 @@ private fun DrawScope.petal(cx: Float, cy: Float, w: Float, h: Float, deg: Float
 }
 
 /** 星空点阵：位置与亮度都由 seed 决定。 */
-private fun DrawScope.starField(seed: Int, count: Int, alphaScale: Float, t: Float, twinkle: Boolean) {
+internal fun DrawScope.starField(seed: Int, count: Int, alphaScale: Float, t: Float, twinkle: Boolean) {
     val w = size.width
     val h = size.height
     for (i in 0 until count) {
@@ -671,5 +691,31 @@ internal fun DrawScope.paintScene(kind: SceneKind, t: Float, p: ScenePalette) {
                 size = Size(w, h * 0.12f),
             )
         }
+
+        // ---------------- 日间 · 扩展组（见 ThemeScenesDayExt.kt） ----------------
+        SceneKind.WHEAT_FIELD -> drawWheatField(p)
+        SceneKind.LAKE_MIRROR -> drawLakeMirror(p)
+        SceneKind.BAMBOO_GROVE -> drawBambooGrove(p)
+        SceneKind.DESERT_DUNE -> drawDesertDune(p)
+
+        SceneKind.RIPPLING_LAKE -> drawRipplingLake(t, p)
+        SceneKind.BIRDS_FLY -> drawBirdsFly(t, p)
+        SceneKind.DANDELION -> drawDandelion(t, p)
+        SceneKind.MIST_FLOW -> drawMistFlow(t, p)
+        SceneKind.TREE_SHADOW -> drawTreeShadow(t, p)
+        SceneKind.SUNRISE_GLOW -> drawSunriseGlow(t, p)
+
+        // ---------------- 夜间 · 扩展组（见 ThemeScenesNightExt.kt） ----------------
+        SceneKind.PINE_NIGHT -> drawPineNight(p)
+        SceneKind.SNOW_VILLAGE -> drawSnowVillage(p)
+        SceneKind.LIGHTHOUSE -> drawLighthouse(p)
+        SceneKind.LAKE_STARS -> drawLakeStars(p)
+
+        SceneKind.STAR_TRAILS -> drawStarTrails(t, p)
+        SceneKind.MOON_RIPPLE -> drawMoonRipple(t, p)
+        SceneKind.NIGHT_TRAFFIC -> drawNightTraffic(t, p)
+        SceneKind.SNOW_FALL -> drawSnowFall(t, p)
+        SceneKind.CLOUD_MOON -> drawCloudMoon(t, p)
+        SceneKind.NIGHT_WAVES -> drawNightWaves(t, p)
     }
 }
