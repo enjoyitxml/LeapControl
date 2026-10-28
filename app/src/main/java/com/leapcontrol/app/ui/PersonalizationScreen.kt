@@ -204,6 +204,22 @@ fun PersonalizationScreen(
             }
         }
 
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 首页图标 ----
+        // 只给「显示 / 不显示」，不给排序：顶栏就两个图标，藏起来是为了画面干净，
+        // 不是为了让人再学一套拖拽。
+        SettingsSection(title = "首页图标", desc = "右上角") {
+            SettingsCard {
+                SwitchRow(
+                    label = "蓝牙钥匙",
+                    desc = "在「个性化」图标左边显示蓝牙钥匙入口，关掉后只能从设置进入",
+                    checked = runtime.bleIconVisible.value,
+                    onCheckedChange = { runtime.setBleIconVisible(it) },
+                )
+            }
+        }
+
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.navigationBarsPadding())
     }

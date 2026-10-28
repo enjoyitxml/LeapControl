@@ -9,6 +9,11 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- 蓝牙钥匙后台保活：以 connectedDevice 前台服务常驻，开机 / 升级后自动恢复 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 仅 Android 9 及以下保存收款码到相册时需要；Android 10+ 走 MediaStore，无需权限 -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -53,6 +58,22 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- 蓝牙钥匙后台服务：连接车辆、维持无感解锁所需的 BLE 链路 -->
+        <service
+            android:name=".bluetooth.BleKeyService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!-- 开机 / 应用升级后自动恢复后台蓝牙钥匙 -->
+        <receiver
+            android:name=".bluetooth.BleKeyBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- 系统控制中心快捷磁贴（ACTIVE_TILE：点击即在应用内执行，不折叠面板） -->
         <service

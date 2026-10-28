@@ -247,6 +247,20 @@ class AppRuntime(context: Context) {
     )
     val quickSwitch: State<QuickSwitchPrefs> get() = _quickSwitch
 
+    /**
+     * 首页顶部「蓝牙钥匙」图标是否显示（个性化 → 首页）。
+     *
+     * 默认显示：这是车主的常用入口，藏起来反而要翻两层设置才能打开。
+     * 和壁纸的 `quick_dot_*` 一样放在 namingPrefs 里，跟着本机走、登出不丢。
+     */
+    private val _bleIconVisible = mutableStateOf(namingPrefs.getBoolean("ble_key_icon_visible", true))
+    val bleIconVisible: State<Boolean> get() = _bleIconVisible
+
+    fun setBleIconVisible(visible: Boolean) {
+        _bleIconVisible.value = visible
+        namingPrefs.edit().putBoolean("ble_key_icon_visible", visible).apply()
+    }
+
     fun customName(): String =
         namingPrefs.getString("name_${session.selectedVin}", "")?.trim().orEmpty()
 

@@ -84,6 +84,14 @@ fun SettingsScreen(
     var showAmapKey by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmGate by remember { mutableStateOf(runtime.biometricConfirmEnabled()) }
+    // 蓝牙钥匙详情页（从本页进入时以整页覆盖的形式出现，返回即回到设置）
+    var showBleKey by remember { mutableStateOf(false) }
+    LocalBleKeyHost.current?.let { host ->
+        if (showBleKey) {
+            BluetoothKeyScreen(host = host, onBack = { showBleKey = false })
+            return
+        }
+    }
     // 快速切换壁纸/背景：三态模式 + 两块各自的小白点开关（都挂在 runtime 的 State 上，
     // 这里直接订阅，改完即时生效，不在页面里存第二份）
     val quick by runtime.quickSwitch
@@ -218,6 +226,40 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(14.dp))
+
+        // ---- 蓝牙钥匙 ----
+        // 只放「总开关 + 一个进详情的入口」：具体感应距离、自动解锁这些在详情页里，
+        // 免得设置页被七八个开关撑满，也避免同一项设置在两处出现两份状态。
+        val bleHost = LocalBleKeyHost.current
+        if (bleHost != null) {
+            SettingsCard("蓝牙钥匙") {
+                SwitchRow(
+                    label = "智能无感钥匙",
+                    desc = when {
+                        !bleHost.bound -> "还没有配对车辆，先点右侧进入配对吧"
+                        bleHost.pending -> "设置待车辆确认"
+                        bleHost.enabled -> "已开启，带着手机靠近车辆即可解锁"
+                        else -> "已关闭，配对记录保留"
+                    },
+                    checked = bleHost.enabled,
+                    onCheckedChange = { on ->
+                        if (!bleHost.bound) {
+                            message = "请先进入蓝牙钥匙页完成车辆配对"
+                        } else {
+                            bleHost.toggleEnabled(on)
+                            message = bleHost.notice
+                        }
+                    },
+                )
+                Spacer(Modifier.height(12.dp))
+                ClickRow(
+                    title = "蓝牙钥匙设置",
+                    desc = "配对车辆 · 靠近解锁 · 感应距离",
+                    iconRes = R.drawable.ic_phosphor_key,
+                ) { showBleKey = true }
+            }
+            Spacer(Modifier.height(14.dp))
+        }
 
         // ---- 系统控制中心快捷磁贴 ----
         val context = androidx.compose.ui.platform.LocalContext.current

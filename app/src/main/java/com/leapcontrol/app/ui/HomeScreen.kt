@@ -186,6 +186,10 @@ fun HomeScreen(
         // 这里只订阅，不再用 remember 存 —— 切到「我的」再回来不会先变成 null 而闪一下。
         val status by runtime.statusFlow.collectAsState()
         val lastUpdated by runtime.lastUpdatedFlow.collectAsState()
+        // 蓝牙钥匙：宿主由 LeapControlApp 下发（进程级单例，设置页也共用同一份状态）
+        val bleHost = LocalBleKeyHost.current
+        val bleIconVisible by runtime.bleIconVisible
+        var showBleKey by remember { mutableStateOf(false) }
         // 行驶里程 / 能耗（独立接口，拿不到就静默保持上一次结果）
         val energySummary by runtime.mileageEnergyFlow.collectAsState()
         // 相伴卡背景：个性化里切换后要立刻生效，所以直接读 State
@@ -791,6 +795,8 @@ fun HomeScreen(
                 status = status,
                 onBack = { showTire = false },
             )
+        } else if (showBleKey && bleHost != null) {
+            BluetoothKeyScreen(host = bleHost, onBack = { showBleKey = false })
         } else {
             // 外层 Box：承载悬浮反馈条（指令结果必须让用户看到，放在滚动列表底部等于看不见）
             Box(modifier = Modifier.fillMaxSize()) {
@@ -803,11 +809,25 @@ fun HomeScreen(
             Box(modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 6.dp, start = 22.dp, end = 22.dp)) {
-                // 右侧图标按钮：个性化（皮肤），顶边与左侧车名顶端对齐
+                // 右侧图标按钮：蓝牙钥匙（个性化左边）+ 个性化（皮肤），顶边与左侧车名顶端对齐
                 Row(
                     modifier = Modifier.align(Alignment.TopEnd),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // 蓝牙钥匙：不可用（没配对 / 没开 / 没权限）时是灰的，点进去就能开启
+                    if (bleHost != null && bleIconVisible) {
+                        HeaderIconButton(
+                            iconRes = R.drawable.ic_phosphor_key,
+                            description = "蓝牙钥匙",
+                            tint = when (bleHost.status) {
+                                BleKeyStatus.ACTIVE -> LocalAppColors.current.accent
+                                BleKeyStatus.STANDBY -> LocalAppColors.current.textPrimary
+                                else -> LocalAppColors.current.textSecondary.copy(alpha = 0.45f)
+                            },
+                            onClick = { showBleKey = true },
+                        )
+                        Spacer(Modifier.width(2.dp))
+                    }
                     HeaderIconButton(
                         iconRes = R.drawable.ic_skin,
                         description = "皮肤",
@@ -2881,6 +2901,7 @@ private fun HeaderIconButton(
     iconRes: Int,
     description: String,
     size: androidx.compose.ui.unit.Dp = 22.dp,
+    tint: Color = LocalAppColors.current.textPrimary,
     onClick: () -> Unit,
 ) {
     Box(
@@ -2893,7 +2914,7 @@ private fun HeaderIconButton(
         Icon(
             painter = painterResource(iconRes),
             contentDescription = description,
-            tint = LocalAppColors.current.textPrimary,
+            tint = tint,
             modifier = Modifier.size(size),
         )
     }
