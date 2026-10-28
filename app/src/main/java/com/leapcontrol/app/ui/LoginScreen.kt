@@ -258,9 +258,9 @@ fun LoginScreen(
 
             Spacer(Modifier.weight(1f))
 
-            // ---- 底部免责说明 ----
+            // ---- 底部说明 ----
             Text(
-                "非官方客户端、仅供学习交流\n登录与控车均直连零跑官方服务",
+                "本软件仅限夏明亮和他的好朋友使用\n登录与控车均直连零跑官方服务",
                 color = Color.White.copy(alpha = 0.45f),
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,
