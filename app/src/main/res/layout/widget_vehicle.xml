@@ -1,38 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  桌面小组件 4x2 —— 版式照澎湃原生那一版对齐：
-    上左  车标 + 车名 / 纯电续航 + 绿条 / 燃油续航 + 蓝条 / 更新时间（续航下方，左对齐）
-    上右  车模（占满右侧上半部分，可以一直贴到卡片右边缘）
-    底部  解锁 │ 上锁 │ 空调 │ 后备箱 │ 鸣笛（快捷控车栏同款图标，无文字标签）
+  桌面小组件 4x2 —— 严格四宫格：
+    左上  车标 + 车名（垂直居中）
+    右上  车模（findCenter 于本格 → 车模正中心 = 卡片 75% / 25% 那个点）
+    左下  纯电 / 燃油续航 + 进度条 + 车况更新时间
+    右下  五个按键：解锁 / 上锁 / 空调 ／ 后备箱 / 鸣笛（2 行 × 3 列）
 
-  三个关键约束：
-  1. RemoteViews 只认 LinearLayout / TextView / ImageView / ProgressBar，没有约束布局；
-  2. 尺寸不能写死。卡片被拉到 320×150 或压到 250×110，内容都得跟着变 ——
-     所以「上半部分」和「按键行」都用 weight 分高度、图标用 match_parent + fitCenter 自动缩放，
-     文字字号在 VehicleWidget.buildViews 里按卡片的实际 dp 尺寸二次设置；
-  3. 纯电车型没有燃油续航，`wg_fuel_block` 整块 GONE（GONE 的子视图不参与 weight 分配，
-     纯电时长续航块会自动变宽，不会留下一条空洞）。
+  为什么这次改成四宫格：用户要的是「车模正中心落在右上格的中心」——
+  这样换任何一张自定义壁纸，车模和文字的落点都是可预期的，
+  不会出现壁纸主体被车模压住、或者字压在杂乱区域上的情况。
 
-  车模为什么单独挂在右列而不是跟在续航数字后面：它要和「车名 + 续航 + 时间」一样高，
-  这样才撑得出「右侧上半部分」的体量；横向靠 weight 让位，右边缘不留 padding ——
-  容器 paddingEnd=0，需要呼吸的只有底部按键行（自己带 paddingEnd）。
+  三个关键约束没变：
+  1. RemoteViews 只认 LinearLayout / FrameLayout / TextView / ImageView / ProgressBar；
+  2. 尺寸不写死：上下半区各 weight=1，四个格子再各 weight=1，
+     字号在 VehicleWidget.buildViews 里按卡片实际 dp 二次设置；
+  3. 纯电车型没有燃油续航，`wg_fuel_block` 整块 GONE（GONE 不参与 weight，
+     纯电块自动变宽，不留空洞）。
+
+  圆角：根布局 clipToOutline=true，裁剪轮廓来自 background（widget_card 的 24dp 圆角）。
+  自定义壁纸填满卡片时会被这条轮廓切出与卡片完全一致的圆角 —— 上一版把圆角烘焙进图片，
+  图片圆角与卡片圆角对不上，四个角就露出一圈白边，这次从机制上消除这种可能。
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/wg_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/widget_card">
+    android:background="@drawable/widget_card"
+    android:clipToOutline="true">
 
-    <!-- 背景照片：垫在最底层，所有内容压在上面。
-         走 setImageViewResource 而不是 setImageViewBitmap —— 位图过 Binder 最多只能给到
-         400px 宽（再大加上车模就撞 1MB 事务上限），铺到 800+px 的卡片上必然发虚；
-         用资源 id 则由桌面进程自己按原图分辨率解码，清晰度不受限。
-         代价是圆角没法再运行时现画，所以圆角是烘焙进 webp 里的（见 build_bg.py）。
-         没选背景时整块 GONE，露出下面的玻璃卡。 -->
+    <!-- 背景图：垫在最底层。走 setImageViewUri（桌面进程自己解码，没有 Binder 1MB 上限），
+         没选自定义壁纸时 GONE，露出下面的简约纯色卡。
+         这里也带一份 outline 裁剪，双保险：万一某些桌面不认根布局的 clipToOutline，
+         图片自己也会被切成圆角。 -->
     <ImageView
         android:id="@+id/wg_bg"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:background="@drawable/widget_card"
+        android:clipToOutline="true"
         android:contentDescription="@null"
         android:scaleType="fitXY"
         android:visibility="gone" />
@@ -41,31 +46,24 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:paddingStart="18dp"
-        android:paddingTop="10dp"
-        android:paddingEnd="0dp"
-        android:paddingBottom="7dp">
+        android:paddingStart="16dp"
+        android:paddingTop="9dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="9dp">
 
-    <!-- ======== 上半部分：左文字栏 + 右车模 ======== -->
-    <LinearLayout
-        android:id="@+id/wg_top"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:orientation="horizontal">
-
-        <!-- 左列：车名 / 续航 / 更新时间，整体垂直居中 -->
+        <!-- ================= 上半区 ================= -->
         <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
             android:layout_weight="1"
-            android:gravity="center_vertical"
-            android:orientation="vertical">
+            android:orientation="horizontal">
 
-            <!-- 车标 + 车名 -->
+            <!-- 左上：车标 + 车名 -->
             <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:id="@+id/wg_tl"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -86,287 +84,293 @@
                     android:ellipsize="end"
                     android:includeFontPadding="false"
                     android:maxLines="1"
-                    android:maxWidth="150dp"
+                    android:maxWidth="126dp"
                     android:text="我的零跑"
                     android:textColor="#12141A"
                     android:textSize="13sp"
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- 续航：左纯电、右燃油。整块右移 8dp，不再贴着卡片左边缘 -->
+            <!-- 右上：车模。fitCenter 把图摆在格子正中 —— 车模中心 = 右上格中心 -->
+            <FrameLayout
+                android:id="@+id/wg_tr"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1">
+
+                <ImageView
+                    android:id="@+id/wg_car"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="车辆"
+                    android:scaleType="fitCenter"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <!-- ================= 下半区 ================= -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal">
+
+            <!-- 左下：续航 + 进度条 + 更新时间 -->
             <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_marginTop="4dp"
-                android:orientation="horizontal">
+                android:id="@+id/wg_bl"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:orientation="vertical">
 
-                <!-- 左：纯电续航 -->
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:orientation="horizontal">
 
+                    <!-- 左：纯电续航 -->
                     <LinearLayout
-                        android:layout_width="wrap_content"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:gravity="bottom"
-                        android:orientation="horizontal">
+                        android:layout_weight="1"
+                        android:orientation="vertical">
 
-                        <TextView
-                            android:id="@+id/wg_ev_range"
+                        <LinearLayout
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:includeFontPadding="false"
-                            android:maxLines="1"
-                            android:text="--"
-                            android:textColor="#12141A"
-                            android:textSize="22sp"
-                            android:textStyle="bold" />
+                            android:gravity="bottom"
+                            android:orientation="horizontal">
 
-                        <TextView
-                            android:id="@+id/wg_ev_unit"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="2dp"
-                            android:layout_marginBottom="3dp"
-                            android:includeFontPadding="false"
-                            android:maxLines="1"
-                            android:text="km"
-                            android:textColor="#6C7480"
-                            android:textSize="10sp" />
+                            <TextView
+                                android:id="@+id/wg_ev_range"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:includeFontPadding="false"
+                                android:maxLines="1"
+                                android:text="--"
+                                android:textColor="#12141A"
+                                android:textSize="22sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/wg_ev_unit"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="2dp"
+                                android:layout_marginBottom="3dp"
+                                android:includeFontPadding="false"
+                                android:maxLines="1"
+                                android:text="km"
+                                android:textColor="#6C7480"
+                                android:textSize="10sp" />
+                        </LinearLayout>
+
+                        <ProgressBar
+                            android:id="@+id/wg_bar_ev"
+                            style="?android:attr/progressBarStyleHorizontal"
+                            android:layout_width="match_parent"
+                            android:layout_height="5dp"
+                            android:layout_marginTop="4dp"
+                            android:layout_marginEnd="10dp"
+                            android:max="100"
+                            android:progress="0"
+                            android:progressDrawable="@drawable/widget_bar" />
                     </LinearLayout>
 
-                    <ProgressBar
-                        android:id="@+id/wg_bar_ev"
-                        style="?android:attr/progressBarStyleHorizontal"
-                        android:layout_width="match_parent"
-                        android:layout_height="5dp"
-                        android:layout_marginTop="4dp"
-                        android:layout_marginEnd="10dp"
-                        android:max="100"
-                        android:progress="0"
-                        android:progressDrawable="@drawable/widget_bar" />
-                </LinearLayout>
-
-                <!-- 右：燃油续航（只有增程车型才显示） -->
-                <LinearLayout
-                    android:id="@+id/wg_fuel_block"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:visibility="gone">
-
+                    <!-- 右：燃油续航（只有增程车型才显示） -->
                     <LinearLayout
-                        android:layout_width="wrap_content"
+                        android:id="@+id/wg_fuel_block"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:gravity="bottom"
-                        android:orientation="horizontal">
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:visibility="gone">
 
-                        <TextView
-                            android:id="@+id/wg_fuel_range"
+                        <LinearLayout
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:includeFontPadding="false"
-                            android:maxLines="1"
-                            android:text="--"
-                            android:textColor="#12141A"
-                            android:textSize="22sp"
-                            android:textStyle="bold" />
+                            android:gravity="bottom"
+                            android:orientation="horizontal">
 
-                        <TextView
-                            android:id="@+id/wg_fuel_unit"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="2dp"
-                            android:layout_marginBottom="3dp"
-                            android:includeFontPadding="false"
-                            android:maxLines="1"
-                            android:text="km"
-                            android:textColor="#6C7480"
-                            android:textSize="10sp" />
+                            <TextView
+                                android:id="@+id/wg_fuel_range"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:includeFontPadding="false"
+                                android:maxLines="1"
+                                android:text="--"
+                                android:textColor="#12141A"
+                                android:textSize="22sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/wg_fuel_unit"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="2dp"
+                                android:layout_marginBottom="3dp"
+                                android:includeFontPadding="false"
+                                android:maxLines="1"
+                                android:text="km"
+                                android:textColor="#6C7480"
+                                android:textSize="10sp" />
+                        </LinearLayout>
+
+                        <ProgressBar
+                            android:id="@+id/wg_bar_fuel"
+                            style="?android:attr/progressBarStyleHorizontal"
+                            android:layout_width="match_parent"
+                            android:layout_height="5dp"
+                            android:layout_marginTop="4dp"
+                            android:layout_marginEnd="10dp"
+                            android:max="100"
+                            android:progress="0"
+                            android:progressDrawable="@drawable/widget_bar_range" />
                     </LinearLayout>
-
-                    <ProgressBar
-                        android:id="@+id/wg_bar_fuel"
-                        style="?android:attr/progressBarStyleHorizontal"
-                        android:layout_width="match_parent"
-                        android:layout_height="5dp"
-                        android:layout_marginTop="4dp"
-                        android:layout_marginEnd="10dp"
-                        android:max="100"
-                        android:progress="0"
-                        android:progressDrawable="@drawable/widget_bar_range" />
                 </LinearLayout>
+
+                <!-- 车况更新时间 / 未锁车 / 正在下发，与续航左对齐 -->
+                <TextView
+                    android:id="@+id/wg_time"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:text="尚未同步"
+                    android:textColor="#8A9099"
+                    android:textSize="10sp" />
             </LinearLayout>
 
-            <!-- 车况更新时间：挪到续航下面，与续航左对齐 -->
-            <TextView
-                android:id="@+id/wg_time"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_marginTop="3dp"
-                android:includeFontPadding="false"
-                android:maxLines="1"
-                android:text="尚未同步"
-                android:textColor="#8A9099"
-                android:textSize="10sp" />
-        </LinearLayout>
-
-        <!-- 车模：透明底 PNG，fitCenter 不变形。
-             权重 1.4 : 1 —— 横向占卡片右侧约 55%，右边缘直接顶到卡片边界（容器没 paddingEnd）。
-             上下各留 2dp，避免轮子压到底部按键行的那条边线上（就是之前「底部被线切割」的观感）。 -->
-        <ImageView
-            android:id="@+id/wg_car"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_marginStart="6dp"
-            android:layout_marginTop="0dp"
-            android:layout_marginBottom="2dp"
-            android:layout_weight="1.25"
-            android:contentDescription="车辆"
-            android:scaleType="fitCenter"
-            android:visibility="gone" />
-    </LinearLayout>
-
-    <!-- ======== 底部按键行：解锁 / 上锁 / 空调 / 后备箱 / 鸣笛 ========
-         weight 1.05 → 0.58：按键块高度比上一版矮三分之一，图标跟着矮三分之一（图标是
-         match_parent + fitCenter，撑满格子），腾出来的高度全给了上面的车模。 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_marginTop="2dp"
-        android:layout_marginEnd="18dp"
-        android:layout_weight="0.58"
-        android:orientation="horizontal">
-
-        <LinearLayout
-            android:id="@+id/wg_cell_unlock"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@drawable/widget_cell"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:id="@+id/wg_icon_unlock"
-                android:layout_width="match_parent"
+            <!-- 右下：五个按键，2 行 × 3 列。
+                 每个格子高度只有下半区的一半（≈33dp @150dp 卡片），
+                 图标 match_parent + padding 3dp 之后画出来约 27dp ——
+                 正好是上一版（整行通栏、约 42dp）的三分之二。 -->
+            <LinearLayout
+                android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:contentDescription="解锁"
-                android:padding="3dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_qc_unlock" />
-        </LinearLayout>
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/wg_div_1"
-            android:layout_width="1px"
-            android:layout_height="16dp"
-            android:layout_gravity="center_vertical"
-            android:background="#1412141A" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:orientation="horizontal">
 
-        <LinearLayout
-            android:id="@+id/wg_cell_lock"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@drawable/widget_cell"
-            android:clickable="true"
-            android:focusable="true">
+                    <LinearLayout
+                        android:id="@+id/wg_cell_unlock"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@drawable/widget_cell"
+                        android:clickable="true"
+                        android:focusable="true">
 
-            <ImageView
-                android:id="@+id/wg_icon_lock"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:contentDescription="上锁"
-                android:padding="3dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_qc_lock" />
-        </LinearLayout>
+                        <ImageView
+                            android:id="@+id/wg_icon_unlock"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:contentDescription="解锁"
+                            android:padding="3dp"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_qc_unlock" />
+                    </LinearLayout>
 
-        <TextView
-            android:id="@+id/wg_div_2"
-            android:layout_width="1px"
-            android:layout_height="16dp"
-            android:layout_gravity="center_vertical"
-            android:background="#1412141A" />
+                    <LinearLayout
+                        android:id="@+id/wg_cell_lock"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@drawable/widget_cell"
+                        android:clickable="true"
+                        android:focusable="true">
 
-        <LinearLayout
-            android:id="@+id/wg_cell_ac"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@drawable/widget_cell"
-            android:clickable="true"
-            android:focusable="true">
+                        <ImageView
+                            android:id="@+id/wg_icon_lock"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:contentDescription="上锁"
+                            android:padding="3dp"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_qc_lock" />
+                    </LinearLayout>
 
-            <ImageView
-                android:id="@+id/wg_icon_ac"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:contentDescription="空调"
-                android:padding="3dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_wg_fan" />
-        </LinearLayout>
+                    <LinearLayout
+                        android:id="@+id/wg_cell_ac"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@drawable/widget_cell"
+                        android:clickable="true"
+                        android:focusable="true">
 
-        <TextView
-            android:id="@+id/wg_div_3"
-            android:layout_width="1px"
-            android:layout_height="16dp"
-            android:layout_gravity="center_vertical"
-            android:background="#1412141A" />
+                        <ImageView
+                            android:id="@+id/wg_icon_ac"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:contentDescription="空调"
+                            android:padding="3dp"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_wg_fan" />
+                    </LinearLayout>
+                </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/wg_cell_trunk"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@drawable/widget_cell"
-            android:clickable="true"
-            android:focusable="true">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:orientation="horizontal">
 
-            <ImageView
-                android:id="@+id/wg_icon_trunk"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:contentDescription="后备箱"
-                android:padding="3dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_qc_trunk" />
-        </LinearLayout>
+                    <LinearLayout
+                        android:id="@+id/wg_cell_trunk"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@drawable/widget_cell"
+                        android:clickable="true"
+                        android:focusable="true">
 
-        <TextView
-            android:id="@+id/wg_div_4"
-            android:layout_width="1px"
-            android:layout_height="16dp"
-            android:layout_gravity="center_vertical"
-            android:background="#1412141A" />
+                        <ImageView
+                            android:id="@+id/wg_icon_trunk"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:contentDescription="后备箱"
+                            android:padding="3dp"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_qc_trunk" />
+                    </LinearLayout>
 
-        <!-- 鸣笛寻车：单次指令，点一次发一次 -->
-        <LinearLayout
-            android:id="@+id/wg_cell_horn"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@drawable/widget_cell"
-            android:clickable="true"
-            android:focusable="true">
+                    <!-- 鸣笛寻车：单次指令，点一次发一次 -->
+                    <LinearLayout
+                        android:id="@+id/wg_cell_horn"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@drawable/widget_cell"
+                        android:clickable="true"
+                        android:focusable="true">
 
-            <ImageView
-                android:id="@+id/wg_icon_horn"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:contentDescription="鸣笛寻车"
-                android:padding="3dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_qc_horn" />
+                        <ImageView
+                            android:id="@+id/wg_icon_horn"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:contentDescription="鸣笛寻车"
+                            android:padding="3dp"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_qc_horn" />
+                    </LinearLayout>
+
+                    <!-- 第三格留白：五个按键排成 3 + 2，第二行只占前两列，
+                         与第一行左对齐（对齐比"居中"更像一个整体） -->
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1" />
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
-</LinearLayout>
 </FrameLayout>

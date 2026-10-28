@@ -185,11 +185,12 @@ fun PersonalizationScreen(
 
         Spacer(Modifier.height(18.dp))
 
-        // ---- 桌面小组件背景 ----
-        // 日间 / 夜间两套分开选，跟着系统深浅自动换；点桌面上的车模也能直接换下一张。
-        SettingsSection(title = "桌面小组件背景", desc = "随系统深浅自动切换") {
+        // ---- 桌面小组件 ----
+        // 背景只有「简约（跟系统深浅）」和「自定义图片」两档，另加按钮 / 文字 / 车标三组配色。
+        // 内置风景图库已按用户要求整套删掉，见 WidgetStyle 顶部说明。
+        SettingsSection(title = "桌面小组件", desc = "背景 · 配色") {
             SettingsCard {
-                WidgetBackdropPicker(runtime = runtime)
+                WidgetStyleSettings(runtime = runtime)
             }
         }
 
