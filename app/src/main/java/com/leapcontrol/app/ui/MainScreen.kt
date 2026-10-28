@@ -93,7 +93,7 @@ private val HEADER_VEIL_STOPS = arrayOf(
     1.00f to 0.78f,   // 屏幕顶端：最浓，再往外保持不变
 )
 
-/** 「我的」页的入口：设置 / 个性化 / 车模外观 / 关于 / 免责声明 / 隐私条款 */
+/** 二级页路由：「我的」页 → 设置 / 个性化 / 关于（内嵌 免责声明、隐私条款）/ 车模外观 */
 enum class SettingsPage {
     SETTINGS,
     PERSONALIZATION,

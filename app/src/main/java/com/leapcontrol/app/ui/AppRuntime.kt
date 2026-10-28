@@ -16,8 +16,13 @@ import com.leapcontrol.app.ApkUpdater
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.GitHubUpdate
+import com.leapcontrol.app.HomeCardId
+import com.leapcontrol.app.HomeCardLayout
 import com.leapcontrol.app.AmapWebApi
 import com.leapcontrol.app.ApiException
+import com.leapcontrol.app.ChargePlanCyclesHelper
+import com.leapcontrol.app.ChargeSchedule
+import com.leapcontrol.app.ChargeStatus
 import com.leapcontrol.app.Commands
 import com.leapcontrol.app.ControlResultPollingPolicy
 import com.leapcontrol.app.FridgeControlCommand
@@ -28,6 +33,7 @@ import com.leapcontrol.app.MileageEnergyParser
 import com.leapcontrol.app.MileageEnergySummary
 import com.leapcontrol.app.ScheduledAcPlan
 import com.leapcontrol.app.ScheduledAcState
+import com.leapcontrol.app.ScheduledPreheatState
 import com.leapcontrol.app.ObfuscatedSecrets
 import com.leapcontrol.app.QuickSwitchMode
 import com.leapcontrol.app.QuickSwitchPrefs
@@ -39,6 +45,8 @@ import com.leapcontrol.app.TrunkStateMapper
 import com.leapcontrol.app.UpdateCheckResult
 import com.leapcontrol.app.Vehicle
 import com.leapcontrol.app.VehicleChargePlan
+import com.leapcontrol.app.WeeklyEnergyData
+import com.leapcontrol.app.WeeklyEnergyParser
 import com.leapcontrol.app.VehicleLocationDomain
 import com.leapcontrol.app.VehicleOtaInfo
 import com.leapcontrol.app.VehicleCapabilityDetector
@@ -65,9 +73,15 @@ class NeedPinException : Exception("需要先设置 4 位控车密码")
  * 官方抓包文档同样给出最长 24 秒的窗口。
  */
 private const val CONTROL_RESULT_MAX_WAIT_MS = 20_000L
-
 /** 里程 / 能耗缓存有效期：15 分钟。老服务限频，不必每次进首页都打一次。 */
 private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
+
+/**
+ * 「一键关闭耗电功能」时两条指令之间的间隔。
+ * 网关对连续车控有限流，实测 1 秒内连发第二条容易回「系统繁忙」；
+ * 800ms 是能明显缩短整体耗时的同时又不丢指令的折中值。
+ */
+private const val POWER_DRAIN_GAP_MS = 800L
 
 /**
  * 单个车轮的胎压状态。
@@ -170,11 +184,20 @@ data class CarStatus(
     /** 整车是否已下电 / 离车驻车（闭锁、电源 OFF、EPB 拉起任一成立）。 */
     val isShutDown: Boolean = false,
     /** 充电中心相关（信号缺失均为 null，UI 显示「--」） */
+    /**
+     * 充电状态（1149 chargeState）：0 未插枪 / 1 充电中 / 2 充电完成 / 3 故障 /
+     * 4 预约等待 / 6 暂停。文案映射见 [com.leapcontrol.app.ChargeStatus.label]。
+     */
+    val chargeState: Int? = null,
+    /** 健康充电（电池养护）是否开启，信号 48 healthyChargeEnabled。 */
+    val healthyChargeEnabled: Boolean? = null,
     val chargingPower: String? = null, // 充电功率，如 "7.2 kW"
     val chargeTimeLeft: String? = null, // 剩余充电时间，如 "1 小时 23 分"
     val chargeVoltage: String? = null, // 电压，如 "368 V"
     val chargeCurrent: String? = null, // 电流，如 "18.5 A"
     val batteryTemp: String? = null, // 电池温度，如 "28 °C"
+    // 上面三项（1177 / 1178 / 1182）是 BMS 常驻信号，不只充电时才有值；
+    // 「车辆健康」卡也直接读这三个字段，别当成充电专属字段删掉。
     /** 天窗是否开启（1718 sunroofOpening），与遮阳帘（1724）分开。 */
     val sunroofOpen: Boolean? = null,
     /** 前备箱是否开启（仅部分车型支持，信号缺失为 null）。 */
@@ -246,6 +269,55 @@ class AppRuntime(context: Context) {
         ),
     )
     val quickSwitch: State<QuickSwitchPrefs> get() = _quickSwitch
+
+    /**
+     * 首页顶部「蓝牙钥匙」图标是否显示（个性化 → 首页）。
+     *
+     * 默认显示：这是车主的常用入口，藏起来反而要翻两层设置才能打开。
+     * 和壁纸的 `quick_dot_*` 一样放在 namingPrefs 里，跟着本机走、登出不丢。
+     */
+    private val _bleIconVisible = mutableStateOf(namingPrefs.getBoolean("ble_key_icon_visible", true))
+    val bleIconVisible: State<Boolean> get() = _bleIconVisible
+
+    fun setBleIconVisible(visible: Boolean) {
+        _bleIconVisible.value = visible
+        namingPrefs.edit().putBoolean("ble_key_icon_visible", visible).apply()
+    }
+
+    /**
+     * 首页卡片顺序 / 显隐（编辑态长按拖动、删除、添加后持久化在这里）。
+     *
+     * 放在 namingPrefs：跟着本机走、登出不丢。存储内容就是 [HomeCardId] 名字的逗号串，
+     * 空串表示用户把卡片全删了（不能回退成默认，否则删不干净）。
+     */
+    private val _homeCards = mutableStateOf(
+        run {
+            // 版本号用于「这个版本新增了卡片」的补入：老用户存过的列表里没有新卡，
+            // 只有靠版本差才能知道该不该补（用户主动删掉的卡，版本已是最新，不会自己回来）。
+            val savedVersion = namingPrefs.getInt("home_cards_v", 0)
+            val parsed = HomeCardLayout.parse(
+                namingPrefs.getString("home_cards", null),
+                savedVersion,
+            )
+            if (savedVersion < HomeCardLayout.VERSION) {
+                namingPrefs.edit()
+                    .putString("home_cards", HomeCardLayout.serialize(parsed))
+                    .putInt("home_cards_v", HomeCardLayout.VERSION)
+                    .apply()
+            }
+            parsed
+        },
+    )
+    val homeCards: State<List<HomeCardId>> get() = _homeCards
+
+    fun setHomeCards(cards: List<HomeCardId>) {
+        val clean = HomeCardLayout.parse(HomeCardLayout.serialize(cards))
+        _homeCards.value = clean
+        namingPrefs.edit()
+            .putString("home_cards", HomeCardLayout.serialize(clean))
+            .putInt("home_cards_v", HomeCardLayout.VERSION)
+            .apply()
+    }
 
     fun customName(): String =
         namingPrefs.getString("name_${session.selectedVin}", "")?.trim().orEmpty()
@@ -600,12 +672,19 @@ class AppRuntime(context: Context) {
     /** 最近一次成功拉取的里程 / 能耗汇总（进程内保持，冷启动由磁盘缓存预填）。 */
     val mileageEnergyFlow: StateFlow<MileageEnergySummary?> = _mileageEnergy.asStateFlow()
 
+    // ---- 周能耗（首页两张能耗卡）----
+    // 两个接口：近 6 周百公里能耗与排行、上周能耗构成。
+    // 和里程能耗一样：失败静默保留上一次结果，不拖累别的卡片。
+    private val _weeklyEnergy = MutableStateFlow<WeeklyEnergyData?>(null)
+    val weeklyEnergyFlow: StateFlow<WeeklyEnergyData?> = _weeklyEnergy.asStateFlow()
+
     init {
         syncCapabilities()
         // 冷启动先用上一次的车况把界面填上，联网刷新再覆盖（不留空白帧）
         loadCachedStatus()
         // 里程 / 能耗同样先上缓存，联网拉取在首页进入时触发
         loadCachedMileageEnergy()
+        loadCachedWeeklyEnergy()
     }
 
     /** 让 [_capabilities] 跟随当前选中车辆；VIN 没变则不重复读取。 */
@@ -710,6 +789,70 @@ class AppRuntime(context: Context) {
             result
         }
 
+    // ---------------- 周能耗（近 6 周百公里能耗 / 上周能耗构成）----------------
+
+    private fun weeklyEnergyCacheKey(vin: String) = "weekly_$vin"
+
+    /** 用磁盘缓存预填 [weeklyEnergyFlow]，冷启动时两张能耗卡不空一帧。 */
+    fun loadCachedWeeklyEnergy(vin: String = session.selectedVin) {
+        val raw = runCatching { energyPrefs.getString(weeklyEnergyCacheKey(vin), null) }.getOrNull()
+        if (raw.isNullOrBlank()) {
+            _weeklyEnergy.value = null
+            return
+        }
+        _weeklyEnergy.value = runCatching { WeeklyEnergyData.fromJson(JSONObject(raw)) }.getOrNull()
+    }
+
+    /**
+     * 拉取周能耗（15 分钟内不重复请求）。
+     *
+     * 两个接口各自 runCatching：排行接口挂了不影响能耗构成，反之亦然；
+     * 两边都没拿到新值就保留上一次结果（可能是磁盘缓存），UI 显示「--」。
+     */
+    suspend fun refreshWeeklyEnergy(force: Boolean = false): WeeklyEnergyData? =
+        withContext(Dispatchers.IO) {
+            val vin = session.selectedVin
+            if (vin.isBlank()) return@withContext null
+            val cached = _weeklyEnergy.value
+            val now = System.currentTimeMillis()
+            if (!force && cached != null && now - cached.capturedAt < MILEAGE_ENERGY_TTL_MS) {
+                return@withContext cached
+            }
+            if (!isNetworkAvailable()) return@withContext cached
+            val api = LeapmotorApi(session)
+            var summary: WeeklyEnergyData? = null
+            runCatching { withNetworkRetry { api.getLastNWeeks100kmEcAndRank() } }
+                .onSuccess { resp ->
+                    runCatching { WeeklyEnergyParser.parseRank(resp) }
+                        .onSuccess { summary = WeeklyEnergyData(rank = it) }
+                }
+            runCatching { withNetworkRetry { api.getLastWeekEc() } }
+                .onSuccess { resp ->
+                    runCatching { WeeklyEnergyParser.parseComposition(resp) }
+                        .onSuccess {
+                            summary = summary?.let { s -> s.copy(composition = it) }
+                                ?: WeeklyEnergyData(composition = it)
+                        }
+                }
+            val fresh = summary
+            val result = when {
+                fresh == null -> cached
+                else -> fresh.copy(capturedAt = now).let { newly ->
+                    // 用上一次的结果补齐另一张卡（这次只成功了一个接口时）
+                    cached?.merge(newly) ?: newly
+                }
+            }
+            if (result != null && result.hasAny) {
+                _weeklyEnergy.value = result
+                runCatching {
+                    energyPrefs.edit()
+                        .putString(weeklyEnergyCacheKey(vin), result.toJson().toString())
+                        .apply()
+                }
+            }
+            result
+        }
+
     /**
      * 原始报文 → [CarStatus]。
      *
@@ -729,6 +872,11 @@ class AppRuntime(context: Context) {
         }
         // acSetting 是一个 JSON 串，解析一次给下面几个字段共用（以前每个字段各解析一次）
         val acSetting = parseAcSetting(st)
+        // 充电读数的真实信号：1177 batteryVoltage / 1178 batteryCurrent / 1182 minBatteryTemp。
+        // 旧实现按 "chargeVoltage" / "batteryTemp" 这类「看起来像」的键名找，车端一个都不发 →
+        // 充电中心三个读数永远是「--」。现在以命名信号为准，并保留别名字段兼容不同车型。
+        val batteryVoltageRaw = pick(st, "batteryVoltage", "1177", "chargeVoltage", "bmsVoltage")
+        val batteryCurrentRaw = pick(st, "batteryCurrent", "1178", "chargeCurrent", "bmsCurrent")
         return CarStatus(
             soc = VehicleStatusMapper.soc(st),
             range = range,
@@ -772,11 +920,20 @@ class AppRuntime(context: Context) {
                 parkingBrakeState = st.opt("parkingBrakeState"),
                 locked = WidgetStatusMapper.locked(st),
             ),
-            chargingPower = formatValue(pick(st, "chargingPower", "chargePower", "chargePowerKw"), "kW"),
+            chargeState = ChargeStatus.state(st),
+            healthyChargeEnabled = parseOnOff(pick(st, "healthyChargeEnabled", "48")),
+            // 车端没有独立的充电功率信号，官方也是「电压 × 电流」推算（未充电时电流≈0 → 0 kW，
+            // 界面在这种状态下显示「未充电」，不显示 0.0 kW）
+            chargingPower = formatValue(pick(st, "chargingPower", "chargePower", "chargePowerKw"), "kW")
+                ?: ChargeStatus.electricalPower(batteryVoltageRaw, batteryCurrentRaw),
             chargeTimeLeft = parseChargeTimeLeft(st),
-            chargeVoltage = formatValue(pick(st, "chargeVoltage", "voltage", "bmsVoltage"), "V"),
-            chargeCurrent = formatValue(pick(st, "chargeCurrent", "current", "bmsCurrent"), "A"),
-            batteryTemp = formatValue(pick(st, "batteryTemp", "batteryTemperature", "packTemp", "batTemp"), "°C"),
+            chargeVoltage = formatValue(batteryVoltageRaw, "V"),
+            // 充电时 BMS 上报的电流是负数（-8.299），方向对用户没意义，界面统一显示绝对值
+            chargeCurrent = formatValue(absoluteCurrent(batteryCurrentRaw), "A"),
+            batteryTemp = formatValue(
+                pick(st, "minBatteryTemp", "1182", "batteryTemp", "batteryTemperature", "packTemp"),
+                "°C",
+            ),
             sunroofOpen = parseSunroofOpen(st),
             frunkOpen = parseFrunkOpen(st),
             sentryOn = parseSentryOn(st),
@@ -1072,6 +1229,13 @@ class AppRuntime(context: Context) {
             else -> value.toString().trim()
         }
         return if (text.isEmpty()) null else "$text $unit"
+    }
+
+    /** 电流的负号只表示方向（充电时为负），界面统一取绝对值。 */
+    private fun absoluteCurrent(value: Any?): Any? {
+        if (value == null || value == JSONObject.NULL) return null
+        val text = value.toString().trim().removeSuffix("A").trim().removePrefix("-").trim()
+        return text.toDoubleOrNull() ?: value
     }
 
     private fun optBool(o: JSONObject, key: String): Boolean? = when (val v = o.opt(key)) {
@@ -1511,9 +1675,48 @@ class AppRuntime(context: Context) {
         "指令已下发$suffix，请在车辆上确认执行结果"
     }
 
+    /**
+     * 一键关闭多项后台耗电功能（空调 / 座椅加热通风 / 方向盘加热 / 后视镜加热 / 冰箱）。
+     *
+     * 与 [control] 的关键区别：**不逐条等车端执行结果**。control 每条都要轮询 1~24 秒，
+     * 五项排下来用户得干等半分钟以上；「全部关掉」本质上是一组操作，
+     * 逐条发完让 UI 统一回拉一次车况来判断效果更实际。
+     *
+     * 两条指令之间留 [POWER_DRAIN_GAP_MS]：连发会撞网关的「系统繁忙」，
+     * 后面的指令被丢掉时用户还以为关了（充电中心那次踩过同样的坑）。
+     *
+     * @param onProgress 已下发条数 / 总条数，用于按钮上显示「关闭中 2/5」。
+     */
+    suspend fun shutDownPowerDrains(
+        commands: List<String>,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
+    ): String = withContext(Dispatchers.IO) {
+        val unique = commands.distinct()
+        if (unique.isEmpty()) return@withContext "没有正在耗电的功能"
+        val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
+        val api = LeapmotorApi(session)
+        val failed = mutableListOf<String>()
+        unique.forEachIndexed { index, name ->
+            runCatching {
+                val command = Commands.build(name)
+                withNetworkRetry { api.sendControl(command, pin) }
+            }.onFailure {
+                // 记指令名而不是异常信息：异常文案对用户没意义，指令名能直接定位是哪一项
+                failed += name
+            }
+            onProgress(index + 1, unique.size)
+            if (index != unique.lastIndex) Thread.sleep(POWER_DRAIN_GAP_MS)
+        }
+        val ok = unique.size - failed.size
+        when {
+            failed.isEmpty() -> "已关闭 $ok 项"
+            ok == 0 -> "关闭失败（${failed.joinToString("、")}）"
+            else -> "已关闭 $ok 项，${failed.size} 项未成功"
+        }
+    }
+
     /** 结果轮询等待得到的网关结果码（优先 result，其次 code）。 */
-    private fun firstResultCode(resp: JSONObject): String? {
-        val value = (resp.opt("result") ?: resp.opt("code"))
+    private fun firstResultCode(resp: JSONObject): String? {        val value = (resp.opt("result") ?: resp.opt("code"))
             ?.takeIf { it != JSONObject.NULL }?.toString()?.trim()
         return value?.takeIf { it.isNotEmpty() }
     }
@@ -1530,12 +1733,17 @@ class AppRuntime(context: Context) {
     }
 
     /**
-     * 下发充电中心设置（参考原项目 leapauto 的实现）：
-     * - 健康充电 + 充电上限：走 healthyCharging/control（不需要控车密码）
-     * - 预约充电：走 cmdid=190 充电计划（需要旧会话凭证，有控车密码则带上）
-     * - 预约电池预热：走 cmdid=161 PTC 预热计划（同上）
-     * - 绑桩：官方需扫码/网页流程，App 内暂不开放，仅占位
-     * 返回下发结果摘要；单项失败不影响其它项，异常向上抛由调用方转错误提示。
+     * 下发充电中心设置，三条指令各自独立、逐项汇报结果：
+     * 1. 健康充电 + 充电上限 → `healthyCharging/control`（state + soc，不需要控车密码）
+     * 2. 预约充电 → `cmdid=190` 充电计划（需要旧会话凭证，有控车密码则带上）
+     * 3. 预约电池预热 → `cmdid=161` PTC 加热计划（同上）
+     *
+     * 三个容易被漏掉的细节：
+     * - **充电上限只有一个值**。190 的 `chargesoc` 与健康充电的 `targetSoc` 必须是同一个数字，
+     *   以前分成两个参数（滑杆 100、预约 80）会让最后下发的那条把前一条覆盖掉。
+     * - **`cycles` 必须带上用户选的重复日**，不传就是全周默认值，用户改了星期等于没生效。
+     * - **161 要等 1.5 秒**：连着三条车控指令打同一个网关会撞「系统繁忙」，
+     *   官方实现里也是隔着 1.5s 单独发预热（[PreheatGateDelayMs]）。
      */
     suspend fun applyChargingSettings(
         healthyCharge: Boolean,
@@ -1544,38 +1752,68 @@ class AppRuntime(context: Context) {
         batteryPreheat: Boolean,
         scheduledStart: String = "23:00",
         scheduledEnd: String = "07:00",
-        scheduledTargetSoc: Int = 80,
-        preheatStart: String = "23:00",
+        continueUntilLimit: Boolean = true,
+        scheduledDays: Set<Int> = (1..7).toSet(),
+        preheatStart: String = "07:30",
+        preheatDays: Set<Int> = (1..7).toSet(),
     ): String = withContext(Dispatchers.IO) {
         val api = LeapmotorApi(session)
         val pin = sessionStore.loadOpPassword().orEmpty()
+        val soc = ChargeSchedule.sanitizeSoc(chargeLimit)
         val results = mutableListOf<String>()
+
         // 1. 健康充电（含充电上限）
-        runCatching {
-            api.setHealthyCharging(enabled = healthyCharge, targetSoc = chargeLimit.coerceIn(50, 100))
-            results += "健康充电已更新"
-        }.onFailure { results += "健康充电失败" }
-        // 2. 预约充电
+        runCatching { api.setHealthyCharging(enabled = healthyCharge, targetSoc = soc) }
+            .onSuccess { results += successLabel("健康充电", it) }
+            .onFailure { results += "健康充电下发失败" }
+
+        // 2. 预约充电（190）：cycles 用 7 位 0/1 掩码，recharge 是「未达上限继续充电」
         runCatching {
             api.setScheduledCharging(
                 enabled = reserveCharge,
                 startTime = scheduledStart,
                 endTime = scheduledEnd,
-                targetSoc = scheduledTargetSoc.coerceIn(50, 100),
+                targetSoc = soc,
                 opPassword = pin,
+                continueUntilLimit = continueUntilLimit,
+                circulation = 1,
+                cycles = ChargePlanCyclesHelper.toVehicleMask(scheduledDays),
             )
-            results += if (reserveCharge) "预约充电已开启" else "预约充电已关闭"
-        }.onFailure { results += "预约充电失败" }
-        // 3. 预约电池预热
+        }
+            .onSuccess { results += successLabel("预约充电", it) }
+            .onFailure { results += "预约充电下发失败" }
+
+        // 3. 预约电池预热（161）：隔开一点再发，避免与上面两条抢同一把车控锁
+        Thread.sleep(PreheatGateDelayMs)
+        val preheatMask = ChargePlanCyclesHelper.toVehicleMask(preheatDays)
         runCatching {
             api.setScheduledBatteryPreheat(
                 enabled = batteryPreheat,
                 startTime = preheatStart,
                 opPassword = pin,
+                days = preheatMask,
             )
-            results += if (batteryPreheat) "预约电池预热已开启" else "预约电池预热已关闭"
-        }.onFailure { results += "预约电池预热失败" }
+        }
+            .onSuccess { results += successLabel("电池预热", it) }
+            .onFailure { results += "电池预热下发失败" }
+
         results.joinToString("；")
+    }
+
+    /** 云端接口的 code / result 落在 0 或 200 才算车端受理。 */
+    private fun successLabel(name: String, resp: JSONObject): String {
+        val code = resp.optInt("code", resp.optInt("result", -1))
+        return if (code == 0 || code == 200) "${name}已更新" else "${name}已提交（结果码 $code）"
+    }
+
+    /** 读取车端已保存的电池预热计划（cmdid=161 getappointment）。 */
+    suspend fun loadBatteryPreheatSchedule(): ScheduledPreheatState? = withContext(Dispatchers.IO) {
+        runCatching { LeapmotorApi(session).getScheduledBatteryPreheat() }.getOrNull()
+    }
+
+    private companion object {
+        /** 161 与 190 之间的最小间隔（毫秒），见 [applyChargingSettings] 的说明。 */
+        const val PreheatGateDelayMs = 1_500L
     }
 
     // ---------------- 舒适配置 / 定时空调 / OTA ----------------
