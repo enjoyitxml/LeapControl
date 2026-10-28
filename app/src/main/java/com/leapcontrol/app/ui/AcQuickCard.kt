@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,7 +41,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -51,16 +51,17 @@ import com.leapcontrol.app.R
  * 快捷控车下方的「空调概览条」。
  *
  * 版式（从左到右，一条通栏）：
- *   - 最左：电源开关（**唯一**的下发入口），36dp 圆形按钮 + 22dp 四叶风扇
- *   - 紧接：`−` 设定温度 `+` —— 温度大字 32sp，按 1℃ 调，范围由 [AcTempDraft] 管
- *   - 最右：「目前车内温度 32.5℃」13.5sp 次要文字，右对齐贴住卡片右内边距
+ *   - 最左：「目前车内温度」标签 + 实时读数（两行小字，左对齐）
+ *   - 中部弹性留白，把右边一组推到右侧
+ *   - 右侧成组：`−` 设定温度 `+`（温度大字 32sp，按 1℃ 调，范围由 [AcTempDraft] 管）
+ *   - 最右：电源开关（**唯一**的下发入口），36dp 圆形按钮 + 22dp 四叶风扇
  *
  * 尺寸按卡片**实际内宽**等比缩放（[BASE_INNER_WIDTH] 为基准，宽屏略放大、窄屏略收），
- * 这样 320dp 的小屏到 430dp 的大屏上，温度组与两侧按钮的占比都保持一致，不会出现
+ * 这样 320dp 的小屏到 430dp 的大屏上，温度组与两侧元素的占比都保持一致，不会出现
  * 大屏显得空旷、窄屏挤成一团。
  *
  * 温度是「待下发」的：车端没有单独的调温指令，温度只是「开空调」指令里的一个字段，
- * 所以空调关着时点加减号只改界面上的数字、不发任何指令；点左侧电源开关时才带着这个
+ * 所以空调关着时点加减号只改界面上的数字、不发任何指令；点右侧电源开关时才带着这个
  * 温度下发 `开空调`。空调开着时点加减号才会立即下发（那就是在调温）。详见 [AcTempDraft]。
  *
  * 交互：电源灰色＝空调关闭，点一下开空调；开启后圆底淡绿、图标变主题绿并持续旋转。
@@ -126,7 +127,7 @@ fun AcQuickCard(
             .clip(RoundedCornerShape(8.dp))
             // 与胎压 / 近7天 / 相伴卡同一套卡片底：白里带一点主题色
             .background(C.panelBg, RoundedCornerShape(8.dp))
-            // 左右内边距一致：最左是电源圆钮、最右是温度文字，取同一数值后
+            // 左右内边距一致：最左是车内温度文字、最右是电源圆钮，取同一数值后
             // 两端到卡片边缘的留白才对称
             .padding(horizontal = BAR_PAD_H),
         contentAlignment = Alignment.CenterStart,
@@ -138,20 +139,30 @@ fun AcQuickCard(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 最左：电源开关（唯一的下发入口）
-            AcPowerButton(
-                acOn = acOn,
-                busy = busy,
-                angle = fanAngle,
-                size = POWER_SIZE * k,
-                iconSize = POWER_ICON * k,
-                onClick = {
-                    lastIntentOn = !acOn
-                    onToggle(!acOn, target)
-                },
-            )
+            // 最左：目前车内温度。标签与读数分两行放，横向只占一个字块宽，
+            // 把剩下的横向空间留给右侧的温度组，窄屏也不会把加号挤到卡片外
+            Column(modifier = Modifier.widthIn(max = INDOOR_BLOCK_MAX * k)) {
+                Text(
+                    text = "目前车内温度",
+                    color = C.textSecondary,
+                    fontSize = (INDOOR_LABEL_SP * k).sp,
+                    lineHeight = (13f * k).sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (indoor == "--") "--" else "$indoor℃",
+                    color = C.textPrimary,
+                    fontSize = (INDOOR_VALUE_SP * k).sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = (18f * k).sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
 
-            Spacer(Modifier.width(POWER_GAP * k))
+            // 中部弹性留白：没有它右侧那组会紧贴左边文字，读数一变长度整条就会抖
+            Spacer(Modifier.weight(1f))
 
             // 减号
             TempStepButton(
@@ -205,19 +216,19 @@ fun AcQuickCard(
                 label = "升高设定温度",
             )
 
-            // 最右：目前车内温度。用 weight 吃掉剩余宽度并右对齐，
-            // 这样它始终贴住右内边距；真正放不下时才走省略号，不会把温度组挤变形
-            Text(
-                text = "目前车内温度 $indoor℃",
-                color = C.textSecondary,
-                fontSize = (INDOOR_FONT_SP * k).sp,
-                lineHeight = (17.5f * k).sp,
-                textAlign = TextAlign.End,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = INDOOR_GAP * k),
+            Spacer(Modifier.width(POWER_GAP * k))
+
+            // 最右：电源开关（唯一的下发入口）
+            AcPowerButton(
+                acOn = acOn,
+                busy = busy,
+                angle = fanAngle,
+                size = POWER_SIZE * k,
+                iconSize = POWER_ICON * k,
+                onClick = {
+                    lastIntentOn = !acOn
+                    onToggle(!acOn, target)
+                },
             )
         }
     }
@@ -379,11 +390,17 @@ private const val TEMP_DEGREE_SP = 18f
 /** `°` 相对数字顶端下压的距离，让它落在大写数字的肩部。 */
 private val TEMP_DEGREE_TOP = 2.dp
 
-/** 「目前车内温度」字号（会乘缩放系数）。 */
-private const val INDOOR_FONT_SP = 13f
+/** 「目前车内温度」标签字号（次要灰，会乘缩放系数）。 */
+private const val INDOOR_LABEL_SP = 10.5f
 
-/** 温度组与右侧车内温度文字之间的最小距离。 */
-private val INDOOR_GAP = 6.dp
+/** 车内温度读数字号（主色，比标签大一档，会乘缩放系数）。 */
+private const val INDOOR_VALUE_SP = 15f
+
+/**
+ * 左侧车内温度块的宽度上限：「目前车内温度」是 6 个全角字，
+ * 限住宽度既能保证标签不换行，异常长的读数（如 "-12.5℃"）走省略号而不是把温度组顶出卡片。
+ */
+private val INDOOR_BLOCK_MAX = 78.dp
 
 /** 关闭态圆形按钮的底色：浅色主题用略深于卡片的浅灰，深色主题用一层淡白压出圆盘。 */
 private fun fanCircleBg(isDark: Boolean): Color =
