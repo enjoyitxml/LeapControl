@@ -31,7 +31,7 @@ import com.leapcontrol.app.TirePressure
 /**
  * 胎压监测卡（首页空调条下方，只占左半边）。
  *
- * 不设标题：四个「位置 / 数值 / bar」+ 中间车模直接把卡片铺满，
+ * 不设标题：四个「位置 / 数值 / kPa」+ 中间车模直接把卡片铺满，
  * 半屏宽的卡再塞一行标题只会把数字挤小。
  *
  * 对齐方式：左右两列用 SpaceEvenly 排布，中间车模的前后轴轮胎必须落在
@@ -125,7 +125,7 @@ fun TireQuickCard(
 /** 异常红：浅色主题用偏深的红（白底上够清楚），深色主题用亮一点的红。 */
 private fun redFor(C: AppColors): Color = if (C.isDark) Color(0xFFFF6B6F) else Color(0xFFE5484D)
 
-/** 单个轮子的「位置 / 数值 / bar」。正常＝正文色，不足＝红，无数据＝次要灰。 */
+/** 单个轮子的「位置 / 数值 / kPa」。正常＝正文色，不足＝红，无数据＝次要灰。 */
 @Composable
 private fun TireValueCell(
     tire: TireInfo?,
@@ -152,7 +152,7 @@ private fun TireValueCell(
             maxLines = 1,
         )
         Text(
-            text = "bar",
+            text = "kPa",
             color = if (state == TirePressure.State.Low) redFor(C).copy(alpha = 0.75f) else C.textSecondary,
             fontSize = 8.5.sp,
         )

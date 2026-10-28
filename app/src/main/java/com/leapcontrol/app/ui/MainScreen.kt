@@ -93,15 +93,7 @@ private val HEADER_VEIL_STOPS = arrayOf(
     1.00f to 0.78f,   // 屏幕顶端：最浓，再往外保持不变
 )
 
-/**
- * 「支持开发者 / 开源协议与致谢 / 意见反馈 / QQ 交流群」这四个入口是否显示。
- *
- * 零控已转为纯自用：软件不再对外分发，因此把这些「面向社区」的模块整体隐藏，
- * 避免公开场景下的侵权风险。页面与路由都还在，将来需要恢复时把这里改成 true 即可。
- */
-internal const val SHOW_DEV_ENTRIES = false
-
-/** 「我的」页的入口：设置 / 个性化 / 关于 / 免责声明 / 隐私条款 / 开源协议 / 支持开发者 */
+/** 「我的」页的入口：设置 / 个性化 / 车模外观 / 关于 / 免责声明 / 隐私条款 */
 enum class SettingsPage {
     SETTINGS,
     PERSONALIZATION,
@@ -109,8 +101,6 @@ enum class SettingsPage {
     ABOUT,
     DISCLAIMER,
     PRIVACY,
-    OPEN_SOURCE,
-    SUPPORT,
 }
 
 /** 底部 Dock：首页 / 我的 */
@@ -228,9 +218,8 @@ fun MainScreen(
         MaterialTheme(
             colorScheme = materialScheme,
         ) {
-            // 二级页（设置 / 个性化 / 车模外观 / 关于，以及隐藏入口背后的
-            // 支持开发者 / 开源协议与致谢）；
-            // 关于内嵌 免责声明 与 隐私条款 两个子页）：不播视频，统一铺当前季节的主题色渐变
+            // 二级页（设置 / 个性化 / 车模外观 / 关于，关于内嵌 免责声明 与 隐私条款 两个子页）：
+            // 不播视频，统一铺当前季节的主题色渐变
             if (settingsPage != null) {
                 Box(
                     modifier = Modifier
@@ -287,17 +276,6 @@ fun MainScreen(
 
                         SettingsPage.PRIVACY -> PrivacyScreen(
                             onBack = { settingsPage = null },
-                            onOpenOpenSource = { settingsPage = SettingsPage.OPEN_SOURCE },
-                        )
-
-                        SettingsPage.OPEN_SOURCE -> OpenSourceScreen(
-                            onBack = { settingsPage = null },
-                            onOpenSupport = { settingsPage = SettingsPage.SUPPORT },
-                        )
-
-                        SettingsPage.SUPPORT -> SupportScreen(
-                            onBack = { settingsPage = null },
-                            onOpenOpenSource = { settingsPage = SettingsPage.OPEN_SOURCE },
                         )
 
                         null -> Unit

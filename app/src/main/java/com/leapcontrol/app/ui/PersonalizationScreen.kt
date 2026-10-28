@@ -55,9 +55,6 @@ import com.leapcontrol.app.R
 import com.leapcontrol.app.UpdateCheckResult
 import kotlinx.coroutines.launch
 
-/** 本项目开源仓库地址（关于页可直接点击跳转）。 */
-private const val PROJECT_GITHUB_URL = "https://github.com/enjoyitxml/LeapControl"
-
 /**
  * 主题中心的三个分类，对应页面上横向的三个 tab。
  *
@@ -449,7 +446,7 @@ fun AboutScreen(
             }
             Spacer(Modifier.height(12.dp))
             androidx.compose.material3.Text(
-                "零控是车主自发开发的非官方自用客户端，与零跑汽车官方无关。"
+                "零控是作者本人开发的非官方客户端，仅自己和好友使用，与零跑汽车官方无关。"
                     + "所有车况读取与控车指令均通过零跑官方云端接口下发，"
                     + "使用前请确保车辆处于安全状态，并遵守车辆使用规范。",
                 color = C.textSecondary,
@@ -458,14 +455,6 @@ fun AboutScreen(
             )
         }
 
-        Spacer(Modifier.height(12.dp))
-        // 项目地址：自用版本不再强调「开源」，入口只作为作者自己的书签保留
-        ClickRow(
-            title = "项目地址",
-            desc = "点击用浏览器打开项目主页（私有仓库，需登录）",
-            iconRes = R.drawable.ic_github,
-            onClick = { runtime.openExternal(PROJECT_GITHUB_URL) },
-        )
         Spacer(Modifier.height(12.dp))
         ClickRow(
             title = "免责声明",
