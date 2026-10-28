@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -71,6 +72,10 @@ fun AcScreen(
     caps: VehicleCapabilities,
     busy: Boolean,
     targetTemp: Int,
+    /** 正在下发的指令文案（如「主驾加热2档」），null 表示空闲。 */
+    busyLabel: String?,
+    /** 重新回拉车况：运行状态区右上角的「刷新」。 */
+    onRefresh: () -> Unit,
     onBack: () -> Unit,
     /** 点设定温度加减号（±1℃）。空调开着立即下发，关着只改草稿，见 [AcTempDraft]。 */
     onTempStep: (Int) -> Unit,
@@ -97,6 +102,24 @@ fun AcScreen(
     // remember(key) 让车端值一变就同步过来，点击期间车端值不变所以不会被打断。
     var wind by remember(remoteWind) { mutableStateOf(remoteWind) }
     var position by remember(remotePosition) { mutableStateOf(remotePosition) }
+
+    // ---- 舒适件的本地档位 ----
+    // 必须和风量一样「以本地为准、车端真值回来再覆盖」，原因有两个：
+    // ① 座椅加热 / 通风 / 方向盘 / 后视镜这几个信号，车端回报常滞后甚至不上报，
+    //    直接读 status 会一直显示 0 档 → 点第 2 下又发一次 1 档，永远关不掉；
+    // ② 用户点完要立刻看到变化，不能等 3 秒回拉才亮。
+    val remoteSeatHeatDriver = status?.seatHeating?.driver ?: 0
+    val remoteSeatHeatPassenger = status?.seatHeating?.passenger ?: 0
+    val remoteSeatVentDriver = status?.seatVentilation?.driver ?: 0
+    val remoteSeatVentPassenger = status?.seatVentilation?.passenger ?: 0
+    val remoteSteering = status?.steeringWheelHeating ?: 0
+    val remoteMirror = if (status?.rearviewMirrorHeating == true) 1 else 0
+    var seatHeatDriver by remember(remoteSeatHeatDriver) { mutableStateOf(remoteSeatHeatDriver) }
+    var seatHeatPassenger by remember(remoteSeatHeatPassenger) { mutableStateOf(remoteSeatHeatPassenger) }
+    var seatVentDriver by remember(remoteSeatVentDriver) { mutableStateOf(remoteSeatVentDriver) }
+    var seatVentPassenger by remember(remoteSeatVentPassenger) { mutableStateOf(remoteSeatVentPassenger) }
+    var steeringLevel by remember(remoteSteering) { mutableStateOf(remoteSteering) }
+    var mirrorLevel by remember(remoteMirror) { mutableStateOf(remoteMirror) }
 
     // 空调开启时才挂无限旋转动画，关着的时候不空转
     val fanAngle = if (acOn) {
@@ -132,6 +155,22 @@ fun AcScreen(
     val summary = "$wind 挡风 · ${if (circle == "out") "外循环" else "内循环"} · " +
         if (position == "wshld") "前挡出风" else "全车出风"
 
+    // ---- 运行状态清单 ----
+    // 只用页面上「正在生效」的值（含刚点下去、还没等到车端回报的），
+    // 这样点完座椅加热立刻能在列表里看到它，而不是等 3 秒回拉才发现「好像没开」。
+    val runningItems = buildList {
+        // 空调只写「运行中」不重复风量/循环：那几项在上面电源那一行已经写过了
+        if (acOn) add("空调运行中")
+        if (caps.seatHeating.driver && seatHeatDriver > 0) add("主驾座椅加热 $seatHeatDriver 档")
+        if (caps.seatVentilation.driver && seatVentDriver > 0) add("主驾座椅通风 $seatVentDriver 档")
+        if (caps.seatHeating.passenger && seatHeatPassenger > 0) add("副驾座椅加热 $seatHeatPassenger 档")
+        if (caps.seatVentilation.passenger && seatVentPassenger > 0) add("副驾座椅通风 $seatVentPassenger 档")
+        if (caps.steeringWheelHeating && steeringLevel > 0) {
+            add("方向盘加热 ${if (steeringLevel >= 2) "强档" else "弱档"}")
+        }
+        if (caps.mirrorHeating && mirrorLevel > 0) add("后视镜加热")
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -142,6 +181,13 @@ fun AcScreen(
             .padding(horizontal = 20.dp),
     ) {
         AcTopBar(onBack = onBack)
+
+        // 正在下发：车控指令最长要等 24 秒才有回执，这段时间页面必须有反馈，
+        // 否则点完座椅加热只有「按钮变灰」，用户根本不知道指令有没有发出去
+        if (busyLabel != null) {
+            Spacer(Modifier.height(8.dp))
+            AcBusyStrip(label = busyLabel)
+        }
 
         // ---- 温度主卡：设定温度 + 电源 ----
         AcSection(padding = 18.dp) {
@@ -257,6 +303,64 @@ fun AcScreen(
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                     )
+                }
+            }
+
+            // ---- 运行状态：一眼看清此刻到底有哪些功能在跑 ----
+            // 没有这块时，用户点完座椅加热只能看档位点阵亮没亮，而档位信号车端常不上报，
+            // 等于「开没开成功」全靠猜。
+            Spacer(Modifier.height(14.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(C.textPrimary.copy(alpha = 0.06f)),
+            )
+            Spacer(Modifier.height(11.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "运行状态",
+                    color = C.textSecondary,
+                    fontSize = 11.5.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(9.dp))
+                        .clickable(onClick = onRefresh)
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AcIcon(AcGlyph.Circulation, C.accent, size = 12.dp, stroke = 1.4.dp)
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "刷新",
+                        color = C.accent,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            if (runningItems.isEmpty()) {
+                Text(
+                    text = "当前没有开启的空调或舒适功能",
+                    color = C.textSecondary.copy(alpha = 0.85f),
+                    fontSize = 12.sp,
+                )
+            } else {
+                runningItems.forEachIndexed { index, item ->
+                    if (index > 0) Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(C.accent),
+                        )
+                        Spacer(Modifier.width(7.dp))
+                        Text(text = item, color = C.textPrimary, fontSize = 12.5.sp)
+                    }
                 }
             }
         }
@@ -406,23 +510,35 @@ fun AcScreen(
                         if (hasDriver) {
                             AcSeatBlock(
                                 title = "主驾驶位",
-                                heatingLevel = if (caps.seatHeating.driver) status?.seatHeating?.driver else null,
-                                ventilationLevel = if (caps.seatVentilation.driver) status?.seatVentilation?.driver else null,
+                                heatingLevel = if (caps.seatHeating.driver) seatHeatDriver else null,
+                                ventilationLevel = if (caps.seatVentilation.driver) seatVentDriver else null,
                                 enabled = !busy,
                                 modifier = Modifier.weight(1f),
-                                onHeating = { lvl -> onCommand("driverSeatHeating_$lvl") },
-                                onVentilation = { lvl -> onCommand("driverSeatVentilation_$lvl") },
+                                onHeating = { lvl ->
+                                    seatHeatDriver = lvl
+                                    onCommand("driverSeatHeating_$lvl")
+                                },
+                                onVentilation = { lvl ->
+                                    seatVentDriver = lvl
+                                    onCommand("driverSeatVentilation_$lvl")
+                                },
                             )
                         }
                         if (hasPassenger) {
                             AcSeatBlock(
                                 title = "副驾驶位",
-                                heatingLevel = if (caps.seatHeating.passenger) status?.seatHeating?.passenger else null,
-                                ventilationLevel = if (caps.seatVentilation.passenger) status?.seatVentilation?.passenger else null,
+                                heatingLevel = if (caps.seatHeating.passenger) seatHeatPassenger else null,
+                                ventilationLevel = if (caps.seatVentilation.passenger) seatVentPassenger else null,
                                 enabled = !busy,
                                 modifier = Modifier.weight(1f),
-                                onHeating = { lvl -> onCommand("passengerSeatHeating_$lvl") },
-                                onVentilation = { lvl -> onCommand("passengerSeatVentilation_$lvl") },
+                                onHeating = { lvl ->
+                                    seatHeatPassenger = lvl
+                                    onCommand("passengerSeatHeating_$lvl")
+                                },
+                                onVentilation = { lvl ->
+                                    seatVentPassenger = lvl
+                                    onCommand("passengerSeatVentilation_$lvl")
+                                },
                             )
                         }
                     }
@@ -430,8 +546,6 @@ fun AcScreen(
 
                 if (caps.steeringWheelHeating || caps.mirrorHeating) {
                     if (hasDriver || hasPassenger) Spacer(Modifier.height(10.dp))
-                    val steeringLevel = status?.steeringWheelHeating ?: 0
-                    val mirrorOn = status?.rearviewMirrorHeating == true
                     AcRowGroup {
                         if (caps.steeringWheelHeating) {
                             AcLevelRow(
@@ -441,7 +555,15 @@ fun AcScreen(
                                 maxLevel = 2,
                                 enabled = !busy,
                                 // 0 关 → 1 弱 → 2 强 → 0 关
-                                onClick = { onCommand("steeringWheelHeating_${(steeringLevel + 1) % 3}") },
+                                onClick = {
+                                    val next = (steeringLevel + 1) % 3
+                                    steeringLevel = next
+                                    onCommand("steeringWheelHeating_$next")
+                                },
+                                onSelect = { lvl ->
+                                    steeringLevel = lvl
+                                    onCommand("steeringWheelHeating_$lvl")
+                                },
                             )
                         }
                         if (caps.steeringWheelHeating && caps.mirrorHeating) {
@@ -451,11 +573,23 @@ fun AcScreen(
                             AcLevelRow(
                                 glyph = AcGlyph.Mirror,
                                 label = "后视镜加热",
-                                level = if (mirrorOn) 1 else 0,
+                                level = mirrorLevel,
                                 maxLevel = 1,
                                 enabled = !busy,
                                 onClick = {
-                                    onCommand(if (mirrorOn) "rearviewMirrorHeating_off" else "rearviewMirrorHeating_on")
+                                    val next = if (mirrorLevel > 0) 0 else 1
+                                    mirrorLevel = next
+                                    onCommand(
+                                        if (next > 0) "rearviewMirrorHeating_on"
+                                        else "rearviewMirrorHeating_off",
+                                    )
+                                },
+                                onSelect = { lvl ->
+                                    mirrorLevel = lvl
+                                    onCommand(
+                                        if (lvl > 0) "rearviewMirrorHeating_on"
+                                        else "rearviewMirrorHeating_off",
+                                    )
                                 },
                             )
                         }
@@ -470,6 +604,46 @@ fun AcScreen(
 
 /** 没读到车端风量时的默认挡位（与 [Commands.AC_ON_STATE] 的 2 挡一致）。 */
 private const val DEFAULT_WIND = 2
+
+/**
+ * 把命令名翻成一句「人要读的话」，用于二次确认弹窗与「正在下发」提示。
+ *
+ * 命令名的中文标签统一由 [Commands.build] 提供（`driverSeatHeating_2` → 「主驾加热2档」），
+ * 这里只是兜住非法命令名的异常，不让一个文案把页面搞崩。
+ */
+internal fun acCommandLabel(commandName: String): String = when (commandName) {
+    // 温度加减没有对应命令名（走 presetAcTemperature 参数），单独给一句
+    "acTemp" -> "调整设定温度"
+    else -> runCatching { Commands.build(commandName).label }.getOrElse { "空调操作" }
+}
+
+/** 「正在下发：xxx，等待车端确认…」提示条。 */
+@Composable
+private fun AcBusyStrip(label: String) {
+    val C = LocalAppColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(C.accent.copy(alpha = 0.12f))
+            .padding(horizontal = 13.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(14.dp),
+            strokeWidth = 1.8.dp,
+            color = C.accent,
+        )
+        Spacer(Modifier.width(9.dp))
+        Text(
+            text = "正在下发：$label，等待车端确认…",
+            color = C.accent,
+            fontSize = 12.5.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 页面骨架
@@ -694,25 +868,28 @@ private fun AcSeatBlock(
         if (heatingLevel != null) {
             AcLevelRow(
                 glyph = AcGlyph.SeatHeat,
-                label = "座椅加热",
+                // 座位卡标题已经写了「主驾驶位 / 副驾驶位」，行内再写「座椅加热」会挤掉档位条
+                label = "加热",
                 level = heatingLevel,
                 maxLevel = 3,
                 enabled = enabled,
                 compact = true,
                 // 0 → 1 → 2 → 3 → 0
                 onClick = { onHeating((heatingLevel + 1) % 4) },
+                onSelect = { onHeating(it) },
             )
             if (ventilationLevel != null) Spacer(Modifier.height(6.dp))
         }
         if (ventilationLevel != null) {
             AcLevelRow(
                 glyph = AcGlyph.SeatVent,
-                label = "座椅通风",
+                label = "通风",
                 level = ventilationLevel,
                 maxLevel = 3,
                 enabled = enabled,
                 compact = true,
                 onClick = { onVentilation((ventilationLevel + 1) % 4) },
+                onSelect = { onVentilation(it) },
             )
         }
     }
@@ -745,10 +922,17 @@ private fun AcRowDivider() {
 }
 
 /**
- * 带档位的一行开关：图标 + 名称 + 档位点阵。
+ * 带档位的一行开关：图标 + 名称 + 「关 / 1 / 2 / 3」四段档位条。
  *
- * @param compact 嵌在座位卡里时用（行高更低、左右内边距更小），
- *   否则用在整页级的淡底容器里。
+ * ## 为什么从「点阵」改成「分段」
+ * 点阵只能看出「大概亮了几颗」，用户反馈「看不到具体档位」：
+ * 3 颗全亮既可能是 3 档也可能是 2 档（第 3 颗没亮时更难分辨），
+ * 而且想关掉只能一路点回 0 档。改成分段之后，当前档位有明确的高亮格，
+ * 点哪一档就是哪一档、点「关」立刻归零 —— 开和关都是一步。
+ *
+ * @param onClick 点整行：按 0→1→…→max→0 循环（老习惯，肌肉记忆不用改）
+ * @param onSelect 点某一段：直接跳到该档位
+ * @param compact 嵌在座位卡里时用（行高更低、左右内边距更小）
  */
 @Composable
 private fun AcLevelRow(
@@ -760,6 +944,7 @@ private fun AcLevelRow(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     onClick: () -> Unit,
+    onSelect: (Int) -> Unit,
 ) {
     val C = LocalAppColors.current
     val on = level > 0
@@ -778,7 +963,7 @@ private fun AcLevelRow(
             .clickable(enabled = enabled, onClick = onClick)
             .padding(
                 horizontal = if (compact) 8.dp else 12.dp,
-                vertical = if (compact) 8.dp else 11.dp,
+                vertical = if (compact) 7.dp else 10.dp,
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -792,18 +977,46 @@ private fun AcLevelRow(
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(6.dp))
-        // 档位点阵
+        // 档位分段：第 0 格是「关」，其余是 1..max（方向盘两档显示「弱 / 强」）
         Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            for (i in 1..maxLevel) {
+            for (i in 0..maxLevel) {
+                val selected = i == level
                 Box(
                     modifier = Modifier
-                        .size(5.dp)
-                        .clip(CircleShape)
+                        .size(
+                            width = if (compact) 20.dp else 24.dp,
+                            height = if (compact) 20.dp else 22.dp,
+                        )
+                        .clip(RoundedCornerShape(6.dp))
                         .background(
-                            if (i <= level) content else C.textPrimary.copy(alpha = 0.16f),
-                        ),
-                )
+                            when {
+                                selected -> content
+                                else -> C.textPrimary.copy(alpha = if (enabled) 0.06f else 0.03f)
+                            },
+                        )
+                        // 已选中的格子不必再点一次，省掉一次无意义的空指令
+                        .clickable(enabled = enabled && !selected) { onSelect(i) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = levelCellLabel(i, maxLevel),
+                        // 选中格是实底色，字必须反白（深色主题下 accent 也够深）
+                        color = if (selected) Color.White else content.copy(alpha = 0.85f),
+                        fontSize = if (compact) 9.5.sp else 10.5.sp,
+                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
 }
+
+/** 档位分段的格子文案：0 = 关；2 档的方向盘用「弱 / 强」更直观。 */
+private fun levelCellLabel(index: Int, maxLevel: Int): String = when {
+    index == 0 -> "关"
+    maxLevel == 1 -> "开"
+    maxLevel == 2 -> if (index == 1) "弱" else "强"
+    else -> index.toString()
+}
+

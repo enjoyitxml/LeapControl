@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  桌面小组件元信息：4x2。
+  minWidth/minHeight 用官方公式 70*n-30：4 列 → 250dp，2 行 → 110dp。
+  updatePeriodMillis 故意设 0：定时联网会反复唤醒车上 T-Box，没必要。
+  卡片由「App 内刷新」和「添加 / 改尺寸」触发更新，其余时候显示上次车况并标注更新时间。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_description"
+    android:initialLayout="@layout/widget_vehicle"
+    android:minHeight="110dp"
+    android:minResizeHeight="96dp"
+    android:minResizeWidth="180dp"
+    android:minWidth="250dp"
+    android:previewLayout="@layout/widget_vehicle"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="2"
+    android:targetCellWidth="4"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

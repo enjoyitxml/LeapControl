@@ -1390,22 +1390,66 @@ class LeapmotorApi internal constructor(
         return response
     }
 
-    /** Sync key material only after an explicit Bluetooth setup action. */
+    /**
+     * 同步蓝牙钥匙证书。
+     *
+     * ## 为什么要试两个域名
+     * 这个接口（`bluetoothkey/combine/syncBluetoothKeys`）在零跑的两套网关上都存在，
+     * 但路由与鉴权方式不一样：
+     * - 官方 App 用的是「按账号下发的 appCenter 域名 + 旧签名」；
+     * - 项目里其它 `/carownerservice/v3/api/...` 读接口走的是公开网关
+     *   `appgateway.leapmotor.com`（[DRIVING_RECORD_HOST]）。
+     *
+     * 实测两者对同一路径的响应不同（一个 404 Route Not Found、一个返回业务结果码），
+     * 而账号所属的 appCenter 又因账号而异。所以先按官方域名来，失败再换公开网关重试一次，
+     * 两次都失败才报错，并且把两次的原因都带出来 —— 原来一律显示「请检查网络」，
+     * 把「路由不对」「签名被拒」全都伪装成网络问题，根本没法定位。
+     */
     fun fetchBluetoothKeyCertificate(): BleKeyCertificate {
         requireBluetoothCertificateSession()
         ensureFreshOldToken()
         if (session.route?.appCenter.isNullOrBlank()) getCarRoute()
-        return fetchBluetoothKeyCertificate { request ->
+
+        val execute: (Request) -> VehicleListRawResponse = { request ->
             bluetoothCertificateHttpClient.newCall(request).execute().use { response ->
                 VehicleListRawResponse(response.code, response.body?.string().orEmpty())
             }
         }
+
+        val failures = mutableListOf<String>()
+        runCatching { fetchBluetoothKeyCertificate({ buildBluetoothCertificateRequest() }, execute) }
+            .onSuccess { return it }
+            .onFailure { failures += it.bleFailureReason() }
+
+        runCatching {
+            fetchBluetoothKeyCertificate({ buildBluetoothCertificateRequest(onGateway = true) }, execute)
+        }
+            .onSuccess { return it }
+            .onFailure { failures += "公开网关 " + it.bleFailureReason() }
+
+        throw ApiException(
+            "蓝牙钥匙同步失败（${failures.joinToString("；")}）",
+            stage = "ble_certificate"
+        )
+    }
+
+    /** 失败原因要能一眼看出是哪一步：HTTP 码 / 业务结果码 / 解析错误各不一样。 */
+    private fun Throwable.bleFailureReason(): String {
+        val text = (this as? ApiException)?.message?.takeIf { it.isNotBlank() }
+            ?: message?.takeIf { it.isNotBlank() }
+            ?: "未知错误"
+        return text.removePrefix("蓝牙钥匙证书")
     }
 
     internal fun fetchBluetoothKeyCertificate(
         execute: (Request) -> VehicleListRawResponse
+    ): BleKeyCertificate = fetchBluetoothKeyCertificate({ buildBluetoothCertificateRequest() }, execute)
+
+    internal fun fetchBluetoothKeyCertificate(
+        build: () -> Request,
+        execute: (Request) -> VehicleListRawResponse
     ): BleKeyCertificate {
-        val request = buildBluetoothCertificateRequest()
+        val request = build()
         val response = try {
             execute(request)
         } catch (_: Exception) {
@@ -1430,23 +1474,38 @@ class LeapmotorApi internal constructor(
         }
     }
 
-    internal fun buildBluetoothCertificateRequest(): Request {
+    /**
+     * 构造证书请求。
+     *
+     * @param onGateway true = 走公开网关（[DRIVING_RECORD_HOST]）并带上新网关请求头；
+     *   false = 走账号下发的主域名（`route.appCenter`），只用旧签名头。
+     */
+    internal fun buildBluetoothCertificateRequest(onGateway: Boolean = false): Request {
         requireBluetoothCertificateSession()
-        val center = session.route?.appCenter?.toHttpUrlOrNull()
-            ?: throw ApiException("缺少车辆蓝牙钥匙服务路由", stage = "ble_certificate")
-        if (!center.isHttps || center.username.isNotEmpty() || center.password.isNotEmpty() ||
-            center.query != null || center.fragment != null || center.encodedPath != "/" ||
-            !(center.host.endsWith(".leapmotor.cn") || center.host.endsWith(".leapmotor.com"))
-        ) {
-            throw ApiException("车辆蓝牙钥匙服务路由无效", stage = "ble_certificate")
-        }
+        val signed = oldSignedParams(mapOf("vin" to session.selectedVin))
         val body = FormBody.Builder().apply {
-            oldSignedParams(mapOf("vin" to session.selectedVin)).forEach { (key, value) -> add(key, value) }
+            signed.forEach { (key, value) -> add(key, value) }
         }.build()
+        val url = if (onGateway) {
+            requireNotNull("$DRIVING_RECORD_HOST$BLUETOOTH_CERTIFICATE_PATH".toHttpUrlOrNull()) {
+                "蓝牙钥匙网关地址无效"
+            }
+        } else {
+            val center = session.route?.appCenter?.toHttpUrlOrNull()
+                ?: throw ApiException("缺少车辆蓝牙钥匙服务路由", stage = "ble_certificate")
+            if (!center.isHttps || center.username.isNotEmpty() || center.password.isNotEmpty() ||
+                center.query != null || center.fragment != null || center.encodedPath != "/" ||
+                !(center.host.endsWith(".leapmotor.cn") || center.host.endsWith(".leapmotor.com"))
+            ) {
+                throw ApiException("车辆蓝牙钥匙服务路由无效", stage = "ble_certificate")
+            }
+            center.newBuilder().encodedPath(BLUETOOTH_CERTIFICATE_PATH).build()
+        }
+        val headers = if (onGateway) combinedAppAndGatewayHeaders(signed) else oldAppHeaders()
         return Request.Builder()
-            .url(center.newBuilder().encodedPath(BLUETOOTH_CERTIFICATE_PATH).build())
+            .url(url)
             .post(body)
-            .apply { oldAppHeaders().forEach { (key, value) -> header(key, value) } }
+            .apply { headers.forEach { (key, value) -> header(key, value) } }
             .header("APPVersion", session.appVersion)
             .build()
     }

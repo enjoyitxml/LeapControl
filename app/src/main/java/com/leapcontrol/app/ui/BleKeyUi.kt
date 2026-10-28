@@ -187,8 +187,13 @@ class BleKeyHost internal constructor(
                 key = ble.managedKey.value
                 if (!silent) notice = null
                 if (scanAfterSync) startScan()
-            } catch (_: Exception) {
-                if (!silent) notice = "钥匙同步失败，请检查网络后重试"
+            } catch (error: Exception) {
+                // 以前这里一律显示「请检查网络」，把「路由 404」「签名被拒」「响应格式不对」
+                // 全伪装成网络问题，用户和我们都无从下手。现在把真实原因带出来。
+                if (!silent) {
+                    val reason = error.message?.takeIf { it.isNotBlank() }
+                    notice = if (reason != null) "钥匙同步失败：$reason" else "钥匙同步失败，请检查网络后重试"
+                }
             } finally {
                 syncing = false
             }

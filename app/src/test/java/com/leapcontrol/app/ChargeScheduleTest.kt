@@ -148,4 +148,19 @@ class ChargeScheduleTest {
         assertTrue(draft.continueUntilLimit)
         assertEquals(ChargeSchedule.ALL_DAYS, draft.scheduledDays)
     }
+
+    @Test
+    fun `健康充电开着时上限不许超过 90`() {
+        // 90 本身是允许的（官方「最佳限值」），91 以上就必须先关掉健康充电
+        assertFalse(ChargeSchedule.exceedsHealthyLimit(90))
+        assertTrue(ChargeSchedule.exceedsHealthyLimit(95))
+        assertTrue(ChargeSchedule.exceedsHealthyLimit(100))
+        // 92 会先对齐到 90，因此不算越界
+        assertFalse(ChargeSchedule.exceedsHealthyLimit(92))
+        assertEquals(90, ChargeSchedule.healthyLimit(100))
+        assertEquals(90, ChargeSchedule.healthyLimit(95))
+        assertEquals(80, ChargeSchedule.healthyLimit(80))
+        // 下限仍然守住 50
+        assertEquals(50, ChargeSchedule.healthyLimit(30))
+    }
 }

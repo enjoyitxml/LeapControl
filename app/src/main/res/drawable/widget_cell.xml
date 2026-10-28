@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件按键的点击反馈：很淡的按压水波，不改变底色 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#14121A2A">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFFFF" />
+        </shape>
+    </item>
+</ripple>
