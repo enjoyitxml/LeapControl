@@ -1057,6 +1057,13 @@ object Commands {
     const val MAX_AC_TEMPERATURE = 32
     const val DEFAULT_AC_TEMPERATURE = 24
 
+    /** 风量挡位范围（车端 windlevel 字段）。 */
+    const val MIN_AC_WIND_LEVEL = 1
+    const val MAX_AC_WIND_LEVEL = 7
+
+    /** 空调 mode 字段的合法取值：制冷 / 制热 / 不冷不热。 */
+    val AC_MODES = setOf("cold", "hot", "nohotcold")
+
     const val AC_ON_STATE =
         """{"operate":"auto","temperature":"24","windlevel":"2","mode":"nohotcold","circle":"in","wshld":"1","position":"all"}"""
     const val AC_OFF_STATE =
@@ -1107,6 +1114,7 @@ object Commands {
         "fridgeOff" -> buildFridgeControl(FridgeControlCommand(enable = false, mode = FridgeMode.COLD, temp = FRIDGE_DEFAULT_TEMP, style = FridgeStyle.NORMAL))
         else -> {
             when {
+                name.startsWith("acSetting:") -> parseAcSettingCommand(name.removePrefix("acSetting:"))
                 name.startsWith("driverSeatHeating_") -> {
                     val lvl = name.removePrefix("driverSeatHeating_").toIntOrNull() ?: 0
                     buildSeatHeating("left_front", lvl)
@@ -1255,6 +1263,68 @@ object Commands {
             """{"operate":"manual","temperature":"$temperature","windlevel":"7","mode":"$mode","circle":"in","wshld":"0","position":"all"}""",
             "开空调（$temperature°C）"
         )
+    }
+
+    /**
+     * 合成「空调全参数」指令名（cmdid=170）。
+     *
+     * 车端**没有**「只调风量」「只调出风方向」这类单字段指令：每一次调空调都必须把整组
+     * acSetting（operate / temperature / windlevel / mode / circle / wshld / position）
+     * 一起下发，漏掉哪个字段车端就按默认值重来。所以这里把「要改的那一项」和
+     * 「其余保持原样」的字段一起塞进命令名，由 [build] 解析成一条真正的控制指令。
+     *
+     * 参数用 `k=v` 逗号分隔：命令名会经过日志与 Toast，用 & 或引号都不安全。
+     *
+     * @param op 变更项，只用来生成操作文案：`wind` / `position` / `circle` / `temperature`
+     * @param mode 冷热模式，沿用当前车端值（cold / hot / nohotcold）
+     * @param circle 内 / 外循环（in / out）
+     * @param position 出风方向（all 全车 / wshld 前挡）
+     */
+    fun acSettingName(
+        op: String,
+        temperature: Int,
+        windLevel: Int,
+        mode: String = "nohotcold",
+        circle: String = "in",
+        windshield: Boolean = false,
+        position: String = "all",
+        operate: String = "manual",
+    ): String = "acSetting:op=$op" +
+        ",temperature=${temperature.coerceIn(MIN_AC_TEMPERATURE, MAX_AC_TEMPERATURE)}" +
+        ",windlevel=${windLevel.coerceIn(MIN_AC_WIND_LEVEL, MAX_AC_WIND_LEVEL)}" +
+        ",mode=${mode.takeIf { it in AC_MODES } ?: "nohotcold"}" +
+        ",circle=${if (circle == "out") "out" else "in"}" +
+        ",wshld=${if (windshield) "1" else "0"}" +
+        ",position=${if (position == "wshld") "wshld" else "all"}" +
+        ",operate=${if (operate == "off") "off" else "manual"}"
+
+    /** [acSettingName] 的另一半：把参数串还原成 170 指令，非法值一律夹到合法范围。 */
+    private fun parseAcSettingCommand(param: String): ControlCommand {
+        val kv = HashMap<String, String>()
+        param.split(',').forEach { seg ->
+            val i = seg.indexOf('=')
+            if (i > 0) kv[seg.substring(0, i).trim()] = seg.substring(i + 1).trim()
+        }
+        val op = kv["op"].orEmpty()
+        val temperature = (kv["temperature"]?.toIntOrNull() ?: DEFAULT_AC_TEMPERATURE)
+            .coerceIn(MIN_AC_TEMPERATURE, MAX_AC_TEMPERATURE)
+        val wind = (kv["windlevel"]?.toIntOrNull() ?: 2)
+            .coerceIn(MIN_AC_WIND_LEVEL, MAX_AC_WIND_LEVEL)
+        val mode = kv["mode"]?.takeIf { it in AC_MODES } ?: "nohotcold"
+        val circle = if (kv["circle"] == "out") "out" else "in"
+        val wshld = if (kv["wshld"] == "1") "1" else "0"
+        val position = if (kv["position"] == "wshld") "wshld" else "all"
+        val operate = if (kv["operate"] == "off") "off" else "manual"
+        val label = when (op) {
+            "wind" -> "风量调到 $wind 挡"
+            "position" -> if (position == "wshld") "出风改到前挡" else "出风改到全车"
+            "circle" -> if (circle == "out") "切到外循环" else "切到内循环"
+            "temperature" -> "设定温度 $temperature°C"
+            else -> "调整空调设置"
+        }
+        val json = "{\"operate\":\"$operate\",\"temperature\":\"$temperature\",\"windlevel\":\"$wind\"," +
+            "\"mode\":\"$mode\",\"circle\":\"$circle\",\"wshld\":\"$wshld\",\"position\":\"$position\"}"
+        return ControlCommand("170", json, label)
     }
 
     const val SCHEDULED_AC_CMD_ID = "171"

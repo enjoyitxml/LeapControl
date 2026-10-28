@@ -22,10 +22,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +68,9 @@ import com.leapcontrol.app.R
  * 交互：电源灰色＝空调关闭，点一下开空调；开启后圆底淡绿、图标变主题绿并持续旋转。
  * 点下去立刻按「意图」点亮（车端 acSwitch 上报有几秒延迟，否则会觉得点了没反应），
  * 指令结束回拉车况后以真实状态为准。
+ *
+ * 点卡片空白处（不含加减号与电源钮）会展开 / 收起下方的 [AcExpandedPanel]，
+ * 展开箭头紧跟在车内温度块右侧，作为「这里能点」的提示。
  */
 @Composable
 fun AcQuickCard(
@@ -74,8 +78,17 @@ fun AcQuickCard(
     busy: Boolean,
     /** 点电源开关：参数是「目标状态」与「要下发的设定温度」。关闭时温度会被忽略。 */
     onToggle: (Boolean, Int) -> Unit,
-    /** 空调**已开启**时改温度，立即下发。关闭态不会调到这个回调。 */
-    onTempChange: (Int) -> Unit,
+    /**
+     * 界面上显示的设定温度。草稿状态由调用方（HomeScreen）持有：
+     * 展开面板与这条卡片共用同一份温度，两处加减号才不会各调各的。
+     */
+    target: Int,
+    /** 点加减号（±1℃）。是否立即下发由调用方按空调开关状态决定，见 [AcTempDraft]。 */
+    onStep: (Int) -> Unit,
+    /** 展开面板是否已打开（只用于翻转箭头方向）。 */
+    expanded: Boolean = false,
+    /** 点卡片空白处：展开 / 收起下方设置面板。 */
+    onToggleExpand: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val C = LocalAppColors.current
@@ -83,18 +96,6 @@ fun AcQuickCard(
     // 上一次点击的意图：只在指令进行中（busy）用来先点亮，指令结束就不再参考
     var lastIntentOn by remember { mutableStateOf(false) }
     val acOn = status?.acOn == true || (busy && lastIntentOn)
-
-    val remote = AcTempDraft.parse(status?.acTargetTemp)
-
-    // 关机态用户调出来的预设温度；空调真正开起来之后就没用了，清掉回到车端真值
-    var pendingTemp by remember { mutableStateOf<Int?>(null) }
-    val target = AcTempDraft.shown(acOn = acOn, remote = remote, pending = pendingTemp)
-
-    // 开机成功后车端会回报同一个温度：确认到账就把草稿交还给车端，
-    // 否则下次关空调时这颗旧草稿还会盖掉车端值
-    LaunchedEffect(acOn, remote, pendingTemp) {
-        if (acOn && pendingTemp != null && remote == pendingTemp) pendingTemp = null
-    }
 
     val indoor = normalizeTemp(status?.interiorTemp)
 
@@ -112,14 +113,6 @@ fun AcQuickCard(
         0f
     }
 
-    // 加减号：关机态只改草稿，开机态才下发。busy 期间一律锁住，避免连点把指令排队
-    val onStep: (Int) -> Unit = { delta ->
-        val next = AcTempDraft.step(target, delta)
-        if (next != target) {
-            if (AcTempDraft.sendOnArrow(acOn)) onTempChange(next) else pendingTemp = next
-        }
-    }
-
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
@@ -127,6 +120,9 @@ fun AcQuickCard(
             .clip(RoundedCornerShape(8.dp))
             // 与胎压 / 近7天 / 相伴卡同一套卡片底：白里带一点主题色
             .background(C.panelBg, RoundedCornerShape(8.dp))
+            // 整条卡片都可点：子级按钮（加减号 / 电源）自己消费点击，
+            // 只有点在空白处才会落到这里展开设置面板
+            .clickable(onClick = onToggleExpand)
             // 左右内边距一致：最左是车内温度文字、最右是电源圆钮，取同一数值后
             // 两端到卡片边缘的留白才对称
             .padding(horizontal = BAR_PAD_H),
@@ -160,6 +156,18 @@ fun AcQuickCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+
+            // 展开提示：紧贴车内温度块右侧，展开后箭头翻转。
+            // 点它和点卡片空白处等效（父级 clickable 已经覆盖这块区域）
+            Icon(
+                imageVector = Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "收起空调设置" else "展开空调设置",
+                tint = C.textSecondary,
+                modifier = Modifier
+                    .padding(start = 4.dp)
+                    .size(16.dp)
+                    .rotate(if (expanded) 180f else 0f),
+            )
 
             // 中部弹性留白：没有它右侧那组会紧贴左边文字，读数一变长度整条就会抖
             Spacer(Modifier.weight(1f))
@@ -283,7 +291,7 @@ private fun AcPowerButton(
  * 到 16 / 32 边界时整颗变淡并锁死点击（而不是点了没反应），让用户看得出「到底了」。
  */
 @Composable
-private fun TempStepButton(
+internal fun TempStepButton(
     plus: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
@@ -413,7 +421,7 @@ private val FAN_GRAY = Color(0xFF9A9C9B)
  * 车内温度信号有时带单位、有时是纯数字（如 "32.5" / "32.5°C" / "32.5℃"），
  * 统一去掉单位，交给调用处拼「℃」，避免出现「32.5°C℃」。
  */
-private fun normalizeTemp(raw: String?): String {
+internal fun normalizeTemp(raw: String?): String {
     if (raw.isNullOrBlank()) return "--"
     return raw.trim()
         .removeSuffix("℃")
