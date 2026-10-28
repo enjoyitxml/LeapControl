@@ -1,43 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 小组件 · 后备箱开启中（车尾侧视，绿色状态色） -->
+<!-- 小组件 · 后备箱开启中：图形与快捷控车栏 ic_qc_trunk 完全一致，仅把描边换成绿色状态色。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#00000000"
-        android:pathData="M4.6 7.1 H13.9 L15.5 5.3 H20.4"
+        android:pathData="M 5.143 6.939 H 13.633"
         android:strokeColor="#FF2AC06A"
+        android:strokeWidth="1.31"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:strokeWidth="1.7" />
+        android:fillColor="#00000000" />
     <path
-        android:fillColor="#00000000"
-        android:pathData="M15.9 7.6 V14.9 C15.9 16.9 15.1 18.3 13.6 18.3"
+        android:pathData="M 13.633 6.286 C 13.796 5.469 14.286 5.012 15.592 4.816 C 16.898 4.620 17.878 4.555 19.184 4.490"
         android:strokeColor="#FF2AC06A"
+        android:strokeWidth="1.31"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:strokeWidth="1.7" />
+        android:fillColor="#00000000" />
     <path
-        android:fillColor="#00000000"
-        android:pathData="M3.2 18.3 H7.6"
+        android:pathData="M 13.633 7.755 C 14.612 10.041 15.918 12.000 16.735 13.306 V 16.571"
         android:strokeColor="#FF2AC06A"
+        android:strokeWidth="1.31"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:strokeWidth="1.7" />
+        android:fillColor="#00000000" />
     <path
-        android:fillColor="#00000000"
-        android:pathData="M9.5 16.5 a1.8 1.8 0 1 1 0 3.6 a1.8 1.8 0 1 1 0 -3.6 z"
+        android:pathData="M 16.245 16.833 H 12.000"
         android:strokeColor="#FF2AC06A"
+        android:strokeWidth="1.31"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:strokeWidth="1.7" />
+        android:fillColor="#00000000" />
     <path
-        android:fillColor="#00000000"
-        android:pathData="M11.3 18.3 H13.6"
+        android:pathData="M 6.776 17.061 H 5.143"
         android:strokeColor="#FF2AC06A"
+        android:strokeWidth="1.31"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:strokeWidth="1.7" />
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 7.755 13.959 H 11.020"
+        android:strokeColor="#FF2AC06A"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 9.388 13.796 A 2.612 2.612 0 0 1 9.388 19.020 A 2.612 2.612 0 0 1 9.388 13.796 Z"
+        android:strokeColor="#FF2AC06A"
+        android:strokeWidth="1.31"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
 </vector>

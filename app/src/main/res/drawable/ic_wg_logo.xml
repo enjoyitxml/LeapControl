@@ -3,11 +3,15 @@
   桌面小组件用的零跑车标（深色版）。
   由 ic_leap_logo.xml 复制后把 #FFFFFF 换成卡片正文色 #12141A —— 原图是白标，
   只适合深色底（登录页星空），放到浅色小组件卡上会完全看不见。
-  视口仍是标志本体 463.05 × 538.365（宽高比 0.86），别加留白，否则会被 fitCenter 顶小。
+  视口是标志本体 463.05 × 538.365（宽高比 0.86），别加留白，否则会被 fitCenter 顶小。
+
+  **width/height 必须与视口同比例**：VectorDrawable 会把 viewport 直接拉伸到 width×height，
+  写成 1024×1024（正方形）会让标志横向拉宽 1.16 倍 —— 小组件左上角那个「变形」就是这么来的。
+  这里按 0.1dp / 单位取整：46.305 × 53.8365dp。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="1024dp"
-    android:height="1024dp"
+    android:width="46.305dp"
+    android:height="53.8365dp"
     android:viewportWidth="463.05"
     android:viewportHeight="538.365">
 

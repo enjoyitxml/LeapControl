@@ -54,7 +54,8 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         if (action != VehicleWidget.ACTION_UNLOCK &&
             action != VehicleWidget.ACTION_LOCK &&
             action != VehicleWidget.ACTION_TOGGLE_AC &&
-            action != VehicleWidget.ACTION_TOGGLE_TRUNK
+            action != VehicleWidget.ACTION_TOGGLE_TRUNK &&
+            action != VehicleWidget.ACTION_HORN
         ) {
             return
         }
@@ -113,6 +114,7 @@ class VehicleWidgetProvider : AppWidgetProvider() {
             VehicleWidget.ACTION_LOCK -> "lock"
             VehicleWidget.ACTION_TOGGLE_AC -> if (status?.acOn == true) "acOff" else "acOn"
             VehicleWidget.ACTION_TOGGLE_TRUNK -> if (status?.trunkOpen == true) "trunkClose" else "trunkOpen"
+            VehicleWidget.ACTION_HORN -> "horn"
             else -> return
         }
 
@@ -142,6 +144,7 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         "acOff" -> "正在关闭空调…"
         "trunkOpen" -> "正在打开后备箱…"
         "trunkClose" -> "正在关闭后备箱…"
+        "horn" -> "正在鸣笛寻车…"
         else -> "正在下发…"
     }
 
