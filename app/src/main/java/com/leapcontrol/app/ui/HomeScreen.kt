@@ -1,6 +1,9 @@
 package com.leapcontrol.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -1687,10 +1690,15 @@ private fun TempStepButton(symbol: String, enabled: Boolean, onClick: () -> Unit
 
 
 /**
- * 控车 / 刷新结果通知：屏幕正中、系统通知样式，6 秒后自动消失，点击可关闭。
+ * 控车 / 刷新结果提示：屏幕正中一张干净的小卡片，3 秒后自动淡出，点击立即关闭。
  *
  * 之前这条反馈是滚动列表最后一行——用户根本滚不到那里，
  * 于是「指令发出但 nothing changed」就被感知成“点了没反应”；改成居中浮层后始终可见。
+ *
+ * ⚠️ 修饰符顺序曾经是 `clip → background → shadow`：阴影被前面的 clip 裁在圆角**里面**，
+ * 卡面上于是浮出一圈灰边、整块发灰发脏（截图里那个灰蒙蒙的药丸）。
+ * 正确顺序是 `shadow(clip = false) → clip → background`，投影落在卡外，边缘才干净；
+ * 卡面用不透明的 [AppColors.dialogBg]，不再用浅色打底 + 深色阴影的混搭。
  */
 @Composable
 private fun ActionBanner(
@@ -1700,36 +1708,84 @@ private fun ActionBanner(
 ) {
     if (message.isNullOrBlank()) return
     val C = LocalAppColors.current
+    // 自己管进出场：先淡出、再摘掉，否则 onDismiss 一调用整棵子树瞬间消失，看着像闪一下
+    var shown by remember(message) { mutableStateOf(false) }
     LaunchedEffect(message) {
-        delay(6_000)
+        shown = true
+        delay(if (isError) 5_000L else 3_200L)
+        shown = false
+        delay(200)
         onDismiss()
     }
+    val alpha by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = tween(180),
+        label = "bannerAlpha",
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (shown) 1f else 0.94f,
+        animationSpec = tween(220, easing = FastOutSlowInEasing),
+        label = "bannerScale",
+    )
+    val tint = when {
+        isError && C.isDark -> Color(0xFFFF7A6E)
+        isError -> Color(0xFFD93A2B)
+        C.isDark -> Color(0xFF3DD68C)
+        else -> Color(0xFF1FA45B)
+    }
+    val shape = RoundedCornerShape(18.dp)
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center,
     ) {
         Row(
             modifier = Modifier
-                .widthIn(max = 320.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(if (isError) Color(0xFFFDECEA) else C.dialogBg)
-                .shadow(elevation = 12.dp, shape = RoundedCornerShape(16.dp))
-                .clickable(onClick = onDismiss)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .widthIn(max = 300.dp)
+                .graphicsLayer {
+                    this.alpha = alpha
+                    scaleX = scale
+                    scaleY = scale
+                }
+                .shadow(
+                    elevation = 16.dp,
+                    shape = shape,
+                    clip = false,
+                    ambientColor = Color.Black.copy(alpha = 0.10f),
+                    spotColor = Color.Black.copy(alpha = 0.22f),
+                )
+                .clip(shape)
+                .background(C.dialogBg)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                )
+                .padding(start = 14.dp, end = 18.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = if (isError) Icons.Filled.Close else Icons.Filled.Check,
-                contentDescription = null,
-                tint = if (isError) Color(0xFFD32F2F) else Color(0xFF2FCC71),
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(12.dp))
+            // 小圆底 + 单色对勾，比原来「裸图标 + 大白底」焦点更集中
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(tint.copy(alpha = if (C.isDark) 0.22f else 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (isError) Icons.Filled.Close else Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Spacer(Modifier.width(11.dp))
             Text(
                 text = message,
-                color = if (isError) Color(0xFFD32F2F) else C.textPrimary,
+                color = if (isError) tint else C.textPrimary,
                 fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
                 lineHeight = 20.sp,
+                maxLines = 3,
             )
         }
     }
