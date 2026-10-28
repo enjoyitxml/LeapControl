@@ -22,8 +22,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -69,8 +67,8 @@ import com.leapcontrol.app.R
  * 点下去立刻按「意图」点亮（车端 acSwitch 上报有几秒延迟，否则会觉得点了没反应），
  * 指令结束回拉车况后以真实状态为准。
  *
- * 点卡片空白处（不含加减号与电源钮）会展开 / 收起下方的 [AcExpandedPanel]，
- * 展开箭头紧跟在车内温度块右侧，作为「这里能点」的提示。
+ * 点卡片空白处（不含加减号与电源钮）会进入全屏空调页 [AcScreen]，
+ * 车内温度块右侧那个 `›` 就是「这里能点进去」的提示。
  */
 @Composable
 fun AcQuickCard(
@@ -85,10 +83,8 @@ fun AcQuickCard(
     target: Int,
     /** 点加减号（±1℃）。是否立即下发由调用方按空调开关状态决定，见 [AcTempDraft]。 */
     onStep: (Int) -> Unit,
-    /** 展开面板是否已打开（只用于翻转箭头方向）。 */
-    expanded: Boolean = false,
-    /** 点卡片空白处：展开 / 收起下方设置面板。 */
-    onToggleExpand: () -> Unit = {},
+    /** 点卡片空白处：进入全屏空调页。 */
+    onOpen: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val C = LocalAppColors.current
@@ -121,8 +117,8 @@ fun AcQuickCard(
             // 与胎压 / 近7天 / 相伴卡同一套卡片底：白里带一点主题色
             .background(C.panelBg, RoundedCornerShape(8.dp))
             // 整条卡片都可点：子级按钮（加减号 / 电源）自己消费点击，
-            // 只有点在空白处才会落到这里展开设置面板
-            .clickable(onClick = onToggleExpand)
+            // 只有点在空白处才会落到这里进入全屏空调页
+            .clickable(onClick = onOpen)
             // 左右内边距一致：最左是车内温度文字、最右是电源圆钮，取同一数值后
             // 两端到卡片边缘的留白才对称
             .padding(horizontal = BAR_PAD_H),
@@ -157,16 +153,14 @@ fun AcQuickCard(
                 )
             }
 
-            // 展开提示：紧贴车内温度块右侧，展开后箭头翻转。
+            // 进入二级页的提示：紧贴车内温度块右侧。
             // 点它和点卡片空白处等效（父级 clickable 已经覆盖这块区域）
-            Icon(
-                imageVector = Icons.Filled.ExpandMore,
-                contentDescription = if (expanded) "收起空调设置" else "展开空调设置",
-                tint = C.textSecondary,
-                modifier = Modifier
-                    .padding(start = 4.dp)
-                    .size(16.dp)
-                    .rotate(if (expanded) 180f else 0f),
+            AcIcon(
+                glyph = AcGlyph.ChevronRight,
+                tint = C.textSecondary.copy(alpha = 0.7f),
+                size = 15.dp,
+                stroke = 1.7.dp,
+                modifier = Modifier.padding(start = 2.dp),
             )
 
             // 中部弹性留白：没有它右侧那组会紧贴左边文字，读数一变长度整条就会抖
@@ -247,9 +241,11 @@ fun AcQuickCard(
  *
  * 这是空调唯一的「下发」入口：关→开时会把界面上的设定温度一起带下去。
  * busy 期间不可点，图标半透明表示指令在途。
+ *
+ * 首页空调条与全屏空调页共用（后者传更大的 size）。
  */
 @Composable
-private fun AcPowerButton(
+internal fun AcPowerButton(
     acOn: Boolean,
     busy: Boolean,
     angle: Float,

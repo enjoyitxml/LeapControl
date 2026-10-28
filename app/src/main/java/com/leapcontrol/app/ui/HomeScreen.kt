@@ -209,9 +209,9 @@ fun HomeScreen(
         // 开启空调时随指令下发的设定温度（PIN 弹窗关掉后要能原样补发，
         // 不能退回「用默认温度开」）
         var pendingAcOnTemp by remember { mutableStateOf<Int?>(null) }
-        // 空调卡片是否向下展开详细设置面板（风量 / 出风方向 / 座椅舒适…）
-        var acExpanded by remember { mutableStateOf(false) }
-        // 展开面板里的指令在 PIN 验证完成后重放（记录命令名，含 acSetting: 合成命令）
+        // 全屏空调页（点首页空调条进入）
+        var showAcScreen by remember { mutableStateOf(false) }
+        // 空调页里的指令在 PIN 验证完成后重放（记录命令名，含 acSetting: 合成命令）
         var pendingAcPanelCommand by remember { mutableStateOf<String?>(null) }
         // 设定温度的本地草稿：概览条与展开面板共用同一份，两处加减号才不会各调各的
         var pendingAcTempDraft by remember { mutableStateOf<Int?>(null) }
@@ -247,8 +247,8 @@ fun HomeScreen(
         var showClimate by remember { mutableStateOf(false) }
         // 定时空调 / 车辆体检 / 系统升级
         var showScheduledAc by remember { mutableStateOf(false) }
-        // 定时空调是从「首页空调展开面板」进来的吗（决定返回时回首页还是回温控页）
-        var scheduledAcFromPanel by remember { mutableStateOf(false) }
+        // 定时空调是从哪个页面进来的：返回时要回到那一页（"ac" 全屏空调 / "climate" 温控页 / null 其它入口）
+        var scheduledAcReturnTo by remember { mutableStateOf<String?>(null) }
         var showVehicleHealth by remember { mutableStateOf(false) }
         var showOta by remember { mutableStateOf(false) }
         // 胎压监测独立页
@@ -303,8 +303,8 @@ fun HomeScreen(
         // 二级页（充电中心 / 座椅 / 空调 / 体检 / OTA…）不属于「首页」，
         // 打开时向 MainScreen 汇报，让背景视频只在首页主界面播放
         val onMainPage = !showChargingCenter && !showSeatComfort && !showFridge && !showClimate &&
-            !showScheduledAc && !showVehicleHealth && !showOta && !showControlEditor &&
-            !showTire
+            !showAcScreen && !showScheduledAc && !showVehicleHealth && !showOta &&
+            !showControlEditor && !showTire
         LaunchedEffect(onMainPage) { onMainPageChange(onMainPage) }
 
         // ---- 车模滚出可视区 / 正在滑动：两个「滚动派生信号」----
@@ -707,8 +707,30 @@ fun HomeScreen(
                 },
                 // 定时空调是同级二级页：必须先收起空调页，否则会被上面的分支挡住不显示
                 onOpenScheduledAc = {
-                    scheduledAcFromPanel = false
+                    scheduledAcReturnTo = "climate"
                     showClimate = false
+                    showScheduledAc = true
+                },
+            )
+        } else if (showAcScreen) {
+            // 首页空调条点进来的全屏空调页：温度草稿与首页共用（acTargetTemp），
+            // 所以两处加减号不会各调各的
+            AcScreen(
+                status = status,
+                caps = capabilities,
+                busy = controlling != null,
+                targetTemp = acTargetTemp,
+                onBack = { showAcScreen = false },
+                onTempStep = { stepAcTemp(it) },
+                onPower = { on ->
+                    ensureConfirmed(
+                        if (on) "开启空调（${acTargetTemp}℃）" else "关闭空调",
+                    ) { runAcCommand(on, acTargetTemp) }
+                },
+                onCommand = { name -> runAcPanelCommand(name) },
+                onOpenScheduledAc = {
+                    scheduledAcReturnTo = "ac"
+                    showAcScreen = false
                     showScheduledAc = true
                 },
             )
@@ -758,11 +780,14 @@ fun HomeScreen(
                 result = acPlanResult,
                 onSave = { saveScheduledAc(acPlan) },
                 onCancel = { saveScheduledAc(acPlan.copy(enabled = false)) },
-                // 定时空调有两个入口：车内温控页与首页展开面板。
-                // 从温控页进来时返回温控页；从首页面板进来时回首页（不能把人空投到温控页）
+                // 定时空调有两个入口：全屏空调页与车内温控页，返回时必须回到来时的那一页
                 onBack = {
                     showScheduledAc = false
-                    if (!scheduledAcFromPanel) showClimate = true
+                    when (scheduledAcReturnTo) {
+                        "ac" -> showAcScreen = true
+                        "climate" -> showClimate = true
+                    }
+                    scheduledAcReturnTo = null
                 },
             )
         } else if (showVehicleHealth) {
@@ -1136,7 +1161,7 @@ fun HomeScreen(
 
             // ---- 空调概览条：车内温度 / ◀ 设定温度 ▶ / 风扇开关 ----
             // 点加减号只改温度（关机态是草稿），点右侧风扇开关才带着温度下发开启指令。
-            // 点卡片空白处向下展开详细设置（风量 / 出风方向 / 座椅舒适…）
+            // 点卡片空白处进入全屏空调页（风量 / 出风方向 / 座椅舒适…都在那一页）
             Spacer(Modifier.height(14.dp))
             AcQuickCard(
                 status = currentStatus,
@@ -1148,36 +1173,8 @@ fun HomeScreen(
                         if (turnOn) "开启空调（${temp}℃）" else "关闭空调",
                     ) { runAcCommand(turnOn, temp) }
                 },
-                expanded = acExpanded,
-                onToggleExpand = { acExpanded = !acExpanded },
+                onOpen = { showAcScreen = true },
             )
-            AnimatedVisibility(
-                visible = acExpanded,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut(),
-            ) {
-                Column {
-                    Spacer(Modifier.height(8.dp))
-                    AcExpandedPanel(
-                        status = currentStatus,
-                        caps = capabilities,
-                        busy = controlling != null,
-                        targetTemp = acTargetTemp,
-                        onTempStep = { stepAcTemp(it) },
-                        onPower = { on ->
-                            ensureConfirmed(
-                                if (on) "开启空调（${acTargetTemp}℃）" else "关闭空调",
-                            ) { runAcCommand(on, acTargetTemp) }
-                        },
-                        onCommand = { name -> runAcPanelCommand(name) },
-                        // 从首页展开面板进的定时空调：返回时要回首页（面板还开着），不能跳去温控页
-                        onOpenScheduledAc = {
-                            scheduledAcFromPanel = true
-                            showScheduledAc = true
-                        },
-                    )
-                }
-            }
 
             // ---- 胎压监测卡（左半）+ 近 7 天行程卡（右半）；相伴卡整行宽放在下面 ----
             // 胎压卡点进去是胎压详情页（四轮数值 + 温度 + 状态）；
