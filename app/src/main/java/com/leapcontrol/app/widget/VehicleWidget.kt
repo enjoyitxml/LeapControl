@@ -9,7 +9,6 @@ import android.graphics.Bitmap
 import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
-import com.leapcontrol.app.EnergyFormat
 import com.leapcontrol.app.R
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
@@ -25,7 +24,8 @@ import java.util.Locale
  * 硬性要求：应用上架小米应用商店并通过审核、邮件向 miui-widget@xiaomi.com 申请白名单、
  * 小部件在开放平台逐个提交审核。零控是自用侧载包，走不通这条路。
  * 所以用标准的 [RemoteViews]，但把版式做成澎湃原生那一套：
- * 大圆角浅色卡、车标 + 车名、两个大数字 + 双色进度条、右侧车模、底部四个纯图标按键。
+ * 车标 + 自定义车名、纯电 / 燃油两个续航数字各带进度条、右侧车模、底部四个纯图标按键
+ * （图标直接用首页「快捷控车」栏那套 `ic_qc_*`，开启态是同图形的绿色版本）。
  *
  * ## 尺寸自适应
  * 小组件在桌面上被拉伸 / 压缩后，系统只给 `min/max width/height` 这一组 dp 值，
@@ -51,12 +51,16 @@ object VehicleWidget {
     /** 开关式：后备箱开 / 关。 */
     const val ACTION_TOGGLE_TRUNK = "com.leapcontrol.app.widget.TOGGLE_TRUNK"
 
-    /** 点「打开 App」用的 requestCode（与四个按键岔开）。 */
+    /** 单次指令：鸣笛寻车。 */
+    const val ACTION_HORN = "com.leapcontrol.app.widget.HORN"
+
+    /** 点「打开 App」用的 requestCode（与五个按键岔开）。 */
     private const val RC_OPEN_APP = 90
     private const val RC_UNLOCK = 91
     private const val RC_LOCK = 92
     private const val RC_AC = 93
     private const val RC_TRUNK = 94
+    private const val RC_HORN = 95
 
     private const val COLOR_TEXT = 0xFF12141A.toInt()
     private const val COLOR_SUB = 0xFF8A9099.toInt()
@@ -85,7 +89,8 @@ object VehicleWidget {
         val status = r.statusFlow.value
         val updatedAt = r.lastUpdatedFlow.value
         val signedIn = r.session.selectedVin.isNotBlank()
-        val model = EnergyFormat.carModelName(r.session.selectedCarType)
+        // 车名用 APP 里那一份：自定义车名 → 官方昵称 → 我的零跑
+        val title = r.displayName()
         val car = carCache?.takeIf { !it.isRecycled }
         ids.forEach { id ->
             val (widthDp, heightDp) = widgetSize(manager, id)
@@ -95,7 +100,7 @@ object VehicleWidget {
                 updatedAt = updatedAt,
                 busy = busy,
                 signedIn = signedIn,
-                carModel = model,
+                title = title,
                 car = car,
                 widthDp = widthDp,
                 heightDp = heightDp,
@@ -129,7 +134,7 @@ object VehicleWidget {
         updatedAt: Long,
         busy: String?,
         signedIn: Boolean,
-        carModel: String = "零跑",
+        title: String = "我的零跑",
         car: Bitmap? = null,
         widthDp: Int = 320,
         heightDp: Int = 150,
@@ -137,24 +142,30 @@ object VehicleWidget {
         val views = RemoteViews(context.packageName, R.layout.widget_vehicle)
         val scale = textScale(widthDp, heightDp)
 
-        // ---- 标题：我的零跑 + 车型（Lafa5 这种，不再显示内部代号 B05） ----
-        views.setTextViewText(
-            R.id.wg_title,
-            if (carModel.isBlank() || carModel == "零跑") "我的零跑" else "我的零跑 $carModel",
-        )
+        // ---- 标题：APP 里的车名（自定义车名优先，其次官方昵称） ----
+        views.setTextViewText(R.id.wg_title, title.ifBlank { "我的零跑" })
 
-        // ---- 左：电量 ----
-        val soc = status?.soc?.coerceIn(0, 100)
-        views.setTextViewText(R.id.wg_soc, soc?.toString() ?: "--")
-        views.setProgressBar(R.id.wg_bar_soc, 100, soc ?: 0, false)
+        // ---- 续航：左纯电、右燃油 ----
+        // 纯电车型只有纯电续航；增程车型两块都显示，燃油块单独收起 / 展开
+        val extend = status?.isRangeExtender == true
+        val evRange = numberText(status?.electricRange ?: status?.range)
+        views.setTextViewText(R.id.wg_ev_range, evRange ?: "--")
+        // 绿条刻度＝电量水位（拿不到「满电续航」标称值，不同电池版本不一样，不编假刻度）
+        views.setProgressBar(R.id.wg_bar_ev, 100, status?.soc?.coerceIn(0, 100) ?: 0, false)
 
-        // ---- 右：续航 ----
-        val rangeText = (status?.range ?: status?.electricRange)?.trim()
-        val rangeNumber = rangeText?.let { Regex("\\d+").find(it)?.value }
-        views.setTextViewText(R.id.wg_range, rangeNumber ?: "--")
-        // 拿不到「满电续航」这个标称值（不同电池版本不一样），所以这条蓝条标的是
-        // 「当前能量水位」而不是「续航完成度」—— 宁可和左边一样长，也不编一个假刻度。
-        views.setProgressBar(R.id.wg_bar_range, 100, soc ?: 0, false)
+        if (extend) {
+            views.setViewVisibility(R.id.wg_fuel_block, View.VISIBLE)
+            views.setTextViewText(R.id.wg_fuel_range, numberText(status?.fuelRange) ?: "--")
+            views.setProgressBar(
+                R.id.wg_bar_fuel,
+                100,
+                status?.fuelSoc?.coerceIn(0, 100) ?: 0,
+                false,
+            )
+        } else {
+            // 纯电车型：整块收起（GONE 不参与 weight，纯电块会自动变宽，不留空洞）
+            views.setViewVisibility(R.id.wg_fuel_block, View.GONE)
+        }
 
         // ---- 右上：状态 + 更新时间（两种情况挤同一行，省下一整条竖排空间） ----
         val clock = if (updatedAt > 0L) {
@@ -206,20 +217,25 @@ object VehicleWidget {
         }
 
         // ---- 四个按键：解锁 / 上锁 是单次指令，空调 / 后备箱 点一下切一次 ----
-        bindCell(views, R.id.wg_cell_unlock, R.id.wg_icon_unlock, R.drawable.ic_wg_unlock,
+        // 图形与首页「快捷控车」栏同一套（ic_qc_*），开启态用同图形的绿色版本
+        bindCell(views, R.id.wg_cell_unlock, R.id.wg_icon_unlock, R.drawable.ic_qc_unlock,
             broadcast(context, ACTION_UNLOCK, RC_UNLOCK))
-        bindCell(views, R.id.wg_cell_lock, R.id.wg_icon_lock, R.drawable.ic_wg_lock,
+        bindCell(views, R.id.wg_cell_lock, R.id.wg_icon_lock, R.drawable.ic_qc_lock,
             broadcast(context, ACTION_LOCK, RC_LOCK))
 
         val acOn = status?.acOn == true
         bindCell(views, R.id.wg_cell_ac, R.id.wg_icon_ac,
-            if (acOn) R.drawable.ic_wg_ac_on else R.drawable.ic_wg_ac,
+            if (acOn) R.drawable.ic_wg_ac_on else R.drawable.ic_qc_ac,
             broadcast(context, ACTION_TOGGLE_AC, RC_AC))
 
         val trunkOpen = status?.trunkOpen == true
         bindCell(views, R.id.wg_cell_trunk, R.id.wg_icon_trunk,
-            if (trunkOpen) R.drawable.ic_wg_trunk_on else R.drawable.ic_wg_trunk,
+            if (trunkOpen) R.drawable.ic_wg_trunk_on else R.drawable.ic_qc_trunk,
             broadcast(context, ACTION_TOGGLE_TRUNK, RC_TRUNK))
+
+        // 鸣笛寻车是单次指令，没有开 / 关两态，图标固定
+        bindCell(views, R.id.wg_cell_horn, R.id.wg_icon_horn, R.drawable.ic_qc_horn,
+            broadcast(context, ACTION_HORN, RC_HORN))
 
         // 点数字区 / 车模打开 App（想手动刷新、改设置都从这里进）
         openAppIntent(context)?.let { views.setOnClickPendingIntent(R.id.wg_top, it) }
@@ -255,17 +271,21 @@ object VehicleWidget {
     private fun applyTextScale(views: RemoteViews, scale: Float) {
         fun sp(base: Float) = TypedValue.COMPLEX_UNIT_SP to base * scale
         listOf(
-            R.id.wg_title to 13.5f,
+            R.id.wg_title to 15f,
             R.id.wg_time to 10f,
-            R.id.wg_soc to 27f,
-            R.id.wg_soc_unit to 11f,
-            R.id.wg_range to 27f,
-            R.id.wg_range_unit to 11f,
+            R.id.wg_ev_range to 24f,
+            R.id.wg_ev_unit to 10f,
+            R.id.wg_fuel_range to 24f,
+            R.id.wg_fuel_unit to 10f,
         ).forEach { (id, base) ->
             val (unit, size) = sp(base)
             runCatching { views.setTextViewTextSize(id, unit, size) }
         }
     }
+
+    /** 从 "316km" / "316" / "316 km" 里取出数字部分；取不到返回 null。 */
+    private fun numberText(raw: String?): String? =
+        raw?.let { Regex("\\d+").find(it)?.value }
 
     /** 取卡片在桌面上的实际 dp 尺寸（取 min/max 中值，启动器两侧常不一致）。 */
     private fun widgetSize(manager: AppWidgetManager, id: Int): Pair<Int, Int> {

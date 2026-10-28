@@ -468,11 +468,10 @@ fun HomeScreen(
         fun stepAcTemp(delta: Int) {
             val next = AcTempDraft.step(acTargetTemp, delta)
             if (next == acTargetTemp) return
-            ensureConfirmed(if (acOnNow) "设定温度 $next℃" else "开启空调并设定 $next℃") {
-                // 先乐观显示，车端回读到同一个值后会自动交还给车端（见上面的 LaunchedEffect）
-                pendingAcTempDraft = next
-                runAcTemperature(next) { pendingAcTempDraft = null }
-            }
+            // 温度 ± 是连续调整，按下即下发（不弹确认）；失败时把显示值退回原值
+            val previous = acTargetTemp
+            pendingAcTempDraft = next
+            runAcTemperature(next) { pendingAcTempDraft = previous }
         }
 
         /**
@@ -843,15 +842,10 @@ fun HomeScreen(
                 onRefresh = { refresh(force = true) },
                 onBack = { showAcScreen = false },
                 onTempStep = { stepAcTemp(it) },
-                onPower = { on ->
-                    ensureConfirmed(
-                        if (on) "开启空调（${acTargetTemp}℃）" else "关闭空调",
-                    ) { runAcCommand(on, acTargetTemp) }
-                },
-                // 空调页里的每一条指令（场景 / 风量 / 出风 / 舒适件）都先过二次确认
-                onCommand = { name, rollback ->
-                    ensureConfirmed(acCommandLabel(name)) { runAcPanelCommand(name, rollback) }
-                },
+                onPower = { on -> runAcCommand(on, acTargetTemp) },
+                // 空调页内一律「按下即下发」，不再弹二次确认（用户明确要求回到直接生效的版本）。
+                // rollback 保留：下发失败时把界面已改的档位退回原值，避免界面与车端不一致。
+                onCommand = { name, rollback -> runAcPanelCommand(name, rollback) },
                 onOpenScheduledAc = {
                     scheduledAcReturnTo = "ac"
                     showAcScreen = false
