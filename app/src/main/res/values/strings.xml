@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">零控</string>
-    <string name="widget_description">电量、续航与解锁、上锁、空调、后备箱按键</string>
 </resources>

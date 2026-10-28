@@ -75,34 +75,6 @@
             </intent-filter>
         </receiver>
 
-        <!--
-          自定义壁纸的只读出口：桌面进程要在它自己的进程里 setImageURI，
-          所以必须 exported（不加自定义权限，各家 launcher 不会申请我们的私有权限）。
-          openFile 只按「当前版本号」精确匹配文件名，不接受任意路径。
-        -->
-        <provider
-            android:name=".widget.WidgetWallpaperProvider"
-            android:authorities="${applicationId}.widgetwall"
-            android:exported="true"
-            android:grantUriPermissions="true" />
-
-        <!--
-          桌面小组件（4x2）：续航 / 锁车状态 / 一路控车四键。
-          标准 Android AppWidgetProvider —— 澎湃「原生小部件」需上架小米商店 + 白名单，自用侧载包做不到，
-          所以走安卓通用小组件，视觉按澎湃原生那一套做（见 widget/VehicleWidget.kt 顶部说明）。
-        -->
-        <receiver
-            android:name=".widget.VehicleWidgetProvider"
-            android:exported="true"
-            android:label="@string/app_name">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_vehicle_info" />
-        </receiver>
-
         <!-- 系统控制中心快捷磁贴（ACTIVE_TILE：点击即在应用内执行，不折叠面板） -->
         <service
             android:name=".tiles.LockTileService"

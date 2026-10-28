@@ -2,75 +2,32 @@ package com.leapcontrol.app
 
 import org.json.JSONObject
 
-/** Render state for the compact status line in the desktop widget. */
-data class WidgetStatusPresentation(
-    val label: String?,
-    val showChargingIcon: Boolean = false
-)
-
-/** Maps raw vehicle signals to the single compact status line shown by the widget. */
-object WidgetStatusMapper {
-    fun label(status: JSONObject): String? = label { key -> status.opt(key) }
-
-    fun label(status: JSONObject, carType: String?): String? =
-        label(status)?.takeUnless {
-            carType?.contains("T03", ignoreCase = true) == true && it == "车窗未关闭"
-        }
-
-    fun label(values: Map<String, Any?>): String? = label { key -> values[key] }
-
-    /**
-     * Builds the widget presentation from raw telemetry. Charging and charging
-     * completion intentionally take precedence over the parked-window warning:
-     * the warning is restored as soon as the vehicle reports unplugged.
-     */
-    fun presentation(status: JSONObject, carType: String? = null): WidgetStatusPresentation {
-        val fallback = label(status, carType)
-        return presentation(
-            chargeState = ChargeStatus.state(status),
-            chargeRemainTime = ChargeStatus.remainingTime(status.opt("chargeRemainTime")),
-            fallbackLabel = fallback
-        )
-    }
-
-    /** Snapshot-friendly variant that avoids retaining raw vehicle JSON. */
-    fun presentation(
-        chargeState: Int?,
-        chargeRemainTime: String?,
-        fallbackLabel: String?
-    ): WidgetStatusPresentation = when {
-        chargeState == 1 && fallbackLabel != "行驶中" -> {
-            val remaining = chargeRemainTime
-                ?.takeIf { it.isNotBlank() && it != "已充满" }
-                ?: "未知"
-            WidgetStatusPresentation("剩余$remaining", showChargingIcon = true)
-        }
-        chargeState == 2 && fallbackLabel != "行驶中" ->
-            WidgetStatusPresentation("充电完成")
-        else -> WidgetStatusPresentation(fallbackLabel)
-    }
-
+/**
+ * 从车况原始 JSON 里解析 App 自己关心的几个派生信号：锁车、行驶、车窗。
+ *
+ * 这里放的都是**纯函数**（只吃 JSON、不碰网络与缓存），所以首页状态卡、
+ * 锁车后安全提醒都直接用它，也方便单测。
+ */
+object VehicleSignals {
     fun locked(status: JSONObject): Boolean? = locked(status.opt("driverDoorLockStatus"))
 
     fun locked(values: Map<String, Any?>): Boolean? = locked(values["driverDoorLockStatus"])
 
-    /** Returns open-window labels for the post-lock parking safety notification. */
+    /** 返回开着的那几扇车窗的名称，用于锁车后的安全提醒。 */
     fun openWindowLabels(status: JSONObject, carType: String? = null): List<String> =
         openWindowLabels { key -> status.opt(key) }
             .takeUnless { carType?.contains("T03", ignoreCase = true) == true }
             .orEmpty()
 
-    /** True only when this vehicle payload actually contains a verified window signal. */
+    /** 只有车况里真的带车窗信号时才为 true（缺信号 ≠ 车窗关着）。 */
     fun hasWindowTelemetry(status: JSONObject, carType: String? = null): Boolean {
         if (carType?.contains("T03", ignoreCase = true) == true) return false
         return WINDOW_SIGNAL_KEYS.any { key -> status.has(key) && status.opt(key) != JSONObject.NULL }
     }
 
     /**
-     * The widget refresh cadence follows vehicle motion, not the door-lock
-     * state. A stopped vehicle may remain locked or unlocked for a long time;
-     * speed is therefore the source of truth when it is present. Older payloads
-     * without a speed field can still use their explicit driving gear.
+     * 是否在行驶：以车速为准（停车后可能长时间保持同一个锁车状态，
+     * 车门锁不能当判据）；老车况没有 speed 字段时退回挡位判断。
      */
     fun isDriving(status: JSONObject): Boolean = when {
         status.has("speed") -> parseSpeed(status.opt("speed"))?.let { it > 0.0 } == true
@@ -82,14 +39,6 @@ object WidgetStatusMapper {
         else -> isDrivingGear(values["gearStatus"])
     }
 
-    private fun label(valueForKey: (String) -> Any?): String? = when {
-        isDrivingGear(valueForKey("gearStatus")) -> "行驶中"
-        ChargeStatus.state(mapOf("chargeState" to valueForKey("chargeState"))) == 1 -> "充电中"
-        ChargeStatus.state(mapOf("chargeState" to valueForKey("chargeState"))) == 2 -> "充电完成"
-        hasOpenWindow(valueForKey) -> "车窗未关闭"
-        else -> null
-    }
-
     private fun isDrivingGear(value: Any?): Boolean = when (value?.toString()?.trim()?.uppercase()) {
         "D", "DRIVE", "前进", "D挡", "3", "R", "REVERSE", "倒车", "R挡", "1" -> true
         else -> false
@@ -98,10 +47,6 @@ object WidgetStatusMapper {
     private fun parseSpeed(value: Any?): Double? = when (value) {
         is Number -> value.toDouble()
         else -> value?.toString()?.trim()?.removeSuffix("km/h")?.trim()?.toDoubleOrNull()
-    }
-
-    private fun hasOpenWindow(valueForKey: (String) -> Any?): Boolean {
-        return openWindowLabels(valueForKey).isNotEmpty()
     }
 
     private fun openWindowLabels(valueForKey: (String) -> Any?): List<String> {

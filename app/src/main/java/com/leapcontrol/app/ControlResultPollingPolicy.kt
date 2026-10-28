@@ -4,10 +4,8 @@ object ControlResultPollingPolicy {
     const val INITIAL_DELAY_MS = 500L
     const val INTERVAL_MS = 500L
     const val APP_MAX_WAIT_MS = 24_000L
-    const val WIDGET_MAX_WAIT_MS = 12_000L
 
     val appMaxAttempts: Int = attemptsWithin(APP_MAX_WAIT_MS)
-    val widgetMaxAttempts: Int = attemptsWithin(WIDGET_MAX_WAIT_MS)
 
     fun delayBeforeAttempt(attemptIndex: Int): Long {
         require(attemptIndex >= 0) { "attemptIndex must be non-negative" }

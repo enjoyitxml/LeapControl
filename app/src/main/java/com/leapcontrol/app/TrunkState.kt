@@ -26,7 +26,7 @@ enum class TrunkState {
     }
 }
 
-/** Shared signal decoder for the app and widget. */
+/** 尾门状态与信号解码（车况里的尾门信号 → 开/关/未知）。 */
 object TrunkStateMapper {
     /**
      * 0/false is confirmed closed in the checked-in signal samples. Boolean true

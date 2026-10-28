@@ -5,7 +5,7 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import kotlin.math.ceil
 
-/** Shared vehicle display mapping used by the app and the home-screen widget. */
+/** 车况数值的展示映射：续航口径、车型名、电量文案。 */
 object VehicleStatusMapper {
     enum class PowerType { PURE_ELECTRIC, RANGE_EXTENDER }
 
@@ -46,13 +46,6 @@ object VehicleStatusMapper {
             } else {
                 remainingRange(status, carType)
             }
-        }
-
-    fun widgetRange(status: JSONObject, carType: String?, powerType: PowerType?): String? =
-        when (powerType) {
-            PowerType.PURE_ELECTRIC -> remainingRange(status, carType, PowerType.PURE_ELECTRIC)
-            PowerType.RANGE_EXTENDER -> combinedRange(status) ?: remainingRange(status, carType)
-            null -> widgetRange(status, carType)
         }
 
     fun remainingRange(values: Map<String, Any?>): String? =
@@ -130,13 +123,6 @@ object VehicleStatusMapper {
     fun fuelTotalRange(status: JSONObject): String? =
         // 3256 is a standard-mode remaining value, not a full-range denominator.
         firstRangeValue(status, "maxFuelRange")
-
-    fun widgetRange(status: JSONObject, carType: String?): String? =
-        if (!carType.isPureElectricModel() && fuelRange(status) != null && combinedRange(status) != null) {
-            combinedRange(status)
-        } else {
-            remainingRange(status, carType)
-        }
 
     private fun rangeGroupValue(
         status: JSONObject,
