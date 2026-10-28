@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,11 +51,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.R
+import com.leapcontrol.app.UpdateCheckResult
 import kotlinx.coroutines.launch
 
 /**
- * 「我的」页面：入口列表 —— 设置 / 个性化 / 关于（「关于」内嵌「免责声明」「隐私条款」两个子入口），
+ * 「我的」页面：入口列表 —— 设置 / 个性化 / 检查更新 / 关于（「关于」内嵌「免责声明」「隐私条款」两个子入口），
  * 以及页脚的作者署名；页面顶部是头像（可换内置卡通头像或相册照片），底部保留退出登录。
  *
  * 纯自用版本：支持开发者 / 开源协议与致谢 / 意见反馈 / QQ 交流群 等「面向外部」的模块
@@ -75,6 +78,18 @@ fun ProfileScreen(
     // 先吃运行时缓存：切 Tab 回来时第一帧就能显示自定义照片，不会闪一下内置头像
     var customBitmap by remember { mutableStateOf(runtime.cachedCustomAvatar()) }
     var showAvatarPicker by remember { mutableStateOf(false) }
+
+    // ---- 检查更新（从「关于」页上移到本页）----
+    // 自动检查的结果来自 AppRuntime；这里只管「用户手动点了一次」的中间态与弹窗。
+    val updateInfo by runtime.updateInfo.collectAsState()
+    var checkingUpdate by remember { mutableStateOf(false) }
+    // 上一次手动检查是否「失败」（网络 / 接口异常），与「已是最新」分开反馈
+    var checkFailed by remember { mutableStateOf(false) }
+    var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    // 更新包下载状态：私有仓库必须带令牌在 App 内下载
+    var updateDownloading by remember { mutableStateOf(false) }
+    var updateProgress by remember { mutableStateOf<Float?>(null) }
+    var updateDownloadError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         if (AvatarStore.exists(context)) {
@@ -196,6 +211,38 @@ fun ProfileScreen(
             ) { onOpenPage(SettingsPage.PERSONALIZATION) }
             Spacer(Modifier.height(12.dp))
 
+            // 检查更新：从「关于」页移上来，放在「关于」上面（更常用的入口不该藏在二级页里）
+            ProfileItem(
+                R.drawable.ic_system_update,
+                "检查更新",
+                desc = when {
+                    checkingUpdate -> "正在检查…"
+                    checkFailed -> "检查失败，请检查网络后重试"
+                    updateInfo != null -> "发现新版本 v${updateInfo?.version}，点击前往下载"
+                    else -> "当前已是最新版本（v${runtime.currentVersion()}）"
+                },
+                showDot = updateInfo != null,
+            ) {
+                if (!checkingUpdate) {
+                    scope.launch {
+                        checkingUpdate = true
+                        checkFailed = false
+                        val result = runCatching { runtime.checkForUpdate() }.getOrNull()
+                        checkingUpdate = false
+                        when (result) {
+                            is UpdateCheckResult.Newer -> {
+                                pendingUpdate = result.info
+                                updateDownloadError = null
+                                updateProgress = null
+                            }
+                            UpdateCheckResult.UpToDate -> Unit
+                            else -> checkFailed = true
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+
             // 关于放最底部：内嵌「免责声明」「隐私条款」入口
             ProfileItem(
                 R.drawable.ic_info,
@@ -240,6 +287,55 @@ fun ProfileScreen(
                 )
             }
         }
+
+        // ---- 版本更新弹窗（手动「检查更新」触发）----
+        // 必须放在 Column 外面：UpdateDialog 是 fillMaxSize 的全屏遮罩，
+        // 塞进可滚动 Column 里会被垂直无界约束压成零高。
+        if (pendingUpdate != null) {
+            UpdateDialog(
+                info = pendingUpdate!!,
+                currentVersion = runtime.currentVersion(),
+                downloading = updateDownloading,
+                progress = updateProgress,
+                downloadError = updateDownloadError,
+                onOpenDownload = {
+                    val info = pendingUpdate
+                    if (info != null && !updateDownloading) {
+                        updateDownloading = true
+                        updateProgress = null
+                        updateDownloadError = null
+                        scope.launch {
+                            val result = runtime.downloadUpdate(info) { p ->
+                                updateProgress = p.fraction
+                            }
+                            updateDownloading = false
+                            result.fold(
+                                onSuccess = { file ->
+                                    if (runtime.installUpdate(file)) {
+                                        pendingUpdate = null
+                                    } else {
+                                        updateDownloadError =
+                                            "安装包已下载，但需要先在系统里允许「安装未知应用」，授权后回来再点一次"
+                                    }
+                                },
+                                onFailure = { e ->
+                                    updateDownloadError = "下载失败：${e.message ?: "网络异常"}"
+                                },
+                            )
+                        }
+                    }
+                },
+                onOpenGithub = {
+                    runtime.openExternal(pendingUpdate!!.htmlUrl)
+                    pendingUpdate = null
+                },
+                onDismiss = { pendingUpdate = null },
+                onNeverAgain = {
+                    runtime.setDismissedVersion(pendingUpdate!!.version)
+                    pendingUpdate = null
+                },
+            )
+        }
     }
 }
 
@@ -248,6 +344,8 @@ internal fun ProfileItem(
     iconRes: Int,
     title: String,
     desc: String,
+    /** 标题后跟一个小红点：表示这项有「待处理」的内容（目前只有检查更新用）。 */
+    showDot: Boolean = false,
     onClick: () -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -268,7 +366,17 @@ internal fun ProfileItem(
         )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = C.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, color = C.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                if (showDot) {
+                    Spacer(Modifier.width(7.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(Color(0xFFFF3B30), CircleShape),
+                    )
+                }
+            }
             Spacer(Modifier.height(3.dp))
             Text(desc, color = C.textSecondary, fontSize = 11.5.sp)
         }

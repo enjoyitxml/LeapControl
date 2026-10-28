@@ -31,11 +31,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,11 +47,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.AppearanceMode
 import com.leapcontrol.app.R
-import com.leapcontrol.app.UpdateCheckResult
-import kotlinx.coroutines.launch
 
 /**
  * 主题中心的三个分类，对应页面上横向的三个 tab。
@@ -393,7 +388,9 @@ private fun ThemeSlotSummary(
 }
 
 /**
- * 「关于」页：版本信息 + 检查更新 + 内嵌「免责声明」「隐私条款」两个子入口。
+ * 「关于」页：版本信息 + 内嵌「免责声明」「隐私条款」两个子入口。
+ *
+ * 「检查更新」入口已上移到「我的」页（放在「关于」上面），这里只留版本号。
  */
 @Composable
 fun AboutScreen(
@@ -403,17 +400,6 @@ fun AboutScreen(
     onOpenPrivacy: () -> Unit = {},
 ) {
     val C = LocalAppColors.current
-    val updateInfo by runtime.updateInfo.collectAsState()
-    var checkingUpdate by remember { mutableStateOf(false) }
-    var showUpdateDialog by remember { mutableStateOf(false) }
-    var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
-    // 上一次手动检查是否「失败」（网络 / 接口异常），与「已是最新」分开反馈
-    var checkFailed by remember { mutableStateOf(false) }
-    // 更新包下载状态：私有仓库必须带令牌在 App 内下载
-    var updateDownloading by remember { mutableStateOf(false) }
-    var updateProgress by remember { mutableStateOf<Float?>(null) }
-    var updateDownloadError by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier
@@ -430,36 +416,6 @@ fun AboutScreen(
             InfoRow(label = "客户端", value = "零控 LeapControl")
             Spacer(Modifier.height(10.dp))
             InfoRow(label = "版本", value = appVersionText())
-            Spacer(Modifier.height(10.dp))
-            // 检查更新：红点 + 手动检查 + 弹窗
-            ClickRow(
-                title = "检查更新",
-                desc = when {
-                    checkingUpdate -> "检查中…"
-                    checkFailed -> "检查失败，请检查网络后重试"
-                    updateInfo != null -> "发现新版本 v${updateInfo?.version}，点击前往下载"
-                    else -> "当前已是最新版本（v${runtime.currentVersion()}）"
-                },
-                iconRes = R.drawable.ic_system_update,
-                showDot = updateInfo != null,
-            ) {
-                if (!checkingUpdate) {
-                    scope.launch {
-                        checkingUpdate = true
-                        checkFailed = false
-                        val result = runCatching { runtime.checkForUpdate() }.getOrNull()
-                        checkingUpdate = false
-                        when (result) {
-                            is UpdateCheckResult.Newer -> {
-                                pendingUpdate = result.info
-                                showUpdateDialog = true
-                            }
-                            UpdateCheckResult.UpToDate -> Unit
-                            else -> checkFailed = true
-                        }
-                    }
-                }
-            }
             Spacer(Modifier.height(12.dp))
             androidx.compose.material3.Text(
                 "零控是作者本人开发的非官方客户端，仅自己和好友使用，与零跑汽车官方无关。"
@@ -488,53 +444,6 @@ fun AboutScreen(
 
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.navigationBarsPadding())
-    }
-
-    // ---- 版本更新弹窗（手动「检查更新」触发）----
-    if (showUpdateDialog && pendingUpdate != null) {
-        UpdateDialog(
-            info = pendingUpdate!!,
-            currentVersion = runtime.currentVersion(),
-            downloading = updateDownloading,
-            progress = updateProgress,
-            downloadError = updateDownloadError,
-            onOpenDownload = {
-                val info = pendingUpdate
-                if (info != null && !updateDownloading) {
-                    updateDownloading = true
-                    updateProgress = null
-                    updateDownloadError = null
-                    scope.launch {
-                        val result = runtime.downloadUpdate(info) { p ->
-                            updateProgress = p.fraction
-                        }
-                        updateDownloading = false
-                        result.fold(
-                            onSuccess = { file ->
-                                if (runtime.installUpdate(file)) {
-                                    showUpdateDialog = false
-                                } else {
-                                    updateDownloadError =
-                                        "安装包已下载，但需要先在系统里允许「安装未知应用」，授权后回来再点一次"
-                                }
-                            },
-                            onFailure = { e ->
-                                updateDownloadError = "下载失败：${e.message ?: "网络异常"}"
-                            },
-                        )
-                    }
-                }
-            },
-            onOpenGithub = {
-                runtime.openExternal(pendingUpdate!!.htmlUrl)
-                showUpdateDialog = false
-            },
-            onDismiss = { showUpdateDialog = false },
-            onNeverAgain = {
-                runtime.setDismissedVersion(pendingUpdate!!.version)
-                showUpdateDialog = false
-            },
-        )
     }
 }
 
