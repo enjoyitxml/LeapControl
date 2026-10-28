@@ -855,3 +855,145 @@ fun JournalEmpty(text: String, modifier: Modifier = Modifier) {
         Text(text, color = C.textSecondary, fontSize = 12.sp)
     }
 }
+
+/**
+ * 花费分类的小图标：圆底 + 自绘线稿。
+ *
+ * 图标直接用勋章那一套 glyph（充电=闪电、加油=加油机、维修=扳手……），
+ * 同一条线稿在两个页面里出现，风格不会打架。
+ */
+@Composable
+fun CategoryIcon(
+    category: com.leapcontrol.app.journal.CostCategory,
+    modifier: Modifier = Modifier,
+    size: Dp = 34.dp,
+) {
+    val color = categoryColor(category.hue)
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(color.copy(alpha = 0.15f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(size * 0.58f)) {
+            drawGlyph(category.glyph, color)
+        }
+    }
+}
+
+/**
+ * 分段选择器（今日 / 本周 / 本月 / 今年 / 全部）。
+ *
+ * 五个药丸横着排会挤到换行，这里改成等分格：选中格填主题色，其余透明。
+ */
+@Composable
+fun JournalSegmented(
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val C = LocalAppColors.current
+    val outer = RoundedCornerShape(13.dp)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(outer)
+            .background(C.chipBg)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        options.forEachIndexed { index, label ->
+            val on = index == selectedIndex
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (on) C.accent else Color.Transparent)
+                    .clickable { onSelect(index) }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    color = if (on) readableOn(C.accent) else C.textSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 分类占比环形图。
+ *
+ * 比堆叠条更容易看出「哪一类占了一半」—— 中间留白正好放当期总额。
+ * 只有一个分类时不画缝隙，避免看起来像没画满。
+ */
+@Composable
+fun JournalDonut(
+    slices: List<Pair<com.leapcontrol.app.journal.CostCategory, Double>>,
+    total: Double,
+    centerTitle: String,
+    centerSub: String,
+    modifier: Modifier = Modifier,
+    stroke: Dp = 15.dp,
+) {
+    val C = LocalAppColors.current
+    // 颜色必须在组合期算好：categoryColor 是 @Composable，不能在绘制 lambda 里调
+    val sliceColors = slices.map { categoryColor(it.first.hue) }
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxWidth().fillMaxHeight()) {
+            val strokePx = stroke.toPx()
+            val diameter = size.minDimension - strokePx
+            if (diameter <= 0f) return@Canvas
+            val arcSize = Size(diameter, diameter)
+            val topLeft = Offset((size.width - diameter) / 2f, (size.height - diameter) / 2f)
+            drawArc(
+                color = C.barTrack,
+                startAngle = 0f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = Stroke(width = strokePx),
+            )
+            if (total <= 0.0) return@Canvas
+            val gap = if (slices.size > 1) 1.6f else 0f
+            var start = -90f
+            slices.forEachIndexed { index, (_, amount) ->
+                val sweep = (amount / total * 360.0).toFloat()
+                if (sweep > 0.6f) {
+                    drawArc(
+                        color = sliceColors[index],
+                        startAngle = start + gap / 2f,
+                        sweepAngle = (sweep - gap).coerceAtLeast(0.6f),
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = Stroke(width = strokePx),
+                    )
+                }
+                start += sweep
+            }
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(centerTitle, color = C.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(2.dp))
+            Text(centerSub, color = C.textSecondary, fontSize = 9.sp)
+        }
+    }
+}
+
+/**
+ * 按底色亮度选字色：主题 accent 有深有浅，固定白字在亮绿上会糊，
+ * 固定黑字在深蓝上又看不清。
+ */
+fun readableOn(background: Color): Color {
+    val luma = 0.299f * background.red + 0.587f * background.green + 0.114f * background.blue
+    return if (luma > 0.62f) Color(0xFF12161C) else Color.White
+}
+

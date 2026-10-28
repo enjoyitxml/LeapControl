@@ -127,58 +127,71 @@ fun JournalScreen(runtime: AppRuntime) {
     )
     val unlocked = Medals.unlockedIds(stats)
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 22.dp),
-    ) {
-        Spacer(Modifier.height(20.dp))
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text("零记", color = C.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(10.dp))
-            Text(
-                goal?.let { "和${runtime.displayName()}一起的第 ${progress?.daysOwned ?: 1} 天" }
-                    ?: "记录和爱车的长期主义",
-                color = C.textSecondary,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(bottom = 2.dp),
+    // 外层 Box 只为了那枚悬浮球：内容照旧滚动，球固定在底部正中
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 22.dp),
+        ) {
+            Spacer(Modifier.height(20.dp))
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text("零记", color = C.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    goal?.let { "和${runtime.displayName()}一起的第 ${progress?.daysOwned ?: 1} 天" }
+                        ?: "记录和爱车的长期主义",
+                    color = C.textSecondary,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(bottom = 2.dp),
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+
+            GoalOverviewCard(
+                data = data,
+                progress = progress,
+                unlockedIds = unlocked,
+                onClick = { page = JournalPage.GOAL },
             )
+
+            Spacer(Modifier.height(12.dp))
+
+            CostOverviewCard(
+                summary = costSummary,
+                onClick = { page = JournalPage.COST },
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            FootprintOverviewCard(
+                data = data,
+                totalKm = data.dailyKm.values.fold(0.0) { a, b -> a + b },
+                onClick = { page = JournalPage.CHECKIN },
+            )
+
+            Spacer(Modifier.height(18.dp))
+            Text(
+                "零记的数据只存在这台手机上，不上传、不统计。",
+                color = C.textSecondary,
+                fontSize = 11.sp,
+            )
+            Spacer(Modifier.height(OrbReservedHeight))
         }
-        Spacer(Modifier.height(16.dp))
 
-        GoalOverviewCard(
-            data = data,
-            progress = progress,
-            unlockedIds = unlocked,
-            onClick = { page = JournalPage.GOAL },
+        JournalOrb(
+            runtime = runtime,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 8.dp),
         )
-
-        Spacer(Modifier.height(12.dp))
-
-        CostOverviewCard(
-            summary = costSummary,
-            onClick = { page = JournalPage.COST },
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        FootprintOverviewCard(
-            data = data,
-            totalKm = data.dailyKm.values.fold(0.0) { a, b -> a + b },
-            onClick = { page = JournalPage.CHECKIN },
-        )
-
-        Spacer(Modifier.height(18.dp))
-        Text(
-            "零记的数据只存在这台手机上，不上传、不统计。",
-            color = C.textSecondary,
-            fontSize = 11.sp,
-        )
-        Spacer(Modifier.height(24.dp))
     }
 }
+
+/** 给悬浮的灵感球留白：球 104 + 提示条 + 间距，少一点会把页脚压在球底下。 */
+private val OrbReservedHeight = 150.dp
 
 /** 车况里的总里程（拿不到就 null，不让 recordOdometer 收到 0 把基线拉低）。 */
 private fun currentOdometer(runtime: AppRuntime): Double? =
@@ -338,10 +351,10 @@ private fun CostOverviewCard(summary: CostSummary, onClick: () -> Unit) {
             Spacer(Modifier.height(10.dp))
             Row {
                 summary.byCategory.take(3).forEachIndexed { index, (cat, amount) ->
-                    if (index > 0) Spacer(Modifier.width(14.dp))
+                    if (index > 0) Spacer(Modifier.width(12.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CategoryDot(short = cat.short, color = categoryColor(cat.hue), size = 20.dp)
-                        Spacer(Modifier.width(6.dp))
+                        CategoryIcon(category = cat, size = 20.dp)
+                        Spacer(Modifier.width(5.dp))
                         Text(
                             "${cat.label} ¥${CostStats.money(amount)}",
                             color = C.textSecondary,
@@ -388,11 +401,23 @@ private fun FootprintOverviewCard(data: JournalData, totalKm: Double, onClick: (
         Spacer(Modifier.height(10.dp))
         FootprintMap(
             checkins = data.checkins,
+            wishes = data.wishes,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(118.dp),
             compact = true,
         )
+        if (data.wishes.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "心愿单 ${data.wishCount} 座 · " +
+                    data.wishes.take(3).joinToString("、") { it.city } +
+                    if (data.wishes.size > 3) " …" else "",
+                color = C.textSecondary,
+                fontSize = 10.sp,
+                maxLines = 1,
+            )
+        }
     }
 }
 

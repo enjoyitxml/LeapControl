@@ -126,6 +126,9 @@ data class CarGoal(
  *
  * [short] 是圆形色块里的单字 —— 分类图标全部用「一个字」而不是自绘小图，
  * 十几类图标画下来风格很难统一，一个字反而认得最快。
+ *
+ * [glyph] 是后来补的小图标：分类排行、流水行、图表图例里用得上，
+ * 复用勋章那一套自绘线稿（同包直接引用），风格天生一致。
  */
 enum class CostCategory(
     val id: String,
@@ -133,15 +136,16 @@ enum class CostCategory(
     val short: String,
     /** 归一化色相（0~1），画分类条与圆标用。 */
     val hue: Float,
+    val glyph: MedalGlyph,
 ) {
-    CHARGE("charge", "充电", "充", 0.36f),
-    FUEL("fuel", "加油", "油", 0.07f),
-    INSURANCE("insurance", "保险", "保", 0.58f),
-    WASH("wash", "洗车", "洗", 0.50f),
-    SERVICE("service", "维修保养", "修", 0.02f),
-    PARKING("parking", "停车", "停", 0.72f),
-    TOLL("toll", "过路", "路", 0.13f),
-    OTHER("other", "其他", "其", 0.0f);
+    CHARGE("charge", "充电", "充", 0.36f, MedalGlyph.BOLT),
+    FUEL("fuel", "加油", "油", 0.07f, MedalGlyph.FUEL),
+    INSURANCE("insurance", "保险", "保", 0.58f, MedalGlyph.SHIELD),
+    WASH("wash", "洗车", "洗", 0.50f, MedalGlyph.DROPLET),
+    SERVICE("service", "维修保养", "修", 0.02f, MedalGlyph.WRENCH),
+    PARKING("parking", "停车", "停", 0.72f, MedalGlyph.PARKING),
+    TOLL("toll", "过路", "路", 0.13f, MedalGlyph.TOLL),
+    OTHER("other", "其他", "其", 0.0f, MedalGlyph.GRID);
 
     companion object {
         fun byId(id: String?): CostCategory =
@@ -218,6 +222,40 @@ data class CityCheckin(
 }
 
 /**
+ * 心愿单里的一座城市 —— 「想去，但还没去」。
+ *
+ * 与 [CityCheckin] 分开存：一个是愿望、一个是事实，混在一张表里会让
+ * 「点亮城市数」把想去的地方也算进去。打卡成功时对应心愿自动消掉。
+ */
+data class CityWish(
+    val id: String,
+    val city: String,
+    val province: String,
+    /** 加入时间（毫秒），只用来排序与展示。 */
+    val added: Long,
+    val note: String = "",
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("city", city)
+        put("province", province)
+        put("added", added)
+        if (note.isNotEmpty()) put("note", note)
+    }
+
+    companion object {
+        fun fromJson(raw: JSONObject?): CityWish? {
+            if (raw == null) return null
+            val id = raw.optString("id").takeIf { it.isNotBlank() } ?: return null
+            val city = raw.optString("city").takeIf { it.isNotBlank() } ?: return null
+            val province = raw.optString("province").orEmpty()
+            val added = raw.opt("added")?.toString()?.toLongOrNull() ?: 0L
+            return CityWish(id, city, province, added, raw.optString("note").orEmpty())
+        }
+    }
+}
+
+/**
  * 一份完整的零记数据（跟着一个 VIN 走）。
  *
  * [dailyKm] 是「日期 → 当日行驶里程」，来源两条：
@@ -235,12 +273,17 @@ data class JournalData(
     /** 最近一次用总里程差分推算出的「当天里程」，用来判断是否需要补写。 */
     val odometerKm: Double? = null,
     val odometerDay: String? = null,
+    /** 心愿单：想去还没去的城市。打卡成功会自动从这里移除。 */
+    val wishes: List<CityWish> = emptyList(),
 ) {
     val isEmpty: Boolean
-        get() = goal == null && costs.isEmpty() && checkins.isEmpty() && dailyKm.isEmpty()
+        get() = goal == null && costs.isEmpty() && checkins.isEmpty() &&
+            dailyKm.isEmpty() && wishes.isEmpty()
 
     /** 已点亮城市数。 */
     val cityCount: Int get() = checkins.size
+
+    val wishCount: Int get() = wishes.size
 
     val provinceCount: Int get() = checkins.map { it.province }.filter { it.isNotEmpty() }.toSet().size
 
@@ -264,6 +307,11 @@ data class JournalData(
             LocalDate.ofInstant(Instant.ofEpochMilli(it.date), ZoneId.systemDefault()).year == year
         }.fold(0.0) { acc, e -> acc + e.amount }
 
+    /** 区间统计：`[fromInclusive, toExclusive)`，日 / 周 / 月 / 年都基于它。 */
+    fun costBetween(fromInclusive: Long, toExclusive: Long): Double =
+        costs.filter { it.date >= fromInclusive && it.date < toExclusive }
+            .fold(0.0) { acc, e -> acc + e.amount }
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("v", VERSION)
         goal?.let { put("goal", it.toJson()) }
@@ -276,6 +324,9 @@ data class JournalData(
         }
         if (dailyKm.isNotEmpty()) {
             put("daily", JSONObject().apply { dailyKm.forEach { (k, v) -> put(k, v) } })
+        }
+        if (wishes.isNotEmpty()) {
+            put("wishes", JSONArray().apply { wishes.forEach { put(it.toJson()) } })
         }
         odometerKm?.let { put("odometerKm", it) }
         odometerDay?.let { put("odometerDay", it) }
@@ -309,6 +360,12 @@ data class JournalData(
                     if (km.isFinite() && km >= 0.0) daily[key] = km
                 }
             }
+            val wishes = mutableListOf<CityWish>()
+            raw.optJSONArray("wishes")?.let { array ->
+                for (i in 0 until array.length()) {
+                    CityWish.fromJson(array.optJSONObject(i))?.let { wishes += it }
+                }
+            }
             return JournalData(
                 goal = CarGoal.fromJson(raw.optJSONObject("goal")),
                 ownershipDays = raw.opt("ownershipDays")?.toString()?.toIntOrNull(),
@@ -317,6 +374,8 @@ data class JournalData(
                 dailyKm = daily,
                 odometerKm = raw.opt("odometerKm")?.toString()?.toDoubleOrNull(),
                 odometerDay = raw.optString("odometerDay").takeIf { it.isNotBlank() },
+                // 心愿单按加入时间正序：先想去的排前面，像一张「要去的清单」
+                wishes = wishes.sortedBy { it.added },
             )
         }
     }

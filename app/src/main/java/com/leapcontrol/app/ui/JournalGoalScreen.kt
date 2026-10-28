@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
@@ -41,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -605,6 +607,8 @@ fun JournalInput(
     suffix: String? = null,
     numeric: Boolean = false,
     singleLine: Boolean = true,
+    imeAction: ImeAction = ImeAction.Default,
+    onDone: (() -> Unit)? = null,
 ) {
     val C = LocalAppColors.current
     OutlinedTextField(
@@ -616,7 +620,9 @@ fun JournalInput(
         singleLine = singleLine,
         keyboardOptions = KeyboardOptions(
             keyboardType = if (numeric) KeyboardType.Number else KeyboardType.Text,
+            imeAction = imeAction,
         ),
+        keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
         shape = RoundedCornerShape(14.dp),
         textStyle = androidx.compose.ui.text.TextStyle(color = C.textPrimary, fontSize = 15.sp),
         colors = OutlinedTextFieldDefaults.colors(

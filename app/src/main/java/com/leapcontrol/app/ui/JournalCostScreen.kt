@@ -1,10 +1,5 @@
 package com.leapcontrol.app.ui
 
-import android.app.Activity
-import android.content.Intent
-import android.speech.RecognizerIntent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -46,33 +41,40 @@ import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.journal.CostCategory
 import com.leapcontrol.app.journal.CostEntry
 import com.leapcontrol.app.journal.CostParser
+import com.leapcontrol.app.journal.CostRange
 import com.leapcontrol.app.journal.CostStats
 import com.leapcontrol.app.journal.JournalDates
 import java.util.Locale
+import kotlin.math.abs
 
 /**
  * 用车成本页。
  *
- * 三块内容：**钱花在哪**（分类占比）、**每月多少**（6 个月柱状图）、**每一笔**（流水）。
+ * 四块内容：**这一期花了多少**（日 / 周 / 月 / 年 / 全部切换）、**每期走势**、
+ * **钱花在哪**（占比环 + 分类排行）、**每一笔**（流水）。
+ *
  * 记账入口只有一个原则：能一句话说完的就别填表 —— 输入框里写「昨天停车 15」，
  * 分类、金额、日期全部自动认出来；认错的地方点一下就能改。
  */
 @Composable
 fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
     val C = LocalAppColors.current
+    val context = LocalContext.current
     val journal = runtime.journal
     val data by journal.data
     val summary = CostStats.of(data, data.goal)
 
     var showAdd by remember { mutableStateOf(false) }
-    var scope by remember { mutableStateOf(CostScope.MONTH) }
+    var showVoice by remember { mutableStateOf(false) }
+    var addPrefill by remember { mutableStateOf("") }
+    var range by remember { mutableStateOf(CostRange.MONTH) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
 
-    val mainAmount = when (scope) {
-        CostScope.MONTH -> summary.thisMonth
-        CostScope.YEAR -> summary.thisYear
-        CostScope.ALL -> summary.total
-    }
+    val amount = summary.amountOf(range)
+    val delta = summary.deltaOf(range)
+    val byCategory = remember(data, range) { CostStats.byCategoryOf(data, range) }
+    val trend = remember(data, range) { CostStats.trendOf(data, range) }
+    val trendMax = trend.maxOfOrNull { it.amount } ?: 0.0
 
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -91,48 +93,48 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
                         modifier = Modifier
                             .clip(CircleShape)
                             .background(C.accent)
-                            .clickable { showAdd = true }
+                            .clickable {
+                                addPrefill = ""
+                                showAdd = true
+                            }
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                     ) {
-                        Text("记一笔", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("记一笔", color = readableOn(C.accent), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 },
             )
             Spacer(Modifier.height(16.dp))
 
-            // ---- 总额 + 日均 ----
+            // ---- 区间 + 总额 + 日均 ----
             JournalCard {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CostScope.entries.forEach { item ->
-                        JournalPill(
-                            text = item.label,
-                            selected = scope == item,
-                            onClick = { scope = item },
-                        )
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
+                JournalSegmented(
+                    options = CostRange.entries.map { it.label },
+                    selectedIndex = range.ordinal,
+                    onSelect = { range = CostRange.entries[it] },
+                )
+                Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
-                        "¥${CostStats.money(mainAmount)}",
+                        "¥${CostStats.money(amount)}",
                         color = C.textPrimary,
                         fontSize = 34.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        scope.desc,
+                        range.desc,
                         color = C.textSecondary,
                         fontSize = 11.sp,
                         modifier = Modifier.padding(bottom = 6.dp),
                     )
                 }
                 Spacer(Modifier.height(12.dp))
+                // 相对「全部」的占比：看得出现在这一期在总开销里的分量
                 JournalProgressLine(
-                    fraction = if (summary.total > 0) (mainAmount / summary.total).toFloat() else 0f,
+                    fraction = if (summary.total > 0) (amount / summary.total).toFloat() else 0f,
                     color = C.accent,
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
                 Row(Modifier.fillMaxWidth()) {
                     JournalStat(
                         value = "¥${CostStats.moneyFine(summary.perDay)}",
@@ -140,15 +142,13 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
                         modifier = Modifier.weight(1f),
                     )
                     JournalStat(
-                        value = if (summary.entryCount == 0) "0" else "${summary.entryCount}",
+                        value = "${summary.entryCount}",
                         label = "累计笔数",
                         modifier = Modifier.weight(1f),
                     )
-                    val delta = summary.monthDelta
                     JournalStat(
-                        value = delta?.let { (if (it >= 0) "+" else "-") + CostStats.money(kotlin.math.abs(it)) }
-                            ?: "--",
-                        label = "较上月",
+                        value = delta?.let { (if (it >= 0) "+" else "-") + CostStats.money(abs(it)) } ?: "--",
+                        label = summary.deltaLabel(range),
                         modifier = Modifier.weight(1f),
                         valueColor = when {
                             delta == null -> C.textSecondary
@@ -161,57 +161,140 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
 
             Spacer(Modifier.height(12.dp))
 
-            // ---- 近 6 个月 ----
+            // ---- 趋势：粒度跟着区间走 ----
             JournalCard {
-                Text("近 6 个月", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(range.trendTitle, color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        when (range) {
+                            CostRange.DAY -> "每天"
+                            CostRange.WEEK -> "每周"
+                            CostRange.MONTH -> "每月"
+                            else -> "每年"
+                        },
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "最高 ¥${CostStats.money(trendMax)}",
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                    )
+                }
                 Spacer(Modifier.height(14.dp))
-                val max = summary.months.maxOfOrNull { it.amount } ?: 0.0
                 JournalBars(
-                    values = summary.months.map { if (max > 0) (it.amount / max).toFloat() else 0f },
-                    labels = summary.months.map { it.label },
-                    valueTexts = summary.months.map { if (it.amount > 0) CostStats.money(it.amount) else "" },
+                    values = trend.map { if (trendMax > 0) (it.amount / trendMax).toFloat() else 0f },
+                    labels = trend.map { it.label },
+                    valueTexts = trend.map { if (it.amount > 0) CostStats.money(it.amount) else "" },
                     barHeight = 58.dp,
                 )
             }
 
             Spacer(Modifier.height(12.dp))
 
-            // ---- 分类 ----
+            // ---- 支出分析：占比环 + 前三名 ----
+            JournalCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("支出分析", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.width(8.dp))
+                    Text(range.desc, color = C.textSecondary, fontSize = 11.sp)
+                }
+                Spacer(Modifier.height(14.dp))
+                if (byCategory.isEmpty()) {
+                    JournalEmpty("这一期还没有支出。点右上角「记一笔」，或者按住首页那颗球说一句。")
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        JournalDonut(
+                            slices = byCategory,
+                            total = amount,
+                            centerTitle = "¥${CostStats.money(amount)}",
+                            centerSub = range.label,
+                            modifier = Modifier.size(124.dp),
+                        )
+                        Spacer(Modifier.width(18.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                            byCategory.take(3).forEach { (category, money) ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CategoryIcon(category = category, size = 26.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            category.label,
+                                            color = C.textPrimary,
+                                            fontSize = 12.sp,
+                                            maxLines = 1,
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        JournalProgressLine(
+                                            fraction = if (amount > 0) (money / amount).toFloat() else 0f,
+                                            height = 4.dp,
+                                            color = categoryColor(category.hue),
+                                        )
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "${(money / amount * 100).toInt()}%",
+                                        color = C.textSecondary,
+                                        fontSize = 10.sp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // ---- 分类明细 ----
             JournalCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("花在哪", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.width(8.dp))
-                    Text("按全部记录统计", color = C.textSecondary, fontSize = 11.sp)
+                    Spacer(Modifier.weight(1f))
+                    Text("${byCategory.size} 类", color = C.textSecondary, fontSize = 11.sp)
                 }
-                Spacer(Modifier.height(12.dp))
-                if (summary.byCategory.isEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                if (byCategory.isEmpty()) {
                     JournalEmpty("还没有记录。说一句「充电 50」，这里就会出现第一笔。")
                 } else {
-                    CategoryStackBar(summary.byCategory, summary.total)
-                    Spacer(Modifier.height(14.dp))
-                    summary.byCategory.forEach { (cat, amount) ->
+                    Spacer(Modifier.height(4.dp))
+                    CategoryStackBar(byCategory = byCategory, total = amount)
+                    Spacer(Modifier.height(10.dp))
+                    byCategory.forEach { (category, money) ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 5.dp),
+                                .padding(vertical = 7.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            CategoryDot(short = cat.short, color = categoryColor(cat.hue), size = 30.dp)
+                            CategoryIcon(category = category, size = 30.dp)
                             Spacer(Modifier.width(10.dp))
-                            Text(cat.label, color = C.textPrimary, fontSize = 13.sp)
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                "${(amount / summary.total * 100).toInt()}%",
-                                color = C.textSecondary,
-                                fontSize = 11.sp,
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "¥${CostStats.money(amount)}",
-                                color = C.textPrimary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.Bottom) {
+                                    Text(category.label, color = C.textPrimary, fontSize = 13.sp)
+                                    Spacer(Modifier.weight(1f))
+                                    Text(
+                                        "¥${CostStats.money(money)}",
+                                        color = C.textPrimary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "${(money / amount * 100).toInt()}%",
+                                        color = C.textSecondary,
+                                        fontSize = 10.sp,
+                                    )
+                                }
+                                Spacer(Modifier.height(5.dp))
+                                JournalProgressLine(
+                                    fraction = if (amount > 0) (money / amount).toFloat() else 0f,
+                                    height = 4.dp,
+                                    color = categoryColor(category.hue),
+                                )
+                            }
                         }
                     }
                 }
@@ -230,7 +313,7 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
                 }
                 Spacer(Modifier.height(6.dp))
                 if (data.costs.isEmpty()) {
-                    JournalEmpty("记一笔试试：点右上角「记一笔」，或者直接说一句。")
+                    JournalEmpty("记一笔试试：点右上角「记一笔」，或者按住零记首页底部那颗球说一句。")
                 } else {
                     data.costs.take(40).forEach { entry ->
                         CostRow(
@@ -246,10 +329,43 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
 
         if (showAdd) {
             AddCostSheet(
+                initial = addPrefill,
                 onDismiss = { showAdd = false },
-                onSave = { category, amount, date, note ->
-                    journal.addCost(category, amount, date, note)
+                onVoice = {
                     showAdd = false
+                    showVoice = true
+                },
+                onSave = { category, amountValue, date, note ->
+                    journal.addCost(category, amountValue, date, note)
+                    showAdd = false
+                    toast(context, "已记 ${category.label} ¥${CostStats.money(amountValue)}")
+                },
+            )
+        }
+
+        if (showVoice) {
+            JournalVoiceSheet(
+                onCancel = { showVoice = false },
+                onTypeInstead = { reason ->
+                    showVoice = false
+                    addPrefill = ""
+                    if (reason.isNotBlank()) toast(context, reason)
+                    showAdd = true
+                },
+                onResult = { text ->
+                    showVoice = false
+                    val parsed = CostParser.parse(text)
+                    if (parsed == null) {
+                        addPrefill = text
+                        showAdd = true
+                        toast(context, "没听清金额，补一个数字就行")
+                    } else {
+                        journal.addCost(parsed.category, parsed.amount, parsed.date, parsed.note)
+                        toast(
+                            context,
+                            "已记 ${parsed.category.label} ¥${CostStats.money(parsed.amount)}",
+                        )
+                    }
                 },
             )
         }
@@ -270,12 +386,6 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
     }
 }
 
-private enum class CostScope(val label: String, val desc: String) {
-    MONTH("本月", "本月支出"),
-    YEAR("今年", "今年支出"),
-    ALL("全部", "提车以来"),
-}
-
 @Composable
 private fun CostRow(entry: CostEntry, onDelete: () -> Unit) {
     val C = LocalAppColors.current
@@ -285,7 +395,7 @@ private fun CostRow(entry: CostEntry, onDelete: () -> Unit) {
             .padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CategoryDot(short = entry.category.short, color = categoryColor(entry.category.hue), size = 32.dp)
+        CategoryIcon(category = entry.category, size = 32.dp)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -323,19 +433,21 @@ private fun CostRow(entry: CostEntry, onDelete: () -> Unit) {
 /**
  * 「记一笔」弹层。
  *
- * 输入 → 实时解析 → 可改 → 保存。语音与手输走同一个解析器，
+ * 输入 → 实时解析 → 可改 → 保存。语音走的是同一个解析器（Siri 式浮层收音），
  * 所以「充电 50」无论是说的还是打的，结果都一样。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AddCostSheet(
+    initial: String,
     onDismiss: () -> Unit,
+    onVoice: () -> Unit,
     onSave: (CostCategory, Double, Long, String) -> Unit,
 ) {
     val C = LocalAppColors.current
     val context = LocalContext.current
 
-    var input by remember { mutableStateOf("") }
+    var input by remember { mutableStateOf(initial) }
     val parsed = remember(input) { CostParser.parse(input) }
 
     var category by remember { mutableStateOf<CostCategory?>(null) }
@@ -351,21 +463,6 @@ private fun AddCostSheet(
             category = hit.category
             amountText = plainAmount(hit.amount)
             date = hit.date
-        }
-    }
-
-    val voiceLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val text = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()
-            if (!text.isNullOrBlank()) {
-                input = text
-                if (CostParser.parse(text) == null) {
-                    toast(context, "没听清金额，再补一个数字就行")
-                }
-            }
         }
     }
 
@@ -419,18 +516,7 @@ private fun AddCostSheet(
                         .clip(CircleShape)
                         .background(C.accent.copy(alpha = 0.15f))
                         .border(1.dp, C.accent.copy(alpha = 0.5f), CircleShape)
-                        .clickable {
-                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                                putExtra(
-                                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
-                                )
-                                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-                                putExtra(RecognizerIntent.EXTRA_PROMPT, "说出花费，比如「充电五十元」")
-                            }
-                            runCatching { voiceLauncher.launch(intent) }
-                                .onFailure { toast(context, "这台手机没有语音识别，直接打字吧") }
-                        },
+                        .clickable(onClick = onVoice),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text("语音", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -504,12 +590,12 @@ private fun AddCostSheet(
                     .clip(RoundedCornerShape(16.dp))
                     .background(C.accent)
                     .clickable {
-                        val amount = amountText.trim().toDoubleOrNull()
+                        val amountValue = amountText.trim().toDoubleOrNull()
                         when {
-                            amount == null || amount <= 0.0 -> toast(context, "金额填一个大于 0 的数")
+                            amountValue == null || amountValue <= 0.0 -> toast(context, "金额填一个大于 0 的数")
                             else -> onSave(
                                 category ?: CostCategory.OTHER,
-                                amount,
+                                amountValue,
                                 date,
                                 // 备注只存去掉金额的原文（「充电」），不把整句「充电 50」塞进流水
                                 parsed?.note.orEmpty(),
@@ -519,7 +605,7 @@ private fun AddCostSheet(
                     .padding(vertical = 15.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("保存", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("保存", color = readableOn(C.accent), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
             Spacer(Modifier.height(6.dp))
         }
@@ -577,7 +663,12 @@ fun JournalConfirm(
                         .padding(vertical = 13.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(confirmText, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        confirmText,
+                        color = readableOn(C.accent),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             }
         }

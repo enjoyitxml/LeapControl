@@ -174,6 +174,8 @@ class JournalRuntime(
                     date = JournalDates.startOfDay(date),
                     note = note.trim(),
                 )).sortedByDescending { it.date },
+                // 打卡即达成心愿：心愿单里同一个城市顺手划掉，不留一条「已去过的愿望」
+                wishes = data.wishes.filterNot { it.id == city.id },
             )
         }
         return true
@@ -181,6 +183,41 @@ class JournalRuntime(
 
     fun removeCheckin(id: String) = mutate { data ->
         data.copy(checkins = data.checkins.filterNot { it.id == id })
+    }
+
+    // ---------------- 城市心愿单 ----------------
+
+    /**
+     * 加入心愿单。
+     *
+     * 已经去过（或已经在单子里）就不加，返回 false 让 UI 提示一句 ——
+     * 心愿单里出现一个已经插了旗的城市，只会让人以为自己记重了。
+     */
+    fun addWish(city: City): Boolean {
+        val data = ensureLoaded()
+        if (data.checkins.any { it.id == city.id }) return false
+        if (data.wishes.any { it.id == city.id }) return false
+        mutate { current ->
+            current.copy(
+                wishes = current.wishes + CityWish(
+                    id = city.id,
+                    city = city.name,
+                    province = city.province,
+                    added = System.currentTimeMillis(),
+                ),
+            )
+        }
+        return true
+    }
+
+    fun removeWish(id: String) = mutate { data ->
+        data.copy(wishes = data.wishes.filterNot { it.id == id })
+    }
+
+    /** 心愿兑现：把心愿单里的一条直接转成打卡（打卡后自动出单）。 */
+    fun fulfillWish(wishId: String, date: Long = JournalDates.todayStart()): Boolean {
+        val city = CityCatalog.byId(wishId) ?: return false
+        return checkin(city, date)
     }
 
     // ---------------- 每日里程 ----------------

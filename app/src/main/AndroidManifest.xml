@@ -20,7 +20,21 @@
         android:maxSdkVersion="28" />
     <!-- 应用内下载新版本后直接唤起系统安装器（Android 8+ 还需用户在系统里授权一次） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 语音记账：灵感球长按说话走进程内 SpeechRecognizer（要自己画 Siri 式浮层），
+         系统语音 App 那条路做不到自绘界面，所以必须自己申请麦克风 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <!-- Android 11+ 包可见性：不加这段 isRecognitionAvailable() 会恒返回 false -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+    </queries>
 
     <application
         android:name=".LeapApplication"

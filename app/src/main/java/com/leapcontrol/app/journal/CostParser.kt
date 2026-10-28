@@ -112,8 +112,16 @@ object CostParser {
         return sb.toString().replace(Regex("""\s+"""), " ").trim()
     }
 
-    fun detectCategory(text: String): CostCategory {
-        // 「机油」同时含有「油」，所以按表顺序找，命中即返回 —— 表里保养排在加油前面
+    /**
+     * 只认日期，不要求有金额。
+     *
+     * 「今天去了杭州」这种句子没有金额，但日期照样要认出来 —— 打卡也算一笔记录。
+     * 没有日期词就返回 null（由调用方决定默认今天）。
+     */
+    fun detectDate(raw: String, today: LocalDate = JournalDates.today()): Long? =
+        parseDate(normalize(raw), today)?.let { JournalDates.startOfDay(it.date) }
+
+    fun detectCategory(text: String): CostCategory {        // 「机油」同时含有「油」，所以按表顺序找，命中即返回 —— 表里保养排在加油前面
         for ((category, words) in KEYWORDS) {
             if (words.any { text.contains(it, ignoreCase = true) }) return category
         }

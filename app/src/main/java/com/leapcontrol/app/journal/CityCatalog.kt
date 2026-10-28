@@ -355,6 +355,21 @@ object CityCatalog {
 
     val PROVINCES: List<String> = BY_PROVINCE.map { it.first }
 
+    /** 按名字长度降序：一句话里找城市时长的优先，「乌兰察布」不会被「乌兰」之类的短名截走。 */
+    private val BY_NAME_LENGTH: List<City> = ALL.sortedByDescending { it.name.length }
+
+    /**
+     * 从一句话里认出城市名（「今天去了杭州」→ 杭州）。
+     *
+     * 只做包含匹配、取最长命中：一百句话的解析量下这已经够快，
+     * 也避免引入分词。两个字的短名（如「大理」）被误伤的概率很低。
+     */
+    fun findInText(text: String): City? {
+        if (text.isBlank()) return null
+        return BY_NAME_LENGTH.firstOrNull { it.name.length >= 2 && text.contains(it.name) }
+    }
+
+
     private val byId: Map<String, City> = ALL.associateBy { it.id }
 
     fun byId(id: String?): City? = id?.let { byId[it] }
