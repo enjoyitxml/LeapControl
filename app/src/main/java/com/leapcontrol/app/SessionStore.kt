@@ -6,7 +6,6 @@ import com.leapcontrol.app.bluetooth.BleCertificateSync
 import com.leapcontrol.app.bluetooth.BleKeyCertificate
 import org.json.JSONArray
 import org.json.JSONObject
-import java.time.LocalDate
 
 /** 车型配置下拉选项，使用短车型名便于用户识别和维护。 */
 val SUPPORTED_VEHICLE_MODELS = listOf(
@@ -1036,25 +1035,6 @@ class SessionStore(context: Context) {
         appPrefs.edit().putString(HANDLED_UPDATE_VERSION, normalized).apply()
     }
 
-    fun shouldShowAuthorSupportPrompt(): Boolean = AuthorSupportReminder.shouldShow(
-        lastShownEpochDay = appPrefs.getLong(AUTHOR_SUPPORT_LAST_SHOWN_EPOCH_DAY, Long.MIN_VALUE),
-        todayEpochDay = LocalDate.now().toEpochDay(),
-        permanentlyDisabled = isAuthorSupportPromptDisabled()
-    )
-
-    fun isAuthorSupportPromptDisabled(): Boolean =
-        appPrefs.getBoolean(AUTHOR_SUPPORT_PROMPT_DISABLED, false)
-
-    fun disableAuthorSupportPrompt() {
-        appPrefs.edit().putBoolean(AUTHOR_SUPPORT_PROMPT_DISABLED, true).apply()
-    }
-
-    fun recordAuthorSupportPromptShown() {
-        appPrefs.edit()
-            .putLong(AUTHOR_SUPPORT_LAST_SHOWN_EPOCH_DAY, LocalDate.now().toEpochDay())
-            .apply()
-    }
-
     /** Last observed charge state, isolated by vehicle so a switch cannot create a false transition. */
     fun loadLastChargeState(vin: String): Int? =
         vin.takeIf { it.isNotBlank() }?.let { prefs.getString(lastChargeStateKey(it), null)?.toIntOrNull() }
@@ -1114,8 +1094,6 @@ class SessionStore(context: Context) {
         const val WIDGET_BG_STYLE_DEFAULT = WIDGET_BG_STYLE_LANDSCAPE
         const val WIDGET_BACKGROUND_STYLE = "widget_background_style"
         const val SESSION_GENERATION = "session_generation"
-        const val AUTHOR_SUPPORT_LAST_SHOWN_EPOCH_DAY = "author_support_last_shown_epoch_day"
-        const val AUTHOR_SUPPORT_PROMPT_DISABLED = "author_support_prompt_disabled"
         const val QUICK_COMMAND_ORDER_PREFIX = "quick_command_order_"
         const val HANDLED_UPDATE_VERSION = "handled_update_version"
         const val APPEARANCE_MODE = "appearance_mode"
