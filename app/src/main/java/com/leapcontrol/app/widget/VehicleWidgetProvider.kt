@@ -51,6 +51,11 @@ class VehicleWidgetProvider : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         val action = intent.action ?: return
+        // 换背景不碰车，既不查登录态也不要控车密码，当场换完重画就行
+        if (action == VehicleWidget.ACTION_NEXT_BG) {
+            runCatching { nextBackdrop(context) }
+            return
+        }
         if (action != VehicleWidget.ACTION_UNLOCK &&
             action != VehicleWidget.ACTION_LOCK &&
             action != VehicleWidget.ACTION_TOGGLE_AC &&
@@ -63,6 +68,22 @@ class VehicleWidgetProvider : AppWidgetProvider() {
     }
 
     // ---------------- 内部实现 ----------------
+
+    /**
+     * 点车模换背景。
+     *
+     * 只在「当前模式」的那一套里循环（日间 6 张 / 夜间 4 张），走完一轮回到「不用背景」，
+     * 这样桌面上点几下就能既换风景、也能一键关掉，不必进设置页。
+     */
+    private fun nextBackdrop(context: Context) {
+        val appContext = context.applicationContext
+        val night = WidgetBackdrops.isNight(appContext)
+        val next = WidgetBackdrops.next(WidgetBackdrops.selectedId(appContext, night), night)
+        WidgetBackdrops.select(appContext, night, next)
+        VehicleWidget.render(appContext)
+        val label = WidgetBackdrops.label(appContext, night, next)
+        toast(appContext, if (label == null) "已关闭小组件背景" else "背景：$label")
+    }
 
     private fun handleAction(context: Context, action: String) {
         val appContext = context.applicationContext

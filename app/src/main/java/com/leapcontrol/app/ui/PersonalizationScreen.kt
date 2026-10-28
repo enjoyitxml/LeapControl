@@ -185,6 +185,16 @@ fun PersonalizationScreen(
 
         Spacer(Modifier.height(18.dp))
 
+        // ---- 桌面小组件背景 ----
+        // 日间 / 夜间两套分开选，跟着系统深浅自动换；点桌面上的车模也能直接换下一张。
+        SettingsSection(title = "桌面小组件背景", desc = "随系统深浅自动切换") {
+            SettingsCard {
+                WidgetBackdropPicker(runtime = runtime)
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
         // ---- 车模外观 ----
         // 官方车模图是按车辆档案渲染的定妆照，接口没有「选颜色」的入参，
         // 所以颜色跟实车不一致时只能在这一页自己换（内置换色 / 导入自己改好的图）。
