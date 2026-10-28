@@ -6,11 +6,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.RectF
 import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
@@ -29,9 +24,12 @@ import java.util.Locale
  * 硬性要求：应用上架小米应用商店并通过审核、邮件向 miui-widget@xiaomi.com 申请白名单、
  * 小部件在开放平台逐个提交审核。零控是自用侧载包，走不通这条路。
  * 所以用标准的 [RemoteViews]，但把版式做成澎湃原生那一套：
- * 车标 + 自定义车名 + 更新时间（同一行，时间紧跟车名）、纯电 / 燃油两个续航数字各带进度条、
- * 右侧车模、底部五个纯图标按键（图标直接用首页「快捷控车」栏那套 `ic_qc_*`，
- * 开启态是同图形的绿色版本；空调例外，用磁贴那把四叶风扇 `ic_wg_fan`）。
+ * 上半部分左边是「车标 + 自定义车名 / 纯电、燃油两个续航数字各带进度条 / 车况更新时间（靠左）」，
+ * 右边整块留给车模（可以一直贴到卡片右边缘），底部是五个灰色纯图标按键。
+ *
+ * ## 图标颜色
+ * 按键图标只有一套矢量图，颜色靠 `ImageView.setColorFilter` 现刷：常态灰、开关打开时绿。
+ * 这样既不用为夜间另存浅色图，也不用为开启态存绿色副本。
  *
  * ## 尺寸自适应
  * 小组件在桌面上被拉伸 / 压缩后，系统只给 `min/max width/height` 这一组 dp 值，
@@ -86,11 +84,29 @@ object VehicleWidget {
     private const val COLOR_WARN_DARK = 0xFFFFB454.toInt()
     private const val COLOR_ACTIVE_DARK = 0xFF3DD68C.toInt()
 
-    /** 与 widget_card 的 24dp 圆角保持一致（背景照片的圆角要按这个画）。 */
-    private const val CARD_RADIUS_DP = 24f
+    // 底部按键图标：常态是灰色（不再是纯黑），只有「开着」的开关才染成主题绿。
+    // 颜色靠 ImageView.setColorFilter 现刷（SRC_ATOP，只换色不改透明度），
+    // 所以同一张矢量图既能当灰图标也能当绿图标，不用为每种颜色单独存资源。
+    private const val COLOR_ICON = 0xFF7C838D.toInt()
+    private const val COLOR_ICON_DARK = 0xFF9BA5B2.toInt()
 
-    /** 背景照片的渲染宽度（px）。够清晰，又不至于让 RemoteViews 超 Binder 上限。 */
-    private const val BACKDROP_WIDTH_PX = 400
+    /**
+     * 单个按键图标的「内边距补偿」（dp，左/上/右/下）。
+     *
+     * 五个图形形状差别太大，只把盒子做成一样大是**看着不齐**的：
+     * - 锁和后备箱都是瘦高的方块 + 顶部一条细线，重心在上方，撑满盒子才够大；
+     * - 空调是四叶风扇，闭合圆形，同样的高度下面积最大，看着比别的都胖一圈 → 四面各收 2dp；
+     * - 鸣笛是「车 + 声波」，实体全压在底部，盒子一样高的时候视觉重心明显下沉，
+     *   像被人按着头 → 上下不对称（上 0、下 6），横向放 2dp 再整体往上提 3dp。
+     *
+     * 用 padding 而不是改矢量图的 viewBox：一笔就同时改了大小和位置，
+     * 也不用为每个图标存一份补偿过的副本。
+     */
+    private data class IconInset(val l: Int, val t: Int, val r: Int, val b: Int)
+
+    private val INSET_IDLE = IconInset(3, 3, 3, 3)
+    private val INSET_AC = IconInset(5, 5, 5, 5)
+    private val INSET_HORN = IconInset(1, 0, 1, 6)
 
     /** 版式基准：320×150dp（4 列 2 行在 400dp 级屏幕上的常见实际尺寸）。 */
     private const val BASE_WIDTH_DP = 320f
@@ -99,13 +115,6 @@ object VehicleWidget {
     /** 车模图的内存缓存：解码 PNG 比一次网络请求便宜，但没必要每次渲染都做。 */
     private var carCache: Bitmap? = null
     private var carCacheVin: String? = null
-
-    /**
-     * 背景照片的缓存。键里带卡片尺寸 —— 圆角半径和出图尺寸都按卡片 dp 算，
-     * 换尺寸（拖小组件）必须重画，否则圆角会变成椭圆。
-     */
-    private var bgCache: Bitmap? = null
-    private var bgCacheKey: String? = null
 
     // ---------------- 对外入口 ----------------
 
@@ -140,7 +149,7 @@ object VehicleWidget {
                 widthDp = widthDp,
                 heightDp = heightDp,
                 night = night,
-                backdrop = bgRes?.let { backdropBitmap(context, it, widthDp, heightDp) },
+                bgRes = bgRes,
             )
             runCatching { manager.updateAppWidget(id, views) }
         }
@@ -176,10 +185,11 @@ object VehicleWidget {
         widthDp: Int = 320,
         heightDp: Int = 150,
         night: Boolean = false,
-        backdrop: Bitmap? = null,
+        bgRes: Int? = null,
     ): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_vehicle)
         val scale = textScale(widthDp, heightDp)
+        val density = context.resources.displayMetrics.density
 
         val cTitle = if (night) COLOR_TEXT_DARK else COLOR_TEXT
         val cSub = if (night) COLOR_SUB_DARK else COLOR_SUB
@@ -207,9 +217,10 @@ object VehicleWidget {
             .forEach { views.setInt(it, "setBackgroundColor", dividerColor) }
 
         // ---- 风景背景（没选就 GONE，露出玻璃卡） ----
-        if (backdrop != null) {
+        // 走资源 id：桌面进程自己按原图分辨率解码，比塞位图（受 1MB Binder 上限只能给 400px）清楚得多
+        if (bgRes != null) {
             views.setViewVisibility(R.id.wg_bg, View.VISIBLE)
-            views.setImageViewBitmap(R.id.wg_bg, backdrop)
+            views.setImageViewResource(R.id.wg_bg, bgRes)
         } else {
             views.setViewVisibility(R.id.wg_bg, View.GONE)
         }
@@ -295,37 +306,32 @@ object VehicleWidget {
         }
 
         // ---- 五个按键：解锁 / 上锁 / 鸣笛 是单次指令，空调 / 后备箱 点一下切一次 ----
-        // 图形与首页「快捷控车」栏同一套（ic_qc_*），夜间用同图形的浅色版；
-        // 空调是磁贴那朵雪花，开启态绿色两套通用。
+        // 图形与首页「快捷控车」栏同一套（ic_qc_*）。颜色统一由 colorFilter 现刷：
+        // 常态灰、开着绿 —— 所以不再需要按夜间另存一套浅色图，也不再需要 _on 的绿色副本。
+        val cIcon = if (night) COLOR_ICON_DARK else COLOR_ICON
         bindCell(views, R.id.wg_cell_unlock, R.id.wg_icon_unlock,
-            if (night) R.drawable.ic_wg_unlock_light else R.drawable.ic_qc_unlock,
-            broadcast(context, ACTION_UNLOCK, RC_UNLOCK))
+            R.drawable.ic_qc_unlock,
+            broadcast(context, ACTION_UNLOCK, RC_UNLOCK), cIcon, INSET_IDLE, density)
         bindCell(views, R.id.wg_cell_lock, R.id.wg_icon_lock,
-            if (night) R.drawable.ic_wg_lock_light else R.drawable.ic_qc_lock,
-            broadcast(context, ACTION_LOCK, RC_LOCK))
+            R.drawable.ic_qc_lock,
+            broadcast(context, ACTION_LOCK, RC_LOCK), cIcon, INSET_IDLE, density)
 
         val acOn = status?.acOn == true
         bindCell(views, R.id.wg_cell_ac, R.id.wg_icon_ac,
-            when {
-                acOn -> R.drawable.ic_wg_fan_on
-                night -> R.drawable.ic_wg_fan_light
-                else -> R.drawable.ic_wg_fan
-            },
-            broadcast(context, ACTION_TOGGLE_AC, RC_AC))
+            R.drawable.ic_wg_fan,
+            broadcast(context, ACTION_TOGGLE_AC, RC_AC),
+            if (acOn) cActive else cIcon, INSET_AC, density)
 
         val trunkOpen = status?.trunkOpen == true
         bindCell(views, R.id.wg_cell_trunk, R.id.wg_icon_trunk,
-            when {
-                trunkOpen -> R.drawable.ic_wg_trunk_on
-                night -> R.drawable.ic_wg_trunk_light
-                else -> R.drawable.ic_qc_trunk
-            },
-            broadcast(context, ACTION_TOGGLE_TRUNK, RC_TRUNK))
+            R.drawable.ic_qc_trunk,
+            broadcast(context, ACTION_TOGGLE_TRUNK, RC_TRUNK),
+            if (trunkOpen) cActive else cIcon, INSET_IDLE, density)
 
-        // 鸣笛寻车是单次指令，没有开 / 关两态，图标固定
+        // 鸣笛寻车是单次指令，没有开 / 关两态，永远是灰的
         bindCell(views, R.id.wg_cell_horn, R.id.wg_icon_horn,
-            if (night) R.drawable.ic_wg_horn_light else R.drawable.ic_qc_horn,
-            broadcast(context, ACTION_HORN, RC_HORN))
+            R.drawable.ic_qc_horn,
+            broadcast(context, ACTION_HORN, RC_HORN), cIcon, INSET_HORN, density)
 
         // 点数字区打开 App；点车模换背景（用户要的「一键换风景」，不用进设置页）
         openAppIntent(context)?.let { views.setOnClickPendingIntent(R.id.wg_top, it) }
@@ -344,8 +350,22 @@ object VehicleWidget {
         icon: Int,
         iconRes: Int,
         pendingIntent: PendingIntent,
+        tint: Int,
+        inset: IconInset,
+        density: Float,
     ) {
         views.setImageViewResource(icon, iconRes)
+        // setColorFilter(int) 反射调用：SRC_ATOP 只替换颜色、保留抗锯齿后的透明度，
+        // 线稿图标才不会变糊；换成 setImageViewTintList 要 API 31+，这里得兼容到 26。
+        views.setInt(icon, "setColorFilter", tint)
+        // 逐图标视觉补偿：setViewPadding 收的是 px，不是 dp
+        views.setViewPadding(
+            icon,
+            (inset.l * density).toInt(),
+            (inset.t * density).toInt(),
+            (inset.r * density).toInt(),
+            (inset.b * density).toInt(),
+        )
         views.setOnClickPendingIntent(container, pendingIntent)
     }
 
@@ -365,11 +385,11 @@ object VehicleWidget {
     private fun applyTextScale(views: RemoteViews, scale: Float) {
         fun sp(base: Float) = TypedValue.COMPLEX_UNIT_SP to base * scale
         listOf(
-            R.id.wg_title to 15f,
+            R.id.wg_title to 13f,
             R.id.wg_time to 10f,
-            R.id.wg_ev_range to 24f,
+            R.id.wg_ev_range to 22f,
             R.id.wg_ev_unit to 10f,
-            R.id.wg_fuel_range to 24f,
+            R.id.wg_fuel_range to 22f,
             R.id.wg_fuel_unit to 10f,
         ).forEach { (id, base) ->
             val (unit, size) = sp(base)
@@ -415,51 +435,6 @@ object VehicleWidget {
             launch,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-    }
-
-    /**
-     * 背景照片 → 带圆角的 bitmap。
-     *
-     * RemoteViews 没有 clipToOutline，圆角只能在 bitmap 里画好；
-     * 图的宽高按**卡片的 dp 比例**出，ImageView 才能用 fitXY 平整铺满。
-     * 出图宽度压到 [BACKDROP_WIDTH_PX]：再大就可能在 Binder 事务上和车模图一起超限。
-     */
-    internal fun backdropBitmap(
-        context: Context,
-        resId: Int,
-        widthDp: Int,
-        heightDp: Int,
-    ): Bitmap? {
-        val key = "$resId-${widthDp}x$heightDp"
-        bgCache?.let { if (!it.isRecycled && bgCacheKey == key) return it }
-        val outW = BACKDROP_WIDTH_PX
-        val outH = (outW * heightDp.toFloat() / widthDp.coerceAtLeast(1)).toInt().coerceAtLeast(1)
-        // 先只读尺寸，按需降采样解码（原图 832px 宽，通常一步就够）
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeResource(context.resources, resId, bounds)
-        var sample = 1
-        while (bounds.outWidth > 0 && bounds.outWidth / (sample * 2) >= outW) sample *= 2
-        val src = BitmapFactory.decodeResource(
-            context.resources,
-            resId,
-            BitmapFactory.Options().apply { inSampleSize = sample },
-        ) ?: return null
-        val radius = outW * CARD_RADIUS_DP / widthDp.coerceAtLeast(1)
-        val rounded = roundBitmap(src, outW, outH, radius)
-        if (rounded !== src) src.recycle()
-        bgCache = rounded
-        bgCacheKey = key
-        return rounded
-    }
-
-    /** 把 [src] 拉伸到 w×h 并裁成圆角。 */
-    private fun roundBitmap(src: Bitmap, w: Int, h: Int, radius: Float): Bitmap {
-        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(out)
-        val rect = RectF(0f, 0f, w.toFloat(), h.toFloat())
-        canvas.clipPath(Path().apply { addRoundRect(rect, radius, radius, Path.Direction.CW) })
-        canvas.drawBitmap(src, null, rect, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
-        return out
     }
 
     /** 等比缩到最长边 [maxWidth] 像素（Binder 事务 1MB 上限，留足余量）。 */
