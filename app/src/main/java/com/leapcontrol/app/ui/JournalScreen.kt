@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,11 @@ fun JournalScreen(runtime: AppRuntime) {
     val C = LocalAppColors.current
     val journal = runtime.journal
     val data by journal.data
+    // 里程勋章看的是**车辆总里程**，不是本地那几天的累计：
+    // 本地 daily 表刚开始只有近 7 天，用它会让人均「千公里」勋章卡住不动。
+    val energy by runtime.mileageEnergyFlow.collectAsState()
+    val vehicleKm = energy?.totalMileageKm
+        ?: OwnershipStats.kmFromText(runtime.statusFlow.value?.totalMileage)
 
     var page by remember { mutableStateOf<JournalPage?>(null) }
     var loaded by remember { mutableStateOf(false) }
@@ -114,7 +120,7 @@ fun JournalScreen(runtime: AppRuntime) {
     val unlocked = Medals.unlockedIds(
         days = progress?.daysOwned ?: (data.ownershipDays ?: 0),
         fraction = progress?.fraction ?: 0f,
-        km = data.dailyKm.values.fold(0.0) { a, b -> a + b }.takeIf { it > 0.0 },
+        km = vehicleKm,
     )
 
     Column(

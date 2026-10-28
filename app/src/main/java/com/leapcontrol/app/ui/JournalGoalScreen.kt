@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +68,10 @@ fun JournalGoalScreen(runtime: AppRuntime, onBack: () -> Unit) {
     val journal = runtime.journal
     val data by journal.data
     val goal = data.goal
+
+    val energy by runtime.mileageEnergyFlow.collectAsState()
+    val vehicleKm = energy?.totalMileageKm
+        ?: com.leapcontrol.app.OwnershipStats.kmFromText(runtime.statusFlow.value?.totalMileage)
 
     var editing by remember { mutableStateOf(goal == null) }
 
@@ -140,8 +145,7 @@ fun JournalGoalScreen(runtime: AppRuntime, onBack: () -> Unit) {
             GoalProgressView(
                 goal = goal,
                 progress = GoalProgress.of(goal),
-                totalKm = data.dailyKm.values.fold(0.0) { a, b -> a + b }
-                    .takeIf { it > 0.0 } ?: runtime.mileageEnergyFlow.value?.totalMileageKm,
+                totalKm = vehicleKm,
             )
         }
 
