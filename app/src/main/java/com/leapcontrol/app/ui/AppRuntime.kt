@@ -744,7 +744,21 @@ class AppRuntime(context: Context) {
         // 结果通过 statusFlow 下发：首页直接读到新值，不需要 UI 自己再 setState
         _status.value = status
         _lastUpdated.value = System.currentTimeMillis()
+        pushToWidget()
         status
+    }
+
+    /**
+     * 车况一有新值就顺手推给桌面小组件：用户在 App 里下拉刷新过，
+     * 退到桌面看到的就不该还是旧数字。4 秒节流，避免连续刷新时反复跨进程画卡片。
+     */
+    private var lastWidgetPushAt = 0L
+
+    private fun pushToWidget() {
+        val now = System.currentTimeMillis()
+        if (now - lastWidgetPushAt < 4_000L) return
+        lastWidgetPushAt = now
+        runCatching { com.leapcontrol.app.widget.VehicleWidget.render(appContext, this) }
     }
 
     // ---------------- 行驶里程 / 能耗 ----------------
@@ -1690,6 +1704,37 @@ class AppRuntime(context: Context) {
     }
 
     /**
+     * 桌面小组件专用的控车：**只等一小会儿**就返回。
+     *
+     * 小组件点击走的是 BroadcastReceiver（[android.appwidget.AppWidgetProvider] 的 onReceive），
+     * 执行窗口只有 10 秒左右，不能沿用 [control] 那套最长 20 秒的轮询 —— 一旦超时
+     * 系统会直接判 ANR，用户看到的就是「点了没反应还卡一下」。
+     *
+     * 这里发完指令最多再等 [budgetMs]，然后把「已下发」交回给小组件；
+     * 到底成没成，由调用方紧接着回读车况（锁车 / 空调 / 后备箱信号）来体现。
+     */
+    suspend fun controlForWidget(commandName: String, budgetMs: Long = 3_500L): String =
+        withContext(Dispatchers.IO) {
+            val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
+            val api = LeapmotorApi(session)
+            val command = Commands.build(commandName)
+            val result = withNetworkRetry { api.sendControl(command, pin) }
+            val deadline = System.currentTimeMillis() + budgetMs
+            var attempt = 0
+            var lastCode: String? = null
+            while (System.currentTimeMillis() < deadline) {
+                Thread.sleep(resultPollDelayMs(attempt))
+                attempt++
+                val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull() ?: continue
+                val code = firstResultCode(resp)
+                if (code != null) lastCode = code
+                if (code == "0" || code == "200") return@withContext "${command.label}已执行"
+            }
+            val suffix = lastCode?.let { "（结果码 $it）" }.orEmpty()
+            "${command.label}已下发$suffix"
+        }
+
+    /**
      * 一键关闭多项后台耗电功能（空调 / 座椅加热通风 / 方向盘加热 / 后视镜加热 / 冰箱）。
      *
      * 与 [control] 的关键区别：**不逐条等车端执行结果**。control 每条都要轮询 1~24 秒，
@@ -1813,6 +1858,26 @@ class AppRuntime(context: Context) {
 
         results.joinToString("；")
     }
+
+    /**
+     * 健康充电开关（`healthyCharging/control`）：只发这一条，不要求控车密码、不走车控队列。
+     *
+     * 单独拆出来是因为它跟「预约充电 / 电池预热」不是一类东西：这两项要拼计划、
+     * 一次性下发才有意义，而健康充电就是一个即时开关，用户拨了就该立刻生效，
+     * 混在「保存并下发」里会让人以为开关坏了（拨完不点保存 = 什么都没发生）。
+     *
+     * @param targetSoc 健康充电的目标上限；车端只接受 50..100，且语义上最高 90。
+     */
+    suspend fun setHealthyCharging(enabled: Boolean, targetSoc: Int): String =
+        withContext(Dispatchers.IO) {
+            val soc = ChargeSchedule.sanitizeSoc(
+                if (enabled) targetSoc.coerceAtMost(ChargeSchedule.BEST_LIMIT_SOC) else targetSoc,
+            )
+            val resp = LeapmotorApi(session).setHealthyCharging(enabled = enabled, targetSoc = soc)
+            val code = resp.optInt("code", resp.optInt("result", -1))
+            val label = if (enabled) "已开启健康充电（上限 $soc%）" else "已关闭健康充电"
+            if (code == 0 || code == 200) label else "$label（结果码 $code）"
+        }
 
     /** 云端接口的 code / result 落在 0 或 200 才算车端受理。 */
     private fun successLabel(name: String, resp: JSONObject): String {

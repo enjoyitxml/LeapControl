@@ -117,6 +117,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.collectAsState
 import com.leapcontrol.app.ChargePlanCyclesHelper
 import com.leapcontrol.app.ChargeSchedule
+import com.leapcontrol.app.EnergyFormat
 import com.leapcontrol.app.HomeCardId
 import com.leapcontrol.app.QuickSwitchPrefs
 import com.leapcontrol.app.QuickTarget
@@ -242,6 +243,12 @@ fun HomeScreen(
         var chargeLoading by remember { mutableStateOf(false) }
         var chargeLoadFailed by remember { mutableStateOf(false) }
         var chargeSaving by remember { mutableStateOf(false) }
+        // 健康充电是单独一条云端接口，拨开关立即下发，所以它有独立的 busy 状态
+        var healthyBusy by remember { mutableStateOf(false) }
+        // 上次从车端读回来的草稿快照：与 chargeDraft 不一致就说明「有未保存的改动」
+        var chargeSynced by remember { mutableStateOf<com.leapcontrol.app.ChargeCenterDraft?>(null) }
+        // 健康充电开着时把上限拖过 90%：先弹窗问「要不要关掉健康充电」
+        var pendingChargeLimit by remember { mutableStateOf<Int?>(null) }
         var showChargeSchedule by remember { mutableStateOf(false) }
         var showPreheatSchedule by remember { mutableStateOf(false) }
         // 充电枪操作指令在 PIN 验证完成后重放
@@ -468,14 +475,21 @@ fun HomeScreen(
                 actionMessage = null
                 try {
                     actionMessage = runtime.control(commandName)
-                    refresh(force = true)
                 } catch (e: NeedPinException) {
                     pendingAcPanelCommand = commandName
                     showPinDialog = true
+                    controlling = null
+                    return@launch
                 } catch (e: Exception) {
                     actionMessage = friendlyError(e)
                 }
+                // 先放开按钮（不阻塞用户继续操作），回拉放在后面：
+                // 车端上报 acSetting / 座椅档位通常滞后 2~3 秒，只拉一次会读到旧值，
+                // 界面看着像「指令没生效」。
+                refresh(force = true)
                 controlling = null
+                delay(AC_SETTLE_DELAY_MS)
+                refresh(force = true)
             }
         }
 
@@ -536,7 +550,7 @@ fun HomeScreen(
                 val preheat = runCatching { runtime.loadBatteryPreheatSchedule() }.getOrNull()
                 if (plan == null && preheat == null) chargeLoadFailed = true
                 val current = chargeDraft
-                chargeDraft = current.copy(
+                val merged = current.copy(
                     healthy = live?.healthyChargeEnabled ?: current.healthy,
                     limitSoc = plan?.percent ?: current.limitSoc,
                     scheduledEnabled = plan?.isEnable ?: current.scheduledEnabled,
@@ -552,7 +566,77 @@ fun HomeScreen(
                         ?.let { ChargePlanCyclesHelper.parseToDaySet(it) }
                         ?: current.preheatDays,
                 )
+                chargeDraft = merged
+                // 同步快照：与草稿一致时保存按钮不再提示「有未保存改动」
+                chargeSynced = merged
                 chargeLoading = false
+            }
+        }
+
+        /**
+         * 拖动充电上限。
+         *
+         * 健康充电（电池养护）的语义就是「别充太满」，上限最高只能到 90%；
+         * 用户把滑杆拖过 90% 时不能默默忽略（会以为滑杆坏了），也不能默默替他关掉健康充电，
+         * 所以先弹确认框，确认后才关掉健康充电并把上限设成拖到的值。
+         */
+        fun setChargeLimit(soc: Int) {
+            if (chargeDraft.healthy && ChargeSchedule.exceedsHealthyLimit(soc)) {
+                pendingChargeLimit = soc
+                return
+            }
+            chargeDraft = chargeDraft.copy(limitSoc = soc)
+        }
+
+        /**
+         * 健康充电开关：单独一条云端接口，拨动后**立即下发**（不等「保存并下发设置」）。
+         *
+         * 以前它跟着保存走，用户拨完开关不点保存 → 什么都没发生；
+         * 点了保存又会因为车端信号 48 回读滞后被弹回「开」→ 两次都像开关失效。
+         */
+        fun toggleHealthyCharge(enabled: Boolean) {
+            if (healthyBusy) return
+            scope.launch {
+                healthyBusy = true
+                actionMessage = null
+                // 健康充电必须有上限：开着的时候上限不能超过 90%
+                val originalLimit = chargeDraft.limitSoc
+                val target = if (enabled) {
+                    ChargeSchedule.healthyLimit(originalLimit)
+                } else {
+                    originalLimit
+                }
+                actionMessage = runCatching {
+                    runtime.setHealthyCharging(enabled = enabled, targetSoc = target)
+                }.fold(
+                    onSuccess = { msg ->
+                        // 乐观生效：先按用户意图改草稿，车端回读在后面校正，
+                        // 否则信号 48 还没刷新时开关会被回弹，看起来就是「拨不动」
+                        chargeDraft = chargeDraft.copy(healthy = enabled, limitSoc = target)
+                        // 这一项已经真发下去了，同步快照也要跟着走，
+                        // 不然保存按钮会一直提示「有未保存改动」
+                        chargeSynced = chargeSynced?.copy(healthy = enabled, limitSoc = target)
+                        if (enabled && target != originalLimit) {
+                            "$msg，充电上限已调整为 $target%"
+                        } else {
+                            msg
+                        }
+                    },
+                    onFailure = { friendlyError(it) },
+                )
+                healthyBusy = false
+                // 车端下发有延迟：等 3 秒再拉一次，让电量读数与开关都收敛到真值
+                delay(3_000)
+                runCatching { runtime.refreshStatus() }
+                // 回读仍与用户意图相反 → 明说，别让开关看着「开着」却不知道有没有生效
+                val actual = runtime.statusFlow.value?.healthyChargeEnabled
+                if (actual != null && actual != enabled) {
+                    actionMessage = if (enabled) {
+                        "车端仍显示健康充电未开启，可能尚未生效，请稍后刷新重试"
+                    } else {
+                        "车端仍显示健康充电处于开启状态，可能尚未生效，请稍后刷新重试"
+                    }
+                }
             }
         }
 
@@ -563,7 +647,7 @@ fun HomeScreen(
                 chargeSaving = true
                 actionMessage = null
                 val draft = chargeDraft
-                actionMessage = runCatching {
+                val ok = runCatching {
                     runtime.applyChargingSettings(
                         healthyCharge = draft.healthy,
                         chargeLimit = draft.limitSoc,
@@ -576,12 +660,19 @@ fun HomeScreen(
                         preheatStart = draft.preheatStart,
                         preheatDays = draft.preheatDays,
                     )
-                }.fold(
+                }
+                actionMessage = ok.fold(
                     onSuccess = { "充电设置：$it" },
                     onFailure = { friendlyError(it) },
                 )
                 chargeSaving = false
-                // 下发后回读：车端可能纠正（比如设的值被取整），让界面显示车端真值
+                if (ok.isSuccess) {
+                    // 下发成功先认定草稿已生效，按钮的「有未保存改动」立刻消失
+                    chargeSynced = draft
+                }
+                // 回读放在 3 秒后：车端与云端都还没落库时立刻拉会读到旧值，
+                // 界面就会「刚保存好的开关自己弹回去」，用户以为没生效
+                delay(3_000)
                 loadChargeCenter()
             }
         }
@@ -749,6 +840,11 @@ fun HomeScreen(
         }
 
         // 二级页：座椅舒适 / 车载冰箱 / 完整空调 / 充电中心（覆盖首页内容）
+        //
+        // 整条分支链外面套一层 Box：指令结果条与二次确认弹窗挂在链**外面**，
+        // 这样在空调 / 充电中心这类二级页里下发指令时也能看到「成功 / 失败」和确认框
+        // （以前这两个组件只在首页分支里渲染，二级页点了像没反应）。
+        Box(modifier = Modifier.fillMaxSize()) {
         if (showSeatComfort) {
             SeatComfortScreen(
                 onBack = { showSeatComfort = false },
@@ -801,6 +897,10 @@ fun HomeScreen(
                 caps = capabilities,
                 busy = controlling != null,
                 targetTemp = acTargetTemp,
+                // 正在下发的指令名：车控指令最长要等 24 秒才回执，这段时间页面必须有东西在动，
+                // 否则用户以为点了没反应（以前二级页连结果条都看不到）
+                busyLabel = controlling?.let { acCommandLabel(it) },
+                onRefresh = { refresh(force = true) },
                 onBack = { showAcScreen = false },
                 onTempStep = { stepAcTemp(it) },
                 onPower = { on ->
@@ -808,7 +908,10 @@ fun HomeScreen(
                         if (on) "开启空调（${acTargetTemp}℃）" else "关闭空调",
                     ) { runAcCommand(on, acTargetTemp) }
                 },
-                onCommand = { name -> runAcPanelCommand(name) },
+                // 空调页里的每一条指令（场景 / 风量 / 出风 / 舒适件）都先过二次确认
+                onCommand = { name ->
+                    ensureConfirmed(acCommandLabel(name)) { runAcPanelCommand(name) }
+                },
                 onOpenScheduledAc = {
                     scheduledAcReturnTo = "ac"
                     showAcScreen = false
@@ -848,15 +951,28 @@ fun HomeScreen(
                 status = status,
                 draft = chargeDraft,
                 onDraftChange = { chargeDraft = it },
+                onLimitChange = { setChargeLimit(it) },
+                // 健康充电：拨动立即下发，且要二次确认（它是一条真实的云端指令）
+                onHealthyToggle = { on ->
+                    ensureConfirmed(if (on) "开启健康充电" else "关闭健康充电") {
+                        toggleHealthyCharge(on)
+                    }
+                },
+                dirty = chargeSynced != null && chargeSynced != chargeDraft,
                 loading = chargeLoading,
                 loadFailed = chargeLoadFailed,
                 saving = chargeSaving,
+                healthyBusy = healthyBusy,
                 gunBusy = controlling == "chargeGun",
-                onGunAction = { runChargeGun(it) },
+                // 充电枪动作同样是车控指令：先确认再下发
+                onGunAction = { action ->
+                    ensureConfirmed(chargeGunLabel(action)) { runChargeGun(action) }
+                },
+                // 一次下发三条指令（健康充电 / 预约充电 / 电池预热），确认框里先把内容说清
+                onSave = { ensureConfirmed(chargeSaveLabel(chargeDraft)) { saveCharging() } },
                 onRetryLoad = { loadChargeCenter() },
                 onOpenScheduled = { showChargeSchedule = true },
                 onOpenPreheat = { showPreheatSchedule = true },
-                onSave = { saveCharging() },
                 // 退出时把三级页开关一并复位，否则下次进来会直接落在三级页
                 onBack = {
                     showChargeSchedule = false
@@ -1393,22 +1509,44 @@ fun HomeScreen(
             }
             }
             }
-            ActionBanner(
-                message = refreshError ?: actionMessage,
-                isError = refreshError != null,
-                onDismiss = { actionMessage = null; refreshError = null },
+
+        // ---- 指令结果条 / 二次确认弹窗：挂在页面分支之外，二级页同样可见 ----
+        ActionBanner(
+            message = refreshError ?: actionMessage,
+            isError = refreshError != null,
+            onDismiss = { actionMessage = null; refreshError = null },
+        )
+        // 控车二次确认弹窗（应用内确认，无指纹 / 密码验证）
+        pendingConfirm?.let { (label, action) ->
+            ConfirmDialog(
+                title = "确认操作",
+                message = "确定要向车辆发送「$label」指令吗？",
+                onConfirm = { pendingConfirm = null; action() },
+                onDismiss = { pendingConfirm = null },
             )
-            // 控车二次确认弹窗（应用内确认，无指纹 / 密码验证）
-            pendingConfirm?.let { (label, action) ->
-                ConfirmDialog(
-                    title = "确认操作",
-                    message = "确定要向车辆发送「$label」指令吗？",
-                    onConfirm = { pendingConfirm = null; action() },
-                    onDismiss = { pendingConfirm = null },
-                )
-            }
-            }
         }
+        // 健康充电开着时把上限拖过 90%：先问一句，确认后才关掉健康充电
+        pendingChargeLimit?.let { soc ->
+            ConfirmDialog(
+                title = "关闭健康充电？",
+                message = "健康充电的上限最高 ${ChargeSchedule.BEST_LIMIT_SOC}%，" +
+                    "把充电上限设为 $soc% 需要先关闭健康充电。",
+                onConfirm = {
+                    pendingChargeLimit = null
+                    chargeDraft = chargeDraft.copy(healthy = false, limitSoc = soc)
+                    // 用户刚在弹窗里确认过「关闭健康充电」，这里不再叠加一次二次确认
+                    toggleHealthyCharge(false)
+                },
+                onDismiss = {
+                    // 拖过 90% 期间草稿根本没改（setChargeLimit 直接拦下来了），
+                    // 取消就是「什么都不发生」，不需要把值往回拨
+                    pendingChargeLimit = null
+                },
+            )
+        }
+        }   // 首页内容 Box(fillMaxSize)
+        }   // 二级页分支链（else）
+        }   // 分支链外层 Box（结果条 / 确认弹窗都在这层之上）
 
         // ---- 自定义车名弹窗 ----
         if (showRenameDialog) {
@@ -1609,7 +1747,8 @@ private fun VehicleDropdown(
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                         )
                         Text(
-                            text = "${vehicle.carType} · VIN ${vehicle.vin.takeLast(6)}",
+                            // carType 可能是内部项目代号（Lafa5 下发的是 B05），统一走别名表
+                            text = "${EnergyFormat.carModelName(vehicle.carType)} · VIN ${vehicle.vin.takeLast(6)}",
                             color = LocalAppColors.current.textSecondary,
                             fontSize = 11.sp,
                         )

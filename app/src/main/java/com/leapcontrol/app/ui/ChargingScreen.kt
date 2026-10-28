@@ -26,6 +26,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -77,9 +78,23 @@ fun ChargingScreen(
     status: CarStatus?,
     draft: ChargeCenterDraft,
     onDraftChange: (ChargeCenterDraft) -> Unit,
+    /**
+     * 拖动充电上限。
+     *
+     * 健康充电开着时上限不能超过 90%（[ChargeSchedule.BEST_LIMIT_SOC]），
+     * 拖过线要不要关掉健康充电必须问用户，所以这个回调交给上层弹确认框，
+     * 而不是在这里直接改草稿。
+     */
+    onLimitChange: (Int) -> Unit,
+    /** 健康充电开关：单独一条指令，切换后立即下发（不等「保存」）。 */
+    onHealthyToggle: (Boolean) -> Unit,
+    /** 草稿与车端真值不一致：保存按钮上要提示「有未保存的改动」。 */
+    dirty: Boolean,
     loading: Boolean,
     loadFailed: Boolean,
     saving: Boolean,
+    /** 健康充电指令正在下发。 */
+    healthyBusy: Boolean,
     gunBusy: Boolean,
     onGunAction: (String) -> Unit,
     onRetryLoad: () -> Unit,
@@ -198,13 +213,18 @@ fun ChargingScreen(
         }
 
         // ---- 健康充电 + 充电上限 ----
+        // 健康充电是独立的一条云端接口（healthyCharging/control），不需要控车密码，
+        // 拨动开关立即下发：它以前跟着「保存并下发」走，用户拨完不点保存就以为没生效，
+        // 点完保存又会因为车端回读滞后被弹回「开」——两次都像开关坏了。
         Spacer(Modifier.height(14.dp))
         ChargeCard {
             ChargeSwitchRow(
                 title = "健康充电",
-                subtitle = null,
+                subtitle = "开启后充电上限最高 ${ChargeSchedule.BEST_LIMIT_SOC}%，切换后立即下发",
                 checked = draft.healthy,
-                onCheckedChange = { onDraftChange(draft.copy(healthy = it)) },
+                enabled = !healthyBusy,
+                busy = healthyBusy,
+                onCheckedChange = onHealthyToggle,
             )
             Spacer(Modifier.height(16.dp))
             Text(
@@ -216,8 +236,16 @@ fun ChargingScreen(
             Spacer(Modifier.height(6.dp))
             LimitSocSlider(
                 soc = draft.limitSoc,
-                onChange = { onDraftChange(draft.copy(limitSoc = it)) },
+                onChange = onLimitChange,
             )
+            if (draft.healthy) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "健康充电已开启，上限最高 ${ChargeSchedule.BEST_LIMIT_SOC}%",
+                    color = C.textSecondary,
+                    fontSize = 11.5.sp,
+                )
+            }
         }
 
         // ---- 预约充电 ----
@@ -269,7 +297,7 @@ fun ChargingScreen(
 
         // ---- 保存并下发 ----
         Spacer(Modifier.height(20.dp))
-        ChargeSaveButton(saving = saving, loading = loading, onClick = onSave)
+        ChargeSaveButton(saving = saving, loading = loading, dirty = dirty, onClick = onSave)
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -363,6 +391,8 @@ private fun ChargeSwitchRow(
     title: String,
     subtitle: String?,
     checked: Boolean,
+    enabled: Boolean = true,
+    busy: Boolean = false,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -371,12 +401,22 @@ private fun ChargeSwitchRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                color = C.textPrimary,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Medium,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    color = C.textPrimary,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                if (busy) {
+                    Spacer(Modifier.width(8.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(13.dp),
+                        strokeWidth = 1.7.dp,
+                        color = C.accent,
+                    )
+                }
+            }
             if (subtitle != null) {
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -390,6 +430,7 @@ private fun ChargeSwitchRow(
         Spacer(Modifier.width(12.dp))
         Switch(
             checked = checked,
+            enabled = enabled,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
@@ -624,7 +665,7 @@ private fun ChargeSolidButton(
 
 /** 底部「保存并下发设置」。 */
 @Composable
-private fun ChargeSaveButton(saving: Boolean, loading: Boolean, onClick: () -> Unit) {
+private fun ChargeSaveButton(saving: Boolean, loading: Boolean, dirty: Boolean, onClick: () -> Unit) {
     val C = LocalAppColors.current
     val bg = if (C.isDark) Color(0xFFF2F2F4) else Color(0xFF1C1C1E)
     val fg = if (C.isDark) Color(0xFF16181C) else Color.White
@@ -642,11 +683,36 @@ private fun ChargeSaveButton(saving: Boolean, loading: Boolean, onClick: () -> U
             text = when {
                 saving -> "正在下发…"
                 loading -> "正在读取车端设置…"
+                // 有未保存改动时明说，否则用户改完就走、以为已经下发（健康充电那次就是这样）
+                dirty -> "保存并下发设置 · 有未保存改动"
                 else -> "保存并下发设置"
             },
             color = fg,
-            fontSize = 15.sp,
+            fontSize = if (dirty && !saving && !loading) 14.sp else 15.sp,
             fontWeight = FontWeight.Medium,
         )
     }
 }
+
+/**
+ * 解锁 / 开始 / 结束充电的确认文案（车控指令，需要二次确认）。
+ */
+internal fun chargeGunLabel(action: String): String = when (action) {
+    "unlock" -> "解锁充电枪"
+    "start" -> "开始充电"
+    else -> "结束充电"
+}
+
+/**
+ * 「保存并下发设置」的确认文案。
+ *
+ * 这一颗按钮一次要发三条指令（健康充电 / 预约充电 / 电池预热），
+ * 确认框里必须把真正要下发的四项内容说清楚，用户才知道自己点了什么。
+ */
+internal fun chargeSaveLabel(draft: ChargeCenterDraft): String = buildList {
+    add(if (draft.healthy) "健康充电开" else "健康充电关")
+    add("上限${draft.limitSoc}%")
+    add(if (draft.scheduledEnabled) "预约充电开" else "预约充电关")
+    add(if (draft.preheatEnabled) "电池预热开" else "电池预热关")
+}.joinToString(" · ")
+
