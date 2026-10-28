@@ -134,6 +134,17 @@ class WeeklyEnergyTest {
     }
 
     @Test
+    fun `内部代号折回宣传名`() {
+        // Lafa5 的车辆接口下发的是项目代号 B05，不能直接显示给车主
+        assertEquals("Lafa5", EnergyFormat.carModelName("B05"))
+        assertEquals("Lafa5", EnergyFormat.carModelName("b05"))
+        assertEquals("Lafa5", EnergyFormat.carModelName("零跑B05"))
+        assertEquals("Lafa5", EnergyFormat.carModelName("LAFA5"))
+        // 未知代号原样显示，不做猜测
+        assertEquals("B10", EnergyFormat.carModelName("B10"))
+    }
+
+    @Test
     fun `能耗数值一位小数`() {
         assertEquals("9.8", EnergyFormat.kwh(9.8))
         assertEquals("13.6", EnergyFormat.kwh(13.64))
