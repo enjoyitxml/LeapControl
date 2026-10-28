@@ -16,6 +16,8 @@ import com.leapcontrol.app.ApkUpdater
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.GitHubUpdate
+import com.leapcontrol.app.HomeCardId
+import com.leapcontrol.app.HomeCardLayout
 import com.leapcontrol.app.AmapWebApi
 import com.leapcontrol.app.ApiException
 import com.leapcontrol.app.ChargePlanCyclesHelper
@@ -43,6 +45,8 @@ import com.leapcontrol.app.TrunkStateMapper
 import com.leapcontrol.app.UpdateCheckResult
 import com.leapcontrol.app.Vehicle
 import com.leapcontrol.app.VehicleChargePlan
+import com.leapcontrol.app.WeeklyEnergyData
+import com.leapcontrol.app.WeeklyEnergyParser
 import com.leapcontrol.app.VehicleLocationDomain
 import com.leapcontrol.app.VehicleOtaInfo
 import com.leapcontrol.app.VehicleCapabilityDetector
@@ -270,6 +274,23 @@ class AppRuntime(context: Context) {
     fun setBleIconVisible(visible: Boolean) {
         _bleIconVisible.value = visible
         namingPrefs.edit().putBoolean("ble_key_icon_visible", visible).apply()
+    }
+
+    /**
+     * 首页卡片顺序 / 显隐（编辑态长按拖动、删除、添加后持久化在这里）。
+     *
+     * 放在 namingPrefs：跟着本机走、登出不丢。存储内容就是 [HomeCardId] 名字的逗号串，
+     * 空串表示用户把卡片全删了（不能回退成默认，否则删不干净）。
+     */
+    private val _homeCards = mutableStateOf(
+        HomeCardLayout.parse(namingPrefs.getString("home_cards", null)),
+    )
+    val homeCards: State<List<HomeCardId>> get() = _homeCards
+
+    fun setHomeCards(cards: List<HomeCardId>) {
+        val clean = HomeCardLayout.parse(HomeCardLayout.serialize(cards))
+        _homeCards.value = clean
+        namingPrefs.edit().putString("home_cards", HomeCardLayout.serialize(clean)).apply()
     }
 
     fun customName(): String =
@@ -625,12 +646,19 @@ class AppRuntime(context: Context) {
     /** 最近一次成功拉取的里程 / 能耗汇总（进程内保持，冷启动由磁盘缓存预填）。 */
     val mileageEnergyFlow: StateFlow<MileageEnergySummary?> = _mileageEnergy.asStateFlow()
 
+    // ---- 周能耗（首页两张能耗卡）----
+    // 两个接口：近 6 周百公里能耗与排行、上周能耗构成。
+    // 和里程能耗一样：失败静默保留上一次结果，不拖累别的卡片。
+    private val _weeklyEnergy = MutableStateFlow<WeeklyEnergyData?>(null)
+    val weeklyEnergyFlow: StateFlow<WeeklyEnergyData?> = _weeklyEnergy.asStateFlow()
+
     init {
         syncCapabilities()
         // 冷启动先用上一次的车况把界面填上，联网刷新再覆盖（不留空白帧）
         loadCachedStatus()
         // 里程 / 能耗同样先上缓存，联网拉取在首页进入时触发
         loadCachedMileageEnergy()
+        loadCachedWeeklyEnergy()
     }
 
     /** 让 [_capabilities] 跟随当前选中车辆；VIN 没变则不重复读取。 */
@@ -730,6 +758,70 @@ class AppRuntime(context: Context) {
                 _mileageEnergy.value = result
                 runCatching {
                     energyPrefs.edit().putString(energyCacheKey(vin), result.toJson().toString()).apply()
+                }
+            }
+            result
+        }
+
+    // ---------------- 周能耗（近 6 周百公里能耗 / 上周能耗构成）----------------
+
+    private fun weeklyEnergyCacheKey(vin: String) = "weekly_$vin"
+
+    /** 用磁盘缓存预填 [weeklyEnergyFlow]，冷启动时两张能耗卡不空一帧。 */
+    fun loadCachedWeeklyEnergy(vin: String = session.selectedVin) {
+        val raw = runCatching { energyPrefs.getString(weeklyEnergyCacheKey(vin), null) }.getOrNull()
+        if (raw.isNullOrBlank()) {
+            _weeklyEnergy.value = null
+            return
+        }
+        _weeklyEnergy.value = runCatching { WeeklyEnergyData.fromJson(JSONObject(raw)) }.getOrNull()
+    }
+
+    /**
+     * 拉取周能耗（15 分钟内不重复请求）。
+     *
+     * 两个接口各自 runCatching：排行接口挂了不影响能耗构成，反之亦然；
+     * 两边都没拿到新值就保留上一次结果（可能是磁盘缓存），UI 显示「--」。
+     */
+    suspend fun refreshWeeklyEnergy(force: Boolean = false): WeeklyEnergyData? =
+        withContext(Dispatchers.IO) {
+            val vin = session.selectedVin
+            if (vin.isBlank()) return@withContext null
+            val cached = _weeklyEnergy.value
+            val now = System.currentTimeMillis()
+            if (!force && cached != null && now - cached.capturedAt < MILEAGE_ENERGY_TTL_MS) {
+                return@withContext cached
+            }
+            if (!isNetworkAvailable()) return@withContext cached
+            val api = LeapmotorApi(session)
+            var summary: WeeklyEnergyData? = null
+            runCatching { withNetworkRetry { api.getLastNWeeks100kmEcAndRank() } }
+                .onSuccess { resp ->
+                    runCatching { WeeklyEnergyParser.parseRank(resp) }
+                        .onSuccess { summary = WeeklyEnergyData(rank = it) }
+                }
+            runCatching { withNetworkRetry { api.getLastWeekEc() } }
+                .onSuccess { resp ->
+                    runCatching { WeeklyEnergyParser.parseComposition(resp) }
+                        .onSuccess {
+                            summary = summary?.let { s -> s.copy(composition = it) }
+                                ?: WeeklyEnergyData(composition = it)
+                        }
+                }
+            val fresh = summary
+            val result = when {
+                fresh == null -> cached
+                else -> fresh.copy(capturedAt = now).let { newly ->
+                    // 用上一次的结果补齐另一张卡（这次只成功了一个接口时）
+                    cached?.merge(newly) ?: newly
+                }
+            }
+            if (result != null && result.hasAny) {
+                _weeklyEnergy.value = result
+                runCatching {
+                    energyPrefs.edit()
+                        .putString(weeklyEnergyCacheKey(vin), result.toJson().toString())
+                        .apply()
                 }
             }
             result

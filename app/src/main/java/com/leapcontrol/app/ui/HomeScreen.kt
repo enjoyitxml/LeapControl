@@ -117,6 +117,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.collectAsState
 import com.leapcontrol.app.ChargePlanCyclesHelper
 import com.leapcontrol.app.ChargeSchedule
+import com.leapcontrol.app.HomeCardId
 import com.leapcontrol.app.QuickSwitchPrefs
 import com.leapcontrol.app.QuickTarget
 import com.leapcontrol.app.R
@@ -194,6 +195,12 @@ fun HomeScreen(
         var showBleKey by remember { mutableStateOf(false) }
         // 行驶里程 / 能耗（独立接口，拿不到就静默保持上一次结果）
         val energySummary by runtime.mileageEnergyFlow.collectAsState()
+        // 周能耗（近 6 周百公里能耗 + 上周能耗构成），两张能耗卡共用
+        val weeklyEnergy by runtime.weeklyEnergyFlow.collectAsState()
+        // 首页卡片顺序 / 显隐（可自定义）
+        val homeCards by runtime.homeCards
+        // 卡片编辑态：编辑时卡片区可长按拖动排序、删除、添加
+        var cardEditing by remember { mutableStateOf(false) }
         // 相伴卡背景：个性化里切换后要立刻生效，所以直接读 State
         val ownershipBackdropId = runtime.ownershipBackdrop.value
         var refreshError by remember { mutableStateOf<String?>(null) }
@@ -333,6 +340,8 @@ fun HomeScreen(
         // 失败也不打扰用户 —— 模块卡保持上一次结果或显示「--」。
         LaunchedEffect(vinKey) {
             runCatching { runtime.refreshMileageEnergy() }
+            // 两张能耗卡（周分布 / 近 6 周）走另外两个接口，同样静默
+            runCatching { runtime.refreshWeeklyEnergy() }
         }
 
         // 去重：2 秒内的重复请求忽略（避免冷启动时启动刷新与前台事件叠加）
@@ -1212,48 +1221,70 @@ fun HomeScreen(
             Spacer(Modifier.height(12.dp))
             ScrollHintBar(state = listState, itemCount = cells.size, visibleCount = 4)
 
-            // ---- 空调概览条：车内温度 / ◀ 设定温度 ▶ / 风扇开关 ----
-            // 点加减号只改温度（关机态是草稿），点右侧风扇开关才带着温度下发开启指令。
-            // 点卡片空白处进入全屏空调页（风量 / 出风方向 / 座椅舒适…都在那一页）
+            // ---- 卡片区：顺序 / 显隐可自定义（长按拖动排序、删除、添加）----
+            // 每张卡的内容都在这里按 id 分发，[HomeCardArea] 只负责排版与编辑交互：
+            // 空调概览条 / 胎压·行程 / 周能耗分布 / 近 6 周能耗 / 相伴卡。
+            // 卡片本身都不发「设置类」指令（空调条上的开关除外），顺序变化不影响到数据来源。
             Spacer(Modifier.height(14.dp))
-            AcQuickCard(
-                status = currentStatus,
-                busy = controlling != null,
-                target = acTargetTemp,
-                onStep = { stepAcTemp(it) },
-                onToggle = { turnOn, temp ->
-                    ensureConfirmed(
-                        if (turnOn) "开启空调（${temp}℃）" else "关闭空调",
-                    ) { runAcCommand(turnOn, temp) }
-                },
-                onOpen = { showAcScreen = true },
-            )
+            HomeCardArea(
+                cards = homeCards,
+                editing = cardEditing,
+                onEditingChange = { cardEditing = it },
+                onCardsChange = { runtime.setHomeCards(it) },
+                scrollState = homeScrollState,
+            ) { cardId ->
+                when (cardId) {
+                    // 空调概览条：车内温度 / ◀ 设定温度 ▶ / 风扇开关；
+                    // 点加减号只改温度（关机态是草稿），点电源开关才带着温度下发开启指令；
+                    // 点卡片空白处进入全屏空调页（风量 / 出风方向 / 座椅舒适…都在那一页）
+                    HomeCardId.AC -> AcQuickCard(
+                        status = currentStatus,
+                        busy = controlling != null,
+                        target = acTargetTemp,
+                        onStep = { stepAcTemp(it) },
+                        onToggle = { turnOn, temp ->
+                            ensureConfirmed(
+                                if (turnOn) "开启空调（${temp}℃）" else "关闭空调",
+                            ) { runAcCommand(turnOn, temp) }
+                        },
+                        onOpen = { showAcScreen = true },
+                    )
 
-            // ---- 胎压监测卡（左半）+ 近 7 天行程卡（右半）；相伴卡整行宽放在下面 ----
-            // 胎压卡的四个数值 + 车模已经够看，不再做二级详情页（点卡片不跳转）；
-            // 近 7 天行程卡画每日里程柱状图；相伴卡的提车天数 / 累计公里都取自里程能耗接口。
-            // 三张卡本身都不发指令。
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                TireQuickCard(
-                    status = currentStatus,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(12.dp))
-                WeeklyTripCard(
-                    energy = energySummary,
-                    modifier = Modifier.weight(1f),
-                )
+                    // 胎压卡（左半，四轮数值 + 车模）+ 近 7 天行程卡（右半，每日里程柱状图）。
+                    // 两张半屏卡合成一个可拖动条目：拆开时拖动过程中会出现「各占一行」的中间态。
+                    HomeCardId.TIRE_TRIP -> Row(modifier = Modifier.fillMaxWidth()) {
+                        TireQuickCard(
+                            status = currentStatus,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        WeeklyTripCard(
+                            energy = energySummary,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+
+                    // 周能耗分布：上周总能耗环形图 + 行车 / 空调 / 其他占比
+                    HomeCardId.COMPOSITION -> WeeklyEnergyCompositionCard(
+                        composition = weeklyEnergy?.composition,
+                    )
+
+                    // 近 6 周百公里能耗 + 同车型全国排行
+                    HomeCardId.RANK -> WeeklyEnergyRankCard(
+                        rank = weeklyEnergy?.rank,
+                        carModel = runtime.session.selectedCarType,
+                    )
+
+                    // 相伴卡：提车天数 / 累计公里，背景图可在个性化里换
+                    HomeCardId.OWNERSHIP -> OwnershipCard(
+                        status = currentStatus,
+                        energy = energySummary,
+                        backdropId = ownershipBackdropId,
+                        quickTarget = quickSwitch.cardTarget,
+                        onRandomBackdrop = onRandomBackdrop,
+                    )
+                }
             }
-
-            Spacer(Modifier.height(12.dp))
-            OwnershipCard(
-                status = currentStatus,
-                energy = energySummary,
-                backdropId = ownershipBackdropId,
-                quickTarget = quickSwitch.cardTarget,
-                onRandomBackdrop = onRandomBackdrop,
-            )
 
             // ---- 功能模块区（页面最下方）：横向滑动的模块卡 + 指示条 + 自定义按钮 ----
             // 空调 / 座椅 / 胎压 / 里程能耗 / 健康 / 充电 / 定时空调 / 冰箱 / 哨兵 …
