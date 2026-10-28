@@ -1859,26 +1859,6 @@ class AppRuntime(context: Context) {
         results.joinToString("；")
     }
 
-    /**
-     * 健康充电开关（`healthyCharging/control`）：只发这一条，不要求控车密码、不走车控队列。
-     *
-     * 单独拆出来是因为它跟「预约充电 / 电池预热」不是一类东西：这两项要拼计划、
-     * 一次性下发才有意义，而健康充电就是一个即时开关，用户拨了就该立刻生效，
-     * 混在「保存并下发」里会让人以为开关坏了（拨完不点保存 = 什么都没发生）。
-     *
-     * @param targetSoc 健康充电的目标上限；车端只接受 50..100，且语义上最高 90。
-     */
-    suspend fun setHealthyCharging(enabled: Boolean, targetSoc: Int): String =
-        withContext(Dispatchers.IO) {
-            val soc = ChargeSchedule.sanitizeSoc(
-                if (enabled) targetSoc.coerceAtMost(ChargeSchedule.BEST_LIMIT_SOC) else targetSoc,
-            )
-            val resp = LeapmotorApi(session).setHealthyCharging(enabled = enabled, targetSoc = soc)
-            val code = resp.optInt("code", resp.optInt("result", -1))
-            val label = if (enabled) "已开启健康充电（上限 $soc%）" else "已关闭健康充电"
-            if (code == 0 || code == 200) label else "$label（结果码 $code）"
-        }
-
     /** 云端接口的 code / result 落在 0 或 200 才算车端受理。 */
     private fun successLabel(name: String, resp: JSONObject): String {
         val code = resp.optInt("code", resp.optInt("result", -1))

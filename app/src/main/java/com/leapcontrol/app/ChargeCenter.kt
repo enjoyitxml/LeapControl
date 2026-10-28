@@ -63,17 +63,6 @@ object ChargeSchedule {
     /** 官方把 90% 标注为「最佳限值」，页面在滑杆下方画一个小三角指到它。 */
     const val BEST_LIMIT_SOC = 90
 
-    /**
-     * 健康充电（电池养护）开着时上限只能到 90%：超过就必须先关掉健康充电。
-     *
-     * 这条规则同时被滑杆（拖过 90 弹确认）与健康充电开关（开着时把上限夹到 90）
-     * 使用，写在两处迟早会不一致，所以收在这里。
-     */
-    fun exceedsHealthyLimit(soc: Int): Boolean = sanitizeSoc(soc) > BEST_LIMIT_SOC
-
-    /** 健康充电开着的目标上限：不低于 50、不高于 90。 */
-    fun healthyLimit(soc: Int): Int = sanitizeSoc(soc).coerceAtMost(BEST_LIMIT_SOC)
-
     /** 星期选择条的显示顺序：周日打头，与官方 App 一致。 */
     val WEEKDAY_ORDER: List<Int> = listOf(7, 1, 2, 3, 4, 5, 6)
 
