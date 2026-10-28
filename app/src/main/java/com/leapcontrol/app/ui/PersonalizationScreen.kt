@@ -185,17 +185,6 @@ fun PersonalizationScreen(
 
         Spacer(Modifier.height(18.dp))
 
-        // ---- 桌面小组件 ----
-        // 背景只有「简约（跟系统深浅）」和「自定义图片」两档，另加按钮 / 文字 / 车标三组配色。
-        // 内置风景图库已按用户要求整套删掉，见 WidgetStyle 顶部说明。
-        SettingsSection(title = "桌面小组件", desc = "背景 · 配色") {
-            SettingsCard {
-                WidgetStyleSettings(runtime = runtime)
-            }
-        }
-
-        Spacer(Modifier.height(18.dp))
-
         // ---- 车模外观 ----
         // 官方车模图是按车辆档案渲染的定妆照，接口没有「选颜色」的入参，
         // 所以颜色跟实车不一致时只能在这一页自己换（内置换色 / 导入自己改好的图）。

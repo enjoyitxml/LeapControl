@@ -53,7 +53,7 @@ import com.leapcontrol.app.VehicleCapabilityDetector
 import com.leapcontrol.app.VehicleCapabilities
 import com.leapcontrol.app.VehicleHomeStatus
 import com.leapcontrol.app.VehicleStatusMapper
-import com.leapcontrol.app.WidgetStatusMapper
+import com.leapcontrol.app.VehicleSignals
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.Dispatchers
@@ -744,21 +744,7 @@ class AppRuntime(context: Context) {
         // 结果通过 statusFlow 下发：首页直接读到新值，不需要 UI 自己再 setState
         _status.value = status
         _lastUpdated.value = System.currentTimeMillis()
-        pushToWidget()
         status
-    }
-
-    /**
-     * 车况一有新值就顺手推给桌面小组件：用户在 App 里下拉刷新过，
-     * 退到桌面看到的就不该还是旧数字。4 秒节流，避免连续刷新时反复跨进程画卡片。
-     */
-    private var lastWidgetPushAt = 0L
-
-    private fun pushToWidget() {
-        val now = System.currentTimeMillis()
-        if (now - lastWidgetPushAt < 4_000L) return
-        lastWidgetPushAt = now
-        runCatching { com.leapcontrol.app.widget.VehicleWidget.render(appContext, this) }
     }
 
     // ---------------- 行驶里程 / 能耗 ----------------
@@ -919,7 +905,7 @@ class AppRuntime(context: Context) {
             },
             totalMileage = st.opt("totalMileage")?.toString()?.takeIf { it.isNotEmpty() },
             interiorTemp = st.opt("interiorTemp")?.toString()?.takeIf { it.isNotEmpty() },
-            locked = WidgetStatusMapper.locked(st),
+            locked = VehicleSignals.locked(st),
             acOn = parseAcOn(st),
             tires = parseTires(st),
             latitude = parseLocation(st).first,
@@ -941,12 +927,12 @@ class AppRuntime(context: Context) {
             drivingStatus = parseDrivingStatus(st),
             speed = st.opt("speed")?.toString()?.trim()?.takeIf { it.isNotEmpty() },
             gearStatus = formatGear(st.opt("gearStatus")),
-            isDriving = runCatching { WidgetStatusMapper.isDriving(st) }.getOrNull(),
+            isDriving = runCatching { VehicleSignals.isDriving(st) }.getOrNull(),
             isShutDown = VehicleHomeStatus.isVehicleShutDown(
                 bcmKeyPositionOn3 = st.opt("bcmKeyPositionOn3"),
                 vehicleState = st.opt("vehicleState"),
                 parkingBrakeState = st.opt("parkingBrakeState"),
-                locked = WidgetStatusMapper.locked(st),
+                locked = VehicleSignals.locked(st),
             ),
             chargeState = ChargeStatus.state(st),
             healthyChargeEnabled = parseOnOff(pick(st, "healthyChargeEnabled", "48")),
@@ -1028,8 +1014,8 @@ class AppRuntime(context: Context) {
 
     /** 是否有车窗未关：1693-1696 开关位或四窗开度百分比。 */
     private fun parseWindowOpen(st: JSONObject, carType: String): Boolean? {
-        if (!WidgetStatusMapper.hasWindowTelemetry(st, carType)) return null
-        return WidgetStatusMapper.openWindowLabels(st, carType).isNotEmpty()
+        if (!VehicleSignals.hasWindowTelemetry(st, carType)) return null
+        return VehicleSignals.openWindowLabels(st, carType).isNotEmpty()
     }
 
     /** 天幕遮阳帘开启状态：1724 roofOpening（0-100）优先，其次 1718 sunroofOpening（0-10）。 */
@@ -1136,12 +1122,12 @@ class AppRuntime(context: Context) {
             bcmKeyPositionOn3 = st.opt("bcmKeyPositionOn3"),
             vehicleState = st.opt("vehicleState"),
             parkingBrakeState = st.opt("parkingBrakeState"),
-            locked = WidgetStatusMapper.locked(st),
+            locked = VehicleSignals.locked(st),
         )
         VehicleHomeStatus.resolveDetailedDrivingState(
             gearStatus = formatGear(st.opt("gearStatus")),
             speed = st.opt("speed")?.toString(),
-            isDriving = runCatching { WidgetStatusMapper.isDriving(st) }.getOrNull(),
+            isDriving = runCatching { VehicleSignals.isDriving(st) }.getOrNull(),
             isShutDown = shutDown,
         )?.let { return it.label }
         // 既没有挡位也没有车速：退回整车运行状态（1944：1=Ready 行车就绪）
@@ -1746,37 +1732,6 @@ class AppRuntime(context: Context) {
         }
         "指令已下发$suffix，请在车辆上确认执行结果"
     }
-
-    /**
-     * 桌面小组件专用的控车：**只等一小会儿**就返回。
-     *
-     * 小组件点击走的是 BroadcastReceiver（[android.appwidget.AppWidgetProvider] 的 onReceive），
-     * 执行窗口只有 10 秒左右，不能沿用 [control] 那套最长 20 秒的轮询 —— 一旦超时
-     * 系统会直接判 ANR，用户看到的就是「点了没反应还卡一下」。
-     *
-     * 这里发完指令最多再等 [budgetMs]，然后把「已下发」交回给小组件；
-     * 到底成没成，由调用方紧接着回读车况（锁车 / 空调 / 后备箱信号）来体现。
-     */
-    suspend fun controlForWidget(commandName: String, budgetMs: Long = 3_500L): String =
-        withContext(Dispatchers.IO) {
-            val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
-            val api = LeapmotorApi(session)
-            val command = Commands.build(commandName)
-            val result = withNetworkRetry { api.sendControl(command, pin) }
-            val deadline = System.currentTimeMillis() + budgetMs
-            var attempt = 0
-            var lastCode: String? = null
-            while (System.currentTimeMillis() < deadline) {
-                Thread.sleep(resultPollDelayMs(attempt))
-                attempt++
-                val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull() ?: continue
-                val code = firstResultCode(resp)
-                if (code != null) lastCode = code
-                if (code == "0" || code == "200") return@withContext "${command.label}已执行"
-            }
-            val suffix = lastCode?.let { "（结果码 $it）" }.orEmpty()
-            "${command.label}已下发$suffix"
-        }
 
     /**
      * 一键关闭多项后台耗电功能（空调 / 座椅加热通风 / 方向盘加热 / 后视镜加热 / 冰箱）。
