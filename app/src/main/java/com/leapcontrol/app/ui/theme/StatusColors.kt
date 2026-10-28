@@ -12,3 +12,12 @@ val statusGood = Color(0xFF1FA45B)
 
 /** 深色主题下用更亮一档的绿，压在深底上才看得清。 */
 val statusGoodDark = Color(0xFF3DD68C)
+
+/**
+ * 语义色：需要注意但不算故障（如「有后台功能正在耗电」）。
+ * 同样不跟主题变色 —— 秋天主题整体偏橙，跟着变就分不出「提示」和「正常」了。
+ */
+val statusWarn = Color(0xFFD98324)
+
+/** 深色主题下的橙色，亮度提一档。 */
+val statusWarnDark = Color(0xFFFFB454)

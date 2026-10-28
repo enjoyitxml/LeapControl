@@ -266,6 +266,10 @@ fun HomeScreen(
         var otaBusy by remember { mutableStateOf<String?>(null) }
         var otaResult by remember { mutableStateOf<String?>(null) }
         var pendingHealthFix by remember { mutableStateOf<String?>(null) }
+        // 一键关闭耗电功能：正在下发 / 进度（已完成, 总数）/ PIN 通过后重放的指令列表
+        var powerDrainBusy by remember { mutableStateOf(false) }
+        var powerDrainProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+        var pendingPowerDrains by remember { mutableStateOf<List<String>?>(null) }
         var pendingOtaAction by remember { mutableStateOf<Pair<String, String>?>(null) }
         // 冰箱指令在 PIN 验证完成后重放
         var pendingFridgeCommand by remember {
@@ -635,6 +639,39 @@ fun HomeScreen(
                     actionMessage = friendlyError(e)
                 }
                 controlling = null
+            }
+        }
+
+        /**
+         * 一键关闭所有正在耗电的舒适功能。
+         *
+         * 指令一次性连续下发（[AppRuntime.shutDownPowerDrains] 内部按 800ms 间隔排好），
+         * 不逐条等执行回执 —— 否则四项要等一分多钟；发完统一回拉一次车况看效果，
+         * 卡片上的耗电项会跟着消失。
+         */
+        fun runShutDownDrains(commands: List<String>) {
+            if (commands.isEmpty() || powerDrainBusy) return
+            scope.launch {
+                powerDrainBusy = true
+                powerDrainProgress = null
+                actionMessage = null
+                try {
+                    actionMessage = runtime.shutDownPowerDrains(commands) { done, total ->
+                        powerDrainProgress = done to total
+                    }
+                    // 车端执行有延迟：立刻回拉大概率还是「运行中」，等 4 秒再拉一次，
+                    // 卡片上的耗电项才会真的消失（否则用户会以为没关掉）。
+                    refresh(force = true)
+                    delay(4_000)
+                    refresh(force = true)
+                } catch (e: NeedPinException) {
+                    pendingPowerDrains = commands
+                    showPinDialog = true
+                } catch (e: Exception) {
+                    actionMessage = friendlyError(e)
+                }
+                powerDrainBusy = false
+                powerDrainProgress = null
             }
         }
 
@@ -1275,6 +1312,26 @@ fun HomeScreen(
                         carModel = runtime.session.selectedCarType,
                     )
 
+                    // 车辆健康：电池温度 / 电压 / 电流 + 后台耗电功能监测（空调、座椅加热通风、
+                    // 方向盘加热…），有耗电项时可一次把关闭指令连续下发。
+                    // 判定逻辑在 VehiclePowerWatch（纯函数，可单测），这里只做排版与接线。
+                    HomeCardId.HEALTH -> {
+                        val drains = remember(currentStatus) {
+                            VehiclePowerWatch.drains(currentStatus)
+                        }
+                        VehicleHealthCard(
+                            status = currentStatus,
+                            drains = drains,
+                            busy = powerDrainBusy,
+                            progress = powerDrainProgress,
+                            onShutDownAll = {
+                                ensureConfirmed("关闭全部耗电功能") {
+                                    runShutDownDrains(drains.map { it.offCommand })
+                                }
+                            },
+                        )
+                    }
+
                     // 相伴卡：提车天数 / 累计公里，背景图可在个性化里换
                     HomeCardId.OWNERSHIP -> OwnershipCard(
                         status = currentStatus,
@@ -1468,7 +1525,12 @@ fun HomeScreen(
                                     val acOnTemp = pendingAcOnTemp
                                     // 空调展开面板里的指令（风量 / 出风方向 / 座椅…）
                                     val acPanelCmd = pendingAcPanelCommand
+                                    val drains = pendingPowerDrains
                                     when {
+                                        drains != null -> {
+                                            pendingPowerDrains = null
+                                            runShutDownDrains(drains)
+                                        }
                                         acPanelCmd != null -> {
                                             pendingAcPanelCommand = null
                                             runAcPanelCommand(acPanelCmd)

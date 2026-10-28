@@ -52,6 +52,7 @@ class HomeCardLayoutTest {
                 HomeCardId.COMPOSITION,
                 HomeCardId.RANK,
                 HomeCardId.AC,
+                HomeCardId.HEALTH,
                 HomeCardId.OWNERSHIP,
             ),
             moved,
@@ -66,10 +67,11 @@ class HomeCardLayoutTest {
         assertEquals(
             listOf(
                 HomeCardId.AC,
-                HomeCardId.OWNERSHIP,
+                HomeCardId.HEALTH,
                 HomeCardId.TIRE_TRIP,
                 HomeCardId.COMPOSITION,
                 HomeCardId.RANK,
+                HomeCardId.OWNERSHIP,
             ),
             moved,
         )
@@ -89,8 +91,61 @@ class HomeCardLayoutTest {
         val shown = listOf(HomeCardId.AC, HomeCardId.RANK)
         val hidden = HomeCardLayout.hidden(shown)
         assertEquals(
-            listOf(HomeCardId.TIRE_TRIP, HomeCardId.COMPOSITION, HomeCardId.OWNERSHIP),
+            listOf(
+                HomeCardId.TIRE_TRIP,
+                HomeCardId.COMPOSITION,
+                HomeCardId.HEALTH,
+                HomeCardId.OWNERSHIP,
+            ),
             hidden,
         )
+    }
+
+    // ---- 新增卡片的升级补入 ----
+
+    @Test
+    fun `老用户保存过顺序时按默认位置补入新卡`() {
+        // v1 时期保存的列表里没有 HEALTH
+        val parsed = HomeCardLayout.parse(
+            "AC,TIRE_TRIP,COMPOSITION,RANK,OWNERSHIP",
+            savedVersion = 1,
+        )
+        assertEquals(
+            listOf(
+                HomeCardId.AC,
+                HomeCardId.TIRE_TRIP,
+                HomeCardId.COMPOSITION,
+                HomeCardId.RANK,
+                HomeCardId.HEALTH,
+                HomeCardId.OWNERSHIP,
+            ),
+            parsed,
+        )
+    }
+
+    @Test
+    fun `新卡插在默认顺序里前一张卡的后面`() {
+        // 用户把相伴卡挪到了最前面，新卡仍应跟在自己的前一张（RANK）后面
+        val parsed = HomeCardLayout.parse("OWNERSHIP,RANK,AC", savedVersion = 1)
+        assertEquals(listOf(HomeCardId.OWNERSHIP, HomeCardId.RANK, HomeCardId.HEALTH, HomeCardId.AC), parsed)
+    }
+
+    @Test
+    fun `前面的卡全被删掉时新卡放最前`() {
+        val parsed = HomeCardLayout.parse("OWNERSHIP", savedVersion = 1)
+        assertEquals(listOf(HomeCardId.HEALTH, HomeCardId.OWNERSHIP), parsed)
+    }
+
+    @Test
+    fun `版本已是最新时不会把用户删掉的卡变回来`() {
+        assertEquals(
+            listOf(HomeCardId.AC, HomeCardId.RANK),
+            HomeCardLayout.parse("AC,RANK", savedVersion = HomeCardLayout.VERSION),
+        )
+    }
+
+    @Test
+    fun `卡片全删但版本落后时补入新卡`() {
+        assertEquals(listOf(HomeCardId.HEALTH), HomeCardLayout.parse("", savedVersion = 1))
     }
 }

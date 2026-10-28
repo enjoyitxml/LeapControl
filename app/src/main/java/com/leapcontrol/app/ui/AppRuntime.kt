@@ -73,9 +73,15 @@ class NeedPinException : Exception("需要先设置 4 位控车密码")
  * 官方抓包文档同样给出最长 24 秒的窗口。
  */
 private const val CONTROL_RESULT_MAX_WAIT_MS = 20_000L
-
 /** 里程 / 能耗缓存有效期：15 分钟。老服务限频，不必每次进首页都打一次。 */
 private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
+
+/**
+ * 「一键关闭耗电功能」时两条指令之间的间隔。
+ * 网关对连续车控有限流，实测 1 秒内连发第二条容易回「系统繁忙」；
+ * 800ms 是能明显缩短整体耗时的同时又不丢指令的折中值。
+ */
+private const val POWER_DRAIN_GAP_MS = 800L
 
 /**
  * 单个车轮的胎压状态。
@@ -190,6 +196,8 @@ data class CarStatus(
     val chargeVoltage: String? = null, // 电压，如 "368 V"
     val chargeCurrent: String? = null, // 电流，如 "18.5 A"
     val batteryTemp: String? = null, // 电池温度，如 "28 °C"
+    // 上面三项（1177 / 1178 / 1182）是 BMS 常驻信号，不只充电时才有值；
+    // 「车辆健康」卡也直接读这三个字段，别当成充电专属字段删掉。
     /** 天窗是否开启（1718 sunroofOpening），与遮阳帘（1724）分开。 */
     val sunroofOpen: Boolean? = null,
     /** 前备箱是否开启（仅部分车型支持，信号缺失为 null）。 */
@@ -283,14 +291,32 @@ class AppRuntime(context: Context) {
      * 空串表示用户把卡片全删了（不能回退成默认，否则删不干净）。
      */
     private val _homeCards = mutableStateOf(
-        HomeCardLayout.parse(namingPrefs.getString("home_cards", null)),
+        run {
+            // 版本号用于「这个版本新增了卡片」的补入：老用户存过的列表里没有新卡，
+            // 只有靠版本差才能知道该不该补（用户主动删掉的卡，版本已是最新，不会自己回来）。
+            val savedVersion = namingPrefs.getInt("home_cards_v", 0)
+            val parsed = HomeCardLayout.parse(
+                namingPrefs.getString("home_cards", null),
+                savedVersion,
+            )
+            if (savedVersion < HomeCardLayout.VERSION) {
+                namingPrefs.edit()
+                    .putString("home_cards", HomeCardLayout.serialize(parsed))
+                    .putInt("home_cards_v", HomeCardLayout.VERSION)
+                    .apply()
+            }
+            parsed
+        },
     )
     val homeCards: State<List<HomeCardId>> get() = _homeCards
 
     fun setHomeCards(cards: List<HomeCardId>) {
         val clean = HomeCardLayout.parse(HomeCardLayout.serialize(cards))
         _homeCards.value = clean
-        namingPrefs.edit().putString("home_cards", HomeCardLayout.serialize(clean)).apply()
+        namingPrefs.edit()
+            .putString("home_cards", HomeCardLayout.serialize(clean))
+            .putInt("home_cards_v", HomeCardLayout.VERSION)
+            .apply()
     }
 
     fun customName(): String =
@@ -1649,9 +1675,48 @@ class AppRuntime(context: Context) {
         "指令已下发$suffix，请在车辆上确认执行结果"
     }
 
+    /**
+     * 一键关闭多项后台耗电功能（空调 / 座椅加热通风 / 方向盘加热 / 后视镜加热 / 冰箱）。
+     *
+     * 与 [control] 的关键区别：**不逐条等车端执行结果**。control 每条都要轮询 1~24 秒，
+     * 五项排下来用户得干等半分钟以上；「全部关掉」本质上是一组操作，
+     * 逐条发完让 UI 统一回拉一次车况来判断效果更实际。
+     *
+     * 两条指令之间留 [POWER_DRAIN_GAP_MS]：连发会撞网关的「系统繁忙」，
+     * 后面的指令被丢掉时用户还以为关了（充电中心那次踩过同样的坑）。
+     *
+     * @param onProgress 已下发条数 / 总条数，用于按钮上显示「关闭中 2/5」。
+     */
+    suspend fun shutDownPowerDrains(
+        commands: List<String>,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
+    ): String = withContext(Dispatchers.IO) {
+        val unique = commands.distinct()
+        if (unique.isEmpty()) return@withContext "没有正在耗电的功能"
+        val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
+        val api = LeapmotorApi(session)
+        val failed = mutableListOf<String>()
+        unique.forEachIndexed { index, name ->
+            runCatching {
+                val command = Commands.build(name)
+                withNetworkRetry { api.sendControl(command, pin) }
+            }.onFailure {
+                // 记指令名而不是异常信息：异常文案对用户没意义，指令名能直接定位是哪一项
+                failed += name
+            }
+            onProgress(index + 1, unique.size)
+            if (index != unique.lastIndex) Thread.sleep(POWER_DRAIN_GAP_MS)
+        }
+        val ok = unique.size - failed.size
+        when {
+            failed.isEmpty() -> "已关闭 $ok 项"
+            ok == 0 -> "关闭失败（${failed.joinToString("、")}）"
+            else -> "已关闭 $ok 项，${failed.size} 项未成功"
+        }
+    }
+
     /** 结果轮询等待得到的网关结果码（优先 result，其次 code）。 */
-    private fun firstResultCode(resp: JSONObject): String? {
-        val value = (resp.opt("result") ?: resp.opt("code"))
+    private fun firstResultCode(resp: JSONObject): String? {        val value = (resp.opt("result") ?: resp.opt("code"))
             ?.takeIf { it != JSONObject.NULL }?.toString()?.trim()
         return value?.takeIf { it.isNotEmpty() }
     }
