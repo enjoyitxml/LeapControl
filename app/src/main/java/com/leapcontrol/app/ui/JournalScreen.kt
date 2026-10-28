@@ -37,6 +37,7 @@ import com.leapcontrol.app.journal.CostStats
 import com.leapcontrol.app.journal.CostSummary
 import com.leapcontrol.app.journal.GoalProgress
 import com.leapcontrol.app.journal.JournalData
+import com.leapcontrol.app.journal.MedalGroup
 import com.leapcontrol.app.journal.MedalStats
 import com.leapcontrol.app.journal.Medals
 import java.util.Locale
@@ -263,10 +264,17 @@ private fun GoalOverviewCard(
                 )
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 概览只放 6 枚：先放已经拿到的，剩下的位置留给「马上能拿到的」，
-                    // 全是灰的勋章条对用户没有任何激励作用
-                    val preview = (Medals.ALL.filter { unlockedIds.contains(it.id) } +
-                        Medals.ALL.filterNot { unlockedIds.contains(it.id) }).take(6)
+                    // 概览只放 6 枚，而且**每组先挑一枚**：108 枚按组分块排列，
+                    // 直接取前 6 个已解锁的会全是「陪伴」那几枚，看起来像同一枚勋章换了数字。
+                    // 每组各来一枚，最后用没拿到的补齐 —— 既显得有广度，也留了钩子。
+                    val preview = buildList {
+                        MedalGroup.entries.forEach { g ->
+                            Medals.of(g).firstOrNull { unlockedIds.contains(it.id) }?.let { add(it) }
+                        }
+                        if (size < 6) {
+                            addAll(Medals.ALL.filterNot { unlockedIds.contains(it.id) }.take(6 - size))
+                        }
+                    }.take(6)
                     preview.forEach { medal ->
                         MedalBadge(
                             medal = medal,
