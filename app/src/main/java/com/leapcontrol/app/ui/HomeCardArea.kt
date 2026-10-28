@@ -62,6 +62,11 @@ import com.leapcontrol.app.HomeCardLayout
 /** 卡片之间的间距，[HomeCardArea] 的拖拽位移计算直接用这个值。 */
 private val CardGap = 12.dp
 
+/** 滚动中每帧都会变化的测量值（不进快照系统，写它不产生任何重组/失效）。 */
+private class WindowOffset {
+    var value = 0f
+}
+
 /**
  * 首页卡片区：卡片列表 + 「编辑」按钮 + 编辑态（长按拖动排序 / 删除 / 添加）。
  *
@@ -106,7 +111,9 @@ fun HomeCardArea(
     var dragging by remember { mutableStateOf<HomeCardId?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     var targetIndex by remember { mutableIntStateOf(-1) }
-    var areaTopInWindow by remember { mutableFloatStateOf(0f) }
+    // 卡片区顶部在窗口中的 y（px）。滚动时每帧都在变，用普通字段存：
+    // 做成 snapshot state 的话每帧都要走一次快照写入，收益为零
+    val areaTop = remember { WindowOffset() }
 
     /** 第 [index] 张卡片相对卡片区顶部的纵向偏移（前面的卡 + 间距）。 */
     fun topOf(index: Int): Float {
@@ -175,7 +182,7 @@ fun HomeCardArea(
             val index = cards.indexOf(id)
             val height = heights[id] ?: 0
             if (index < 0) break
-            val centerY = areaTopInWindow + topOf(index) + height / 2f + dragOffset
+            val centerY = areaTop.value + topOf(index) + height / 2f + dragOffset
             val step = when {
                 centerY < topEdge -> -stepPx
                 centerY > windowHeight - bottomEdge -> stepPx
@@ -194,7 +201,7 @@ fun HomeCardArea(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .onGloballyPositioned { areaTopInWindow = it.positionInWindow().y },
+            .onGloballyPositioned { areaTop.value = it.positionInWindow().y },
     ) {
         val dragIndex = if (dragging != null) cards.indexOf(dragging) else -1
         cards.forEachIndexed { index, id ->
@@ -229,7 +236,13 @@ fun HomeCardArea(
                                 shadowElevation = with(density) { 18.dp.toPx() }
                             }
                         }
-                        .onGloballyPositioned { coords -> heights[id] = coords.size.height },
+                        .onGloballyPositioned { coords ->
+                            // 只在高度真的变了才写：滚动时这个回调每帧都会来，
+                            // 而 heights 是 snapshot state map，每次写都会让读它的
+                            // 组合（下面算让位位移的地方）失效 → 整列卡片每帧重组。
+                            val h = coords.size.height
+                            if (heights[id] != h) heights[id] = h
+                        },
                 ) {
                     // 卡片本体
                     cardContent(id)

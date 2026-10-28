@@ -160,6 +160,27 @@ private const val TRUNK_BOTTOM = 238f
  * 否则深灰压在深底上看不见），只有胎压不足才变红并带一圈红色光晕 ——
  * 绿色高亮会让四个轮子看起来一直「在报警」，反而弱化了真正的异常。
  */
+/**
+ * 车模轮廓的路径缓存。
+ *
+ * 这些 Path 的几何只跟「画布尺寸 + 前后轴比例」有关，跟颜色、胎压数据都无关。
+ * 但 `Canvas` 的绘制 lambda 在每次重绘时都会整段执行 —— 页面在 `verticalScroll` 里，
+ * 滑动时每一帧都会重放所有绘制命令，如果每帧重建 5 条 Path（几十个曲线操作），
+ * 那点开销会实实在在地吃掉帧预算。所以按 (w, h, f) 缓存，只有尺寸或标定值变化才重建。
+ */
+private class CarPathCache {
+    var w = -1f
+    var h = -1f
+    var f = Float.NaN
+    var body: Path? = null
+    var windshield: Path? = null
+    var rearWindow: Path? = null
+    var lampLeft: Path? = null
+    var lampRight: Path? = null
+}
+
+private val carPathCache = CarPathCache()
+
 @Composable
 fun TireCarOutline(
     tires: List<TireInfo>,
@@ -198,7 +219,18 @@ fun TireCarOutline(
         fun S(v: Float) = v * (scaleX + scaleY) / 2f
 
         // ---- 车身：几乎透明的玻璃壳 ----
-        val body = carBodyPath(::X, ::Y)
+        val cache = carPathCache
+        if (cache.w != size.width || cache.h != size.height || cache.f != f) {
+            cache.body = carBodyPath(::X, ::Y)
+            cache.windshield = windshieldPath(::X, ::Y)
+            cache.rearWindow = rearWindowPath(::X, ::Y)
+            cache.lampLeft = headlightPath(::X, ::Y, mirror = false)
+            cache.lampRight = headlightPath(::X, ::Y, mirror = true)
+            cache.w = size.width
+            cache.h = size.height
+            cache.f = f
+        }
+        val body = cache.body ?: return@Canvas
         drawPath(body, ink.copy(alpha = 0.05f))
         drawPath(body, ink.copy(alpha = 0.22f), style = Stroke(width = S(1.2f)))
 
@@ -207,7 +239,7 @@ fun TireCarOutline(
         drawLine(ink.copy(alpha = 0.09f), Offset(X(19f), Y(210f)), Offset(X(101f), Y(210f)), S(1f))
 
         // ---- 前风挡 ----
-        drawPath(windshieldPath(::X, ::Y), ink.copy(alpha = 0.07f))
+        cache.windshield?.let { drawPath(it, ink.copy(alpha = 0.07f)) }
 
         // ---- 天幕：一整块玻璃车顶（竖向渐变）----
         drawRoundRect(
@@ -228,7 +260,7 @@ fun TireCarOutline(
             style = Stroke(width = S(0.9f)),
         )
         // ---- 后风挡 ----
-        drawPath(rearWindowPath(::X, ::Y), ink.copy(alpha = 0.07f))
+        cache.rearWindow?.let { drawPath(it, ink.copy(alpha = 0.07f)) }
 
         // ---- 后备箱盖：尾部面板 + 中缝，车尾一下就认出来了 ----
         drawRoundRect(
@@ -248,8 +280,8 @@ fun TireCarOutline(
         // ---- 两个前车灯：俯视下分辨车头最直接的一笔 ----
         val lampColor = if (C.isDark) Color(0xFFFFE9A8).copy(alpha = 0.55f)
         else Color(0xFFFFC44D).copy(alpha = 0.70f)
-        drawPath(headlightPath(::X, ::Y, mirror = false), lampColor)
-        drawPath(headlightPath(::X, ::Y, mirror = true), lampColor)
+        cache.lampLeft?.let { drawPath(it, lampColor) }
+        cache.lampRight?.let { drawPath(it, lampColor) }
 
         // ---- 四个轮胎 ----
         TIRE_SLOTS.forEach { (label, slot) ->

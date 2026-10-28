@@ -285,6 +285,20 @@ class AppRuntime(context: Context) {
     }
 
     /**
+     * 是否在界面上显示实时帧率浮层（设置 → 显示）。
+     *
+     * 默认关闭。开着的时候右上角会有一枚小药丸显示 `帧率 · 屏幕刷新率`，
+     * 用来判断「卡」到底是掉帧还是屏幕本来就只有 60Hz。
+     */
+    private val _frameStatsVisible = mutableStateOf(namingPrefs.getBoolean("show_frame_stats", false))
+    val frameStatsVisible: State<Boolean> get() = _frameStatsVisible
+
+    fun setFrameStatsVisible(visible: Boolean) {
+        _frameStatsVisible.value = visible
+        namingPrefs.edit().putBoolean("show_frame_stats", visible).apply()
+    }
+
+    /**
      * 首页卡片顺序 / 显隐（编辑态长按拖动、删除、添加后持久化在这里）。
      *
      * 放在 namingPrefs：跟着本机走、登出不丢。存储内容就是 [HomeCardId] 名字的逗号串，
