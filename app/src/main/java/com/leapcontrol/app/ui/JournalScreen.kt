@@ -184,14 +184,14 @@ fun JournalScreen(runtime: AppRuntime) {
         JournalOrb(
             runtime = runtime,
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 14.dp, bottom = 6.dp),
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 10.dp),
         )
     }
 }
 
 /** 给右下角悬浮的灵感球留白：球 104 高，少一点会把页脚压在球底下。 */
-private val OrbReservedHeight = 126.dp
+private val OrbReservedHeight = 134.dp
 
 /** 车况里的总里程（拿不到就 null，不让 recordOdometer 收到 0 把基线拉低）。 */
 private fun currentOdometer(runtime: AppRuntime): Double? =
