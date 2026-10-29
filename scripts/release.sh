@@ -58,23 +58,27 @@ open(path, "w", encoding="utf-8").write(src)
 PY
 
 # ---- 2. 构建 ----
-APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
+# 产物名由 app/build.gradle.kts 的 androidComponents 改写成了 LeapControl-<version>-debug.apk，
+# 所以这里不能再写死 app-debug.apk，按最新修改时间挑一个。
+APK_SRC=""
 if [[ "$NO_BUILD" == "1" ]]; then
   echo "==> 跳过构建（--no-build）"
 else
   echo "==> 构建中（约 1 分钟）…"
   JAVA_HOME="$(/usr/libexec/java_home -v 21)" ./gradlew :app:assembleDebug --no-daemon -q
 fi
+APK_SRC="$(ls -t app/build/outputs/apk/debug/*.apk 2>/dev/null | head -1)"
 
 mkdir -p release
 # 附件名用英文名：GitHub 会过滤附件名里的中文，中文名上传后会变成一串残缺字符
 APK_DST="release/LeapControl-v${VERSION}-debug.apk"
-if [[ -f "$APK_SRC" ]]; then
+if [[ -f "${APK_SRC:-/nonexistent}" ]]; then
   cp -f "$APK_SRC" "$APK_DST"
-  cp -f "$APK_SRC" "../零控-debug.apk"
+  # 根目录那份给人手动取用，也带版本号，否则几个版本堆在一起分不清
+  cp -f "$APK_SRC" "../零控-v${VERSION}-debug.apk"
   echo "==> APK：${APK_DST}（$(du -h "$APK_DST" | cut -f1)）"
 else
-  echo "⚠️  没有找到 APK：$APK_SRC"
+  echo "⚠️  没有找到 APK（app/build/outputs/apk/debug/）"
 fi
 
 # ---- 3. 生成变更记录条目 ----

@@ -61,6 +61,18 @@ object JournalDates {
 
     fun startOfDay(date: LocalDate): Long = date.atStartOfDay(ZONE).toInstant().toEpochMilli()
 
+    /** 在某个时间戳上加减月份，回到当天 0 点（保养/保险的「N 个月后」都靠它）。 */
+    fun addMonths(millis: Long, months: Int): Long =
+        LocalDate.ofInstant(Instant.ofEpochMilli(millis), ZONE)
+            .plusMonths(months.toLong())
+            .atStartOfDay(ZONE).toInstant().toEpochMilli()
+
+    /** 到目标日期还剩多少天（负数 = 已经过了）。 */
+    fun daysUntil(targetMillis: Long, today: LocalDate = today()): Int =
+        java.time.temporal.ChronoUnit.DAYS
+            .between(today, LocalDate.ofInstant(Instant.ofEpochMilli(targetMillis), ZONE))
+            .toInt()
+
     /** `10月28日`；跨年时带年份。 */
     fun shortLabel(millis: Long, today: LocalDate = today()): String {
         val date = LocalDate.ofInstant(Instant.ofEpochMilli(millis), ZONE)
@@ -193,6 +205,127 @@ data class CostEntry(
     }
 }
 
+/**
+ * 保养计划。
+ *
+ * 三个数就能把「下次什么时候该去保养」算清楚：上次保养的日期与当时的表显里程、
+ * 以及周期（几个月 / 多少公里）。[mode] 决定看哪一个 —— 电车常见「一年或一万公里」，
+ * 两个都设就该两个都提醒，哪个先到算哪个。
+ *
+ * 里程用**当前总里程**去比，不在本地累加：总里程来自车况接口，比本地差分更准，
+ * 也不会因为几天没开就凭空少掉几百公里。
+ */
+data class MaintenancePlan(
+    val mode: Mode = Mode.BOTH,
+    /** 上次保养日期（当天 0 点）。 */
+    val lastDate: Long,
+    /** 上次保养时的表显总里程。 */
+    val lastKm: Double,
+    /** 间隔月数。 */
+    val months: Int,
+    /** 间隔公里数。 */
+    val km: Double,
+) {
+    enum class Mode(val id: String, val label: String) {
+        TIME("time", "按时间"),
+        KM("km", "按里程"),
+        BOTH("both", "都提醒"),
+        ;
+
+        companion object {
+            fun byId(id: String?): Mode = entries.firstOrNull { it.id == id } ?: BOTH
+        }
+    }
+
+    val valid: Boolean get() = lastDate > 0L && months in 1..120 && km >= 0.0
+
+    /** 下次保养日期；只看里程时为 null。 */
+    fun nextDate(): Long? =
+        if (mode == Mode.KM) null else JournalDates.addMonths(lastDate, months)
+
+    /** 下次保养里程；只看时间时为 null。 */
+    fun nextKm(): Double? = if (mode == Mode.TIME) null else lastKm + km
+
+    /** 距下次保养还剩几天（负数 = 已过期）。 */
+    fun remainingDays(): Int? = nextDate()?.let { JournalDates.daysUntil(it) }
+
+    /** 距下次保养还剩多少公里（负数 = 已超）。 */
+    fun remainingKm(currentKm: Double?): Double? {
+        val target = nextKm() ?: return null
+        val current = currentKm ?: return null
+        return target - current
+    }
+
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("mode", mode.id)
+        put("lastDate", lastDate)
+        put("lastKm", lastKm)
+        put("months", months)
+        put("km", km)
+    }
+
+    companion object {
+        fun fromJson(raw: JSONObject?): MaintenancePlan? {
+            if (raw == null) return null
+            val lastDate = raw.opt("lastDate")?.toString()?.toLongOrNull() ?: return null
+            val months = raw.opt("months")?.toString()?.toIntOrNull() ?: 12
+            val km = raw.opt("km")?.toString()?.toDoubleOrNull() ?: 10_000.0
+            val plan = MaintenancePlan(
+                mode = Mode.byId(raw.optString("mode")),
+                lastDate = lastDate,
+                lastKm = raw.opt("lastKm")?.toString()?.toDoubleOrNull() ?: 0.0,
+                months = months,
+                km = km,
+            )
+            return plan.takeIf { it.valid }
+        }
+    }
+}
+
+/**
+ * 保险续费计划。
+ *
+ * 只记「起保日期 + 保期」，到期日现场算 —— 存一个到期日，续一年之后
+ * 就容易忘了改，变成两个日期互相打架。
+ */
+data class InsurancePlan(
+    val company: String = "",
+    /** 起保（购买）日期，当天 0 点。 */
+    val startDate: Long,
+    /** 保期月数，家用车一般 12。 */
+    val months: Int = 12,
+    /** 保费，0 表示没填。 */
+    val premium: Double = 0.0,
+) {
+    val valid: Boolean get() = startDate > 0L && months in 1..120
+
+    fun expireDate(): Long = JournalDates.addMonths(startDate, months)
+
+    /** 距到期还剩几天（负数 = 已过期）。 */
+    fun remainingDays(): Int = JournalDates.daysUntil(expireDate())
+
+    fun toJson(): JSONObject = JSONObject().apply {
+        if (company.isNotBlank()) put("company", company)
+        put("startDate", startDate)
+        put("months", months)
+        put("premium", premium)
+    }
+
+    companion object {
+        fun fromJson(raw: JSONObject?): InsurancePlan? {
+            if (raw == null) return null
+            val start = raw.opt("startDate")?.toString()?.toLongOrNull() ?: return null
+            val plan = InsurancePlan(
+                company = raw.optString("company").orEmpty(),
+                startDate = start,
+                months = raw.opt("months")?.toString()?.toIntOrNull() ?: 12,
+                premium = raw.opt("premium")?.toString()?.toDoubleOrNull() ?: 0.0,
+            )
+            return plan.takeIf { it.valid }
+        }
+    }
+}
+
 /** 一次城市打卡。同一个城市只保留一条（[id] 就是「省/市」）。 */
 data class CityCheckin(
     val id: String,
@@ -275,10 +408,15 @@ data class JournalData(
     val odometerDay: String? = null,
     /** 心愿单：想去还没去的城市。打卡成功会自动从这里移除。 */
     val wishes: List<CityWish> = emptyList(),
+    /** 保养计划：填了才提醒，null = 没设置。 */
+    val maintenance: MaintenancePlan? = null,
+    /** 保险续费计划：同上。 */
+    val insurance: InsurancePlan? = null,
 ) {
     val isEmpty: Boolean
         get() = goal == null && costs.isEmpty() && checkins.isEmpty() &&
-            dailyKm.isEmpty() && wishes.isEmpty()
+            dailyKm.isEmpty() && wishes.isEmpty() &&
+            maintenance == null && insurance == null
 
     /** 已点亮城市数。 */
     val cityCount: Int get() = checkins.size
@@ -328,6 +466,8 @@ data class JournalData(
         if (wishes.isNotEmpty()) {
             put("wishes", JSONArray().apply { wishes.forEach { put(it.toJson()) } })
         }
+        maintenance?.let { put("maintenance", it.toJson()) }
+        insurance?.let { put("insurance", it.toJson()) }
         odometerKm?.let { put("odometerKm", it) }
         odometerDay?.let { put("odometerDay", it) }
     }
@@ -376,6 +516,8 @@ data class JournalData(
                 odometerDay = raw.optString("odometerDay").takeIf { it.isNotBlank() },
                 // 心愿单按加入时间正序：先想去的排前面，像一张「要去的清单」
                 wishes = wishes.sortedBy { it.added },
+                maintenance = MaintenancePlan.fromJson(raw.optJSONObject("maintenance")),
+                insurance = InsurancePlan.fromJson(raw.optJSONObject("insurance")),
             )
         }
     }

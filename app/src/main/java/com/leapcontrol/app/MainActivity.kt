@@ -32,6 +32,18 @@ class MainActivity : ComponentActivity() {
         QuickTiles.refreshAll(this)
     }
 
+    /**
+     * 拿到焦点时再申请一次刷新率。
+     *
+     * 分屏、小窗、下拉通知栏、被别的应用短暂压住之后，系统会把显示模式打回默认档；
+     * onResume 不一定每次都来，onWindowFocusChanged 却几乎必来，补这一处能减少
+     * 「用着用着就掉回 60 帧」的体感。
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) DisplayRefresh.apply(window)
+    }
+
     /** 进入后台：暂停动态背景，避免不可见时继续解码耗电。 */
     override fun onPause() {
         super.onPause()

@@ -29,13 +29,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -714,6 +720,117 @@ fun JournalBars(
                     maxLines = 1,
                 )
             }
+        }
+    }
+}
+
+/**
+ * 折线趋势图（成本页用它替代柱状图）。
+ *
+ * 为什么换掉柱状图：柱子的高度只能靠肉眼比，横轴一密（近 8 周 / 6 个月）
+ * 就变成一排细条，既看不出走势也读不出具体数；折线天然表达「涨还是跌」。
+ *
+ * [values] 是 0~1 的归一化高度（调用方按本期最大值算好），[labels] 是横轴文字。
+ * 刻度文字走 Canvas 内的 `drawText`，而不是外面套一排 `Row` —— 只有这样才能
+ * 让标签中心与折线拐点严格对齐（Row 均分是「格子中心」，与 `i/(n-1)` 的采样点错位）。
+ */
+@Composable
+fun JournalLineChart(
+    values: List<Float>,
+    labels: List<String>,
+    modifier: Modifier = Modifier,
+    height: Dp = 132.dp,
+    color: Color = LocalAppColors.current.accent,
+) {
+    val C = LocalAppColors.current
+    if (values.isEmpty()) return
+
+    val measurer = rememberTextMeasurer()
+    val labelStyle = TextStyle(color = C.textSecondary, fontSize = 9.sp)
+    val gridColor = C.border
+
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height),
+    ) {
+        val topPad = 8.dp.toPx()
+        val bottomPad = 20.dp.toPx()
+        val chartH = size.height - topPad - bottomPad
+        if (chartH <= 0f) return@Canvas
+        val chartW = size.width
+        val n = values.size
+        val bottom = topPad + chartH
+        val stepX = if (n > 1) chartW / (n - 1) else chartW
+
+        // 三条横向参考线：给「高低」一个可对照的标尺，又不会抢折线的注意力
+        repeat(3) { i ->
+            val y = topPad + chartH * i / 2f
+            drawLine(
+                color = gridColor.copy(alpha = 0.45f),
+                start = Offset(0f, y),
+                end = Offset(chartW, y),
+                strokeWidth = 1.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(
+                    floatArrayOf(4.dp.toPx(), 5.dp.toPx()),
+                ),
+            )
+        }
+
+        val points = values.mapIndexed { i, raw ->
+            Offset(stepX * i, bottom - chartH * raw.coerceIn(0f, 1f))
+        }
+
+        // 面积：折线下方的淡渐变，让「这一期整体多高」一眼可见
+        if (n > 1) {
+            val area = Path().apply {
+                moveTo(points[0].x, bottom)
+                points.forEach { lineTo(it.x, it.y) }
+                lineTo(points.last().x, bottom)
+                close()
+            }
+            drawPath(
+                path = area,
+                brush = Brush.verticalGradient(
+                    colors = listOf(color.copy(alpha = 0.24f), color.copy(alpha = 0f)),
+                    startY = topPad,
+                    endY = bottom,
+                ),
+            )
+        }
+
+        // 折线本体：圆头圆角，2dp —— 细了在渐变背景上看不清，粗了显得笨
+        if (n > 1) {
+            val line = Path().apply {
+                moveTo(points[0].x, points[0].y)
+                points.drop(1).forEach { lineTo(it.x, it.y) }
+            }
+            drawPath(
+                path = line,
+                color = color,
+                style = Stroke(
+                    width = 2.dp.toPx(),
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round,
+                ),
+            )
+        }
+
+        // 采样点：普通点小一圈，最后一个（当期）加号放大 + 白芯，作为「你现在在这儿」
+        points.forEachIndexed { i, p ->
+            val isLast = i == n - 1
+            drawCircle(color, radius = if (isLast) 4.2.dp.toPx() else 2.2.dp.toPx(), center = p)
+            if (isLast) drawCircle(Color.White, radius = 1.7.dp.toPx(), center = p)
+        }
+
+        // 横轴标签：点多了隔一个画（保留最后一个），否则 8 个 9sp 字会糊成一片
+        labels.forEachIndexed { i, label ->
+            if (label.isEmpty()) return@forEachIndexed
+            if (n > 6 && i % 2 == 1 && i != n - 1) return@forEachIndexed
+            val layout = measurer.measure(AnnotatedString(label), style = labelStyle)
+            val x = (points[i].x - layout.size.width / 2f)
+                .coerceIn(0f, (chartW - layout.size.width).coerceAtLeast(0f))
+            drawText(layout, topLeft = Offset(x, bottom + 5.dp.toPx()))
         }
     }
 }

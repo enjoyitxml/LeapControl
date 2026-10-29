@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -73,6 +74,10 @@ fun JournalScreen(runtime: AppRuntime) {
 
     var page by remember { mutableStateOf<JournalPage?>(null) }
     var loaded by remember { mutableStateOf(false) }
+    // 两张提醒卡的编辑弹层
+    var showMaintenance by remember { mutableStateOf(false) }
+    var showInsurance by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         val loadedData = journal.ensureLoaded()
@@ -154,6 +159,20 @@ fun JournalScreen(runtime: AppRuntime) {
             }
             Spacer(Modifier.height(16.dp))
 
+            // ---- 保养 / 保险：不记就会忘，摆在零记最上面 ----
+            MaintenanceCard(
+                plan = data.maintenance,
+                currentKm = vehicleKm?.takeIf { it > 0 },
+                onClick = { showMaintenance = true },
+            )
+            Spacer(Modifier.height(10.dp))
+            InsuranceCard(
+                plan = data.insurance,
+                onClick = { showInsurance = true },
+            )
+
+            Spacer(Modifier.height(12.dp))
+
             GoalOverviewCard(
                 data = data,
                 progress = progress,
@@ -191,6 +210,31 @@ fun JournalScreen(runtime: AppRuntime) {
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 10.dp),
         )
+
+        if (showMaintenance) {
+            MaintenanceSheet(
+                plan = data.maintenance,
+                currentKm = vehicleKm?.takeIf { it > 0 },
+                onDismiss = { showMaintenance = false },
+                onSave = { plan ->
+                    journal.setMaintenance(plan)
+                    showMaintenance = false
+                    toast(context, if (plan == null) "已关闭保养提醒" else "保养提醒已保存")
+                },
+            )
+        }
+
+        if (showInsurance) {
+            InsuranceSheet(
+                plan = data.insurance,
+                onDismiss = { showInsurance = false },
+                onSave = { plan ->
+                    journal.setInsurance(plan)
+                    showInsurance = false
+                    toast(context, if (plan == null) "已关闭保险提醒" else "保险提醒已保存")
+                },
+            )
+        }
     }
 }
 

@@ -195,10 +195,12 @@ fun MainScreen(
     // 版本更新弹窗：检测到 GitHub 新版本且未忽略该版本时，启动后自动弹出
     var showUpdateDialog by remember { mutableStateOf(false) }
     var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
-    // 更新包下载状态：仓库已私有，浏览器直链打不开，必须在 App 内带令牌下载
+    // 更新包下载状态：仓库已公开，下载全程匿名走 GitHub API
     var updateDownloading by remember { mutableStateOf(false) }
     var updateProgress by remember { mutableStateOf<Float?>(null) }
     var updateDownloadError by remember { mutableStateOf<String?>(null) }
+    // 最小化：弹窗收起、下载照跑，底部留一条悬浮进度条
+    var updateMinimized by remember { mutableStateOf(false) }
     val updateScope = rememberCoroutineScope()
 
     val systemInDark = isSystemInDarkTheme()
@@ -252,6 +254,7 @@ fun MainScreen(
         val result = runCatching { runtime.checkForUpdate() }.getOrNull()
         if (result is UpdateCheckResult.Newer && result.info.version != runtime.dismissedVersion()) {
             pendingUpdate = result.info
+            updateMinimized = false
             showUpdateDialog = true
         }
     }
@@ -471,13 +474,15 @@ fun MainScreen(
             }
 
             // ---- 版本更新提醒弹窗（覆盖全局，最高层级）----
-            if (showUpdateDialog && pendingUpdate != null) {
+            // 最小化时不画弹窗，改由下面的悬浮条接管（下载协程不受影响，继续跑）
+            if (showUpdateDialog && pendingUpdate != null && !updateMinimized) {
                 UpdateDialog(
                     info = pendingUpdate!!,
                     currentVersion = runtime.currentVersion(),
                     downloading = updateDownloading,
                     progress = updateProgress,
                     downloadError = updateDownloadError,
+                    onMinimize = { updateMinimized = true },
                     onOpenDownload = {
                         val info = pendingUpdate
                         if (info != null && !updateDownloading) {
@@ -493,6 +498,7 @@ fun MainScreen(
                                     onSuccess = { file ->
                                         if (runtime.installUpdate(file)) {
                                             showUpdateDialog = false
+                                            updateMinimized = false
                                         } else {
                                             updateDownloadError =
                                                 "安装包已下载，但需要先在系统里允许「安装未知应用」，授权后回来再点一次"
@@ -509,12 +515,34 @@ fun MainScreen(
                         runtime.openExternal(pendingUpdate!!.htmlUrl)
                         showUpdateDialog = false
                     },
-                    onDismiss = { showUpdateDialog = false },
+                    onDismiss = {
+                        // 下载中收起弹窗＝转最小化：进度条还在，别让用户以为下载没了
+                        if (updateDownloading) updateMinimized = true else showUpdateDialog = false
+                    },
                     onNeverAgain = {
                         runtime.setDismissedVersion(pendingUpdate!!.version)
+                        updateMinimized = false
                         showUpdateDialog = false
                     },
                 )
+            }
+
+            // ---- 最小化后的更新悬浮条：贴在底部导航上方 ----
+            val miniInfo = pendingUpdate
+            if (updateMinimized && miniInfo != null) {
+                // 外面套一层 Box 只为拿 BoxScope（父级是 Column，没有 align）
+                Box(modifier = Modifier.fillMaxSize()) {
+                    UpdateMiniBar(
+                        version = miniInfo.version,
+                        downloading = updateDownloading,
+                        progress = updateProgress,
+                        error = updateDownloadError,
+                        onExpand = { updateMinimized = false },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(start = 22.dp, end = 22.dp, bottom = 104.dp),
+                    )
+                }
             }
         }
     }

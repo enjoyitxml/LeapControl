@@ -1200,7 +1200,7 @@ fun HomeScreen(
                     val locked = currentStatus?.locked
                     // 闭锁状态始终显示
                     StatusItem(
-                        icon = if (locked == true) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                        iconRes = if (locked == true) R.drawable.ic_qc_lock else R.drawable.ic_qc_unlock,
                         label = when (locked) {
                             true -> "车辆已闭锁"
                             false -> "车辆未闭锁"
@@ -1210,10 +1210,10 @@ fun HomeScreen(
                     )
                     // 已开启提醒：排在「车辆已闭锁」正下方、纵向排列；未开启不提示
                     val openHints = buildList {
-                        if (currentStatus?.windowOpen == true) add(Icons.Filled.Window to "车窗已开启")
-                        if (currentStatus?.trunkOpen == true) add(Icons.Filled.Luggage to "后备箱已开启")
-                        if (currentStatus?.sunshadeOpen == true) add(Icons.Filled.Curtains to "遮阳帘已开启")
-                        if (currentStatus?.acOn == true) add(Icons.Filled.AcUnit to "空调已开启")
+                        if (currentStatus?.windowOpen == true) add(R.drawable.ic_qc_window to "车窗已开启")
+                        if (currentStatus?.trunkOpen == true) add(R.drawable.ic_qc_trunk to "后备箱已开启")
+                        if (currentStatus?.sunshadeOpen == true) add(R.drawable.ic_qc_sunshade to "遮阳帘已开启")
+                        if (currentStatus?.acOn == true) add(R.drawable.ic_qc_ac to "空调已开启")
                     }
                     if (openHints.isNotEmpty()) {
                         Spacer(Modifier.height(10.dp))
@@ -1221,9 +1221,9 @@ fun HomeScreen(
                             modifier = Modifier.wrapContentWidth(),
                             horizontalAlignment = Alignment.End,
                         ) {
-                            openHints.forEachIndexed { index, (icon, text) ->
+                            openHints.forEachIndexed { index, (iconRes, text) ->
                                 if (index > 0) Spacer(Modifier.height(8.dp))
-                                StatusItem(icon, text, alert = true)
+                                StatusItem(iconRes, text, alert = true)
                             }
                         }
                     }
@@ -1269,7 +1269,12 @@ fun HomeScreen(
                         bitmap = carBitmap!!.asImageBitmap(),
                         contentDescription = "车模",
                         contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize(),
+                        // 千像素级的透明位图，滚动时父级每帧重绘都会重做一次缩放采样。
+                        // 单独提一层 graphicsLayer 之后，滚动只更新这块的平移矩阵，
+                        // 位图本身不再重绘 —— 这是首页上下滑时最实的一笔开销。
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(),
                     )
                     // 快捷换壁纸：小白点放在车模右上角，正好落在车顶右侧的空画面上。
                     // 车模上的点换的是「主题壁纸」，相伴卡上的点换的是「相伴卡背景」，两者互不影响。
@@ -2551,13 +2556,16 @@ private fun MileageRow(
  * 车辆状态面板里的单行状态：左图标 + 右文字。
  * 文字统一用主色（浅色模式黑、深色模式白）—— 状态提示压在动态背景上时，
  * 灰色或红色小字会糊掉；警示信息改由图标颜色承担（[alert]=true 时图标转红）。
+ *
+ * 图标用「快捷控车」那一套 `ic_qc_*` 矢量图（与首页圆钮同源），
+ * 不再混用 Material 图标 —— 两套线宽/圆角不同，并排时会明显不是一家人。
  */
 @Composable
-private fun StatusItem(icon: ImageVector, label: String, alert: Boolean) {
+private fun StatusItem(iconRes: Int, label: String, alert: Boolean) {
     val C = LocalAppColors.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
-            imageVector = icon,
+            painter = painterResource(iconRes),
             contentDescription = null,
             tint = if (alert) STATUS_ALERT_RED else C.textPrimary,
             modifier = Modifier.size(16.dp),

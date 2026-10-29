@@ -294,6 +294,14 @@ class JournalRuntime(
 
     fun totalKm(): Double = ensureLoaded().dailyKm.values.fold(0.0) { acc, v -> acc + v }
 
+    // ---------------- 保养 / 保险提醒 ----------------
+
+    /** 设置或清除保养计划（传 null 即关闭提醒）。 */
+    fun setMaintenance(plan: MaintenancePlan?) = mutate { it.copy(maintenance = plan) }
+
+    /** 设置或清除保险计划（传 null 即关闭提醒）。 */
+    fun setInsurance(plan: InsurancePlan?) = mutate { it.copy(insurance = plan) }
+
     private fun newId(): String = UUID.randomUUID().toString().take(8)
 }
 

@@ -24,8 +24,10 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTER_DIR="$(dirname "$PROJECT_DIR")"
-APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-COPY_APK="$OUTER_DIR/零控-debug.apk"
+# 产物名带版本号（见 app/build.gradle.kts 的 androidComponents），这里按最新时间挑
+APK="$(ls -t "$PROJECT_DIR"/app/build/outputs/apk/debug/*.apk 2>/dev/null | head -1)"
+APK_VERSION="$(basename "${APK:-debug}" | sed -n 's/^LeapControl-\(.*\)-debug\.apk$/\1/p')"
+COPY_APK="$OUTER_DIR/零控-v${APK_VERSION:-unknown}-debug.apk"
 PKG="com.leapcontrol.app"
 AVD_NAME="${AVD_NAME:-LeapControl_Test}"
 LOG="/tmp/leapcontrol-emulator.log"

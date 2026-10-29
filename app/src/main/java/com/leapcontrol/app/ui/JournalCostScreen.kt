@@ -23,6 +23,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -69,6 +72,9 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
     var addPrefill by remember { mutableStateOf("") }
     var range by remember { mutableStateOf(CostRange.MONTH) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
+    // 正在编辑的那一笔：null = 不是编辑态。用整条 entry 而不是 id，
+    // 弹层里就能直接拿到初始值，删改过程中列表被别处改动也不至于读到空。
+    var editing by remember { mutableStateOf<CostEntry?>(null) }
 
     val amount = summary.amountOf(range)
     val delta = summary.deltaOf(range)
@@ -184,12 +190,15 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
                     )
                 }
                 Spacer(Modifier.height(14.dp))
-                JournalBars(
-                    values = trend.map { if (trendMax > 0) (it.amount / trendMax).toFloat() else 0f },
-                    labels = trend.map { it.label },
-                    valueTexts = trend.map { if (it.amount > 0) CostStats.money(it.amount) else "" },
-                    barHeight = 58.dp,
-                )
+                if (trendMax <= 0.0) {
+                    JournalEmpty("这一期还没有支出。记一笔之后，这里就会出现走势。")
+                } else {
+                    JournalLineChart(
+                        values = trend.map { (it.amount / trendMax).toFloat() },
+                        labels = trend.map { it.label },
+                        height = 132.dp,
+                    )
+                }
             }
 
             Spacer(Modifier.height(12.dp))
@@ -318,6 +327,7 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
                     data.costs.take(40).forEach { entry ->
                         CostRow(
                             entry = entry,
+                            onEdit = { editing = entry },
                             onDelete = { confirmDelete = entry.id },
                         )
                     }
@@ -328,7 +338,7 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
         }
 
         if (showAdd) {
-            AddCostSheet(
+            CostSheet(
                 initial = addPrefill,
                 onDismiss = { showAdd = false },
                 onVoice = {
@@ -339,6 +349,28 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
                     journal.addCost(category, amountValue, date, note)
                     showAdd = false
                     toast(context, "已记 ${category.label} ¥${CostStats.money(amountValue)}")
+                },
+            )
+        }
+
+        // 编辑已有的一笔：金额、分类、日期、备注都能改，改完立刻回写并刷新统计
+        val editingEntry = editing
+        if (editingEntry != null) {
+            CostSheet(
+                initial = "",
+                editing = editingEntry,
+                onDismiss = { editing = null },
+                onSave = { category, amountValue, date, note ->
+                    journal.updateCost(
+                        editingEntry.copy(
+                            category = category,
+                            amount = Math.round(amountValue * 100) / 100.0,
+                            date = JournalDates.startOfDay(date),
+                            note = note,
+                        ),
+                    )
+                    editing = null
+                    toast(context, "已改成 ${category.label} ¥${CostStats.money(amountValue)}")
                 },
             )
         }
@@ -375,13 +407,24 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
 
         val deleting = confirmDelete
         if (deleting != null) {
+            // 确认框里把那一条的具体内容念一遍：列表里行挨行，「删掉这一笔」很容易删错行
+            val target = data.costs.firstOrNull { it.id == deleting }
             JournalConfirm(
-                title = "删掉这一笔？",
-                desc = "删除后统计会立刻更新，不能撤销。",
-                confirmText = "删除",
+                title = "删除这一笔？",
+                desc = buildString {
+                    if (target != null) {
+                        append("${target.category.label} ¥${CostStats.money(target.amount)}")
+                        append(" · ${JournalDates.shortLabel(target.date)}")
+                        if (target.note.isNotBlank()) append(" · ${target.note}")
+                        append("\n\n")
+                    }
+                    append("删除后统计会立刻更新，且无法撤销。")
+                },
+                confirmText = "确认删除",
                 onConfirm = {
                     journal.deleteCost(deleting)
                     confirmDelete = null
+                    toast(context, "已删除")
                 },
                 onDismiss = { confirmDelete = null },
             )
@@ -390,11 +433,18 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
 }
 
 @Composable
-private fun CostRow(entry: CostEntry, onDelete: () -> Unit) {
+private fun CostRow(
+    entry: CostEntry,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val C = LocalAppColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // 整行可点＝改这一笔：比再塞一个「编辑」按钮更省地方，也不容易点错
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onEdit)
             .padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -421,41 +471,57 @@ private fun CostRow(entry: CostEntry, onDelete: () -> Unit) {
             fontWeight = FontWeight.Medium,
         )
         Spacer(Modifier.width(10.dp))
-        Text(
-            "删",
-            color = C.textSecondary,
-            fontSize = 11.sp,
+        // 删除键：一个带底的圆形垃圾桶，而不是光秃秃一个「删」字 ——
+        // 圆形底既是可点区域（30dp）也是「这是按钮」的提示，眼睛扫过去就能定位
+        Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .clickable(onClick = onDelete)
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-        )
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(C.chipBg)
+                .clickable(onClick = onDelete),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Delete,
+                contentDescription = "删除这一笔",
+                tint = C.textSecondary,
+                modifier = Modifier.size(15.dp),
+            )
+        }
     }
 }
 
 /**
- * 「记一笔」弹层。
+ * 「记一笔 / 改这一笔」弹层。
  *
  * 输入 → 实时解析 → 可改 → 保存。语音走的是同一个解析器（Siri 式浮层收音），
  * 所以「充电 50」无论是说的还是打的，结果都一样。
+ *
+ * [editing] 非空时进入编辑态：表单预填那一条的现值，标题与按钮文案跟着换，
+ * 语音按钮隐藏（已经有一条记录在手，再念一句只会把金额盖掉，不如直接改数字）。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AddCostSheet(
+private fun CostSheet(
     initial: String,
+    editing: CostEntry? = null,
     onDismiss: () -> Unit,
-    onVoice: () -> Unit,
+    onVoice: (() -> Unit)? = null,
     onSave: (CostCategory, Double, Long, String) -> Unit,
 ) {
     val C = LocalAppColors.current
     val context = LocalContext.current
+    val isEdit = editing != null
 
     var input by remember { mutableStateOf(initial) }
     val parsed = remember(input) { CostParser.parse(input) }
 
-    var category by remember { mutableStateOf<CostCategory?>(null) }
-    var amountText by remember { mutableStateOf("") }
-    var date by remember { mutableStateOf(JournalDates.todayStart()) }
+    var category by remember { mutableStateOf(editing?.category) }
+    var amountText by remember { mutableStateOf(editing?.let { plainAmount(it.amount) }.orEmpty()) }
+    var date by remember { mutableStateOf(editing?.date ?: JournalDates.todayStart()) }
+    var note by remember { mutableStateOf(editing?.note.orEmpty()) }
+    // 用户手动改过备注之后，就不要再被一句话解析的结果覆盖
+    var noteEdited by remember { mutableStateOf(false) }
 
     // 输入变化 → 重新解析并灌进表单。
     // 放在 LaunchedEffect 里而不是组合期直接写：组合期改状态会多走一轮重组，
@@ -466,6 +532,7 @@ private fun AddCostSheet(
             category = hit.category
             amountText = plainAmount(hit.amount)
             date = hit.date
+            if (!noteEdited) note = hit.note
         }
     }
 
@@ -489,7 +556,12 @@ private fun AddCostSheet(
                 .padding(20.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("记一笔", color = C.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (isEdit) "改这一笔" else "记一笔",
+                    color = C.textPrimary,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
                 Spacer(Modifier.weight(1f))
                 Text(
                     "取消",
@@ -503,26 +575,28 @@ private fun AddCostSheet(
             }
             Spacer(Modifier.height(12.dp))
 
-            // 一句话输入 + 语音
+            // 一句话输入 + 语音（编辑态不显示语音：见函数注释）
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
                     JournalInput(
                         value = input,
                         onValueChange = { input = it },
-                        placeholder = "充电 50、昨天停车 15、保养 1200",
+                        placeholder = if (isEdit) "也可以重新说一句，自动改填" else "充电 50、昨天停车 15、保养 1200",
                     )
                 }
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(CircleShape)
-                        .background(C.accent.copy(alpha = 0.15f))
-                        .border(1.dp, C.accent.copy(alpha = 0.5f), CircleShape)
-                        .clickable(onClick = onVoice),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("语音", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                if (onVoice != null) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(C.accent.copy(alpha = 0.15f))
+                            .border(1.dp, C.accent.copy(alpha = 0.5f), CircleShape)
+                            .clickable(onClick = onVoice),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("语音", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
 
@@ -571,6 +645,16 @@ private fun AddCostSheet(
                 }
             }
 
+            Spacer(Modifier.height(10.dp))
+            JournalInput(
+                value = note,
+                onValueChange = {
+                    note = it
+                    noteEdited = true
+                },
+                placeholder = "备注（可选）：家附近快充",
+            )
+
             if (input.isNotBlank()) {
                 Spacer(Modifier.height(10.dp))
                 Text(
@@ -601,14 +685,19 @@ private fun AddCostSheet(
                                 amountValue,
                                 date,
                                 // 备注只存去掉金额的原文（「充电」），不把整句「充电 50」塞进流水
-                                parsed?.note.orEmpty(),
+                                note.trim(),
                             )
                         }
                     }
                     .padding(vertical = 15.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("保存", color = readableOn(C.accent), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (isEdit) "保存修改" else "保存",
+                    color = readableOn(C.accent),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
             Spacer(Modifier.height(6.dp))
         }

@@ -69,6 +69,26 @@ android {
     }
 }
 
+/**
+ * 让 debug 产物直接带上版本号：`app-debug.apk` → `LeapControl-0.2.46-debug.apk`。
+ *
+ * 为什么不用 `archivesBaseName`：AGP 8 里它对 APK 不再生效（只影响 AAR/JAR），
+ * 改输出文件名的正规入口是 variant output 的 `outputFileName`。
+ * 版本号从 defaultConfig 读，保证与 `versionName` 永远一致，不需要在这儿再抄一份。
+ */
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        val vName = android.defaultConfig.versionName ?: "0"
+        variant.outputs.forEach { output ->
+            // outputFileName 不在公共的 VariantOutput 接口上，只有 AGP 内部实现类
+            // VariantOutputImpl 才暴露它，所以这里必须下转一次（AGP 8.x 的通行做法）。
+            (output as? com.android.build.api.variant.impl.VariantOutputImpl)
+                ?.outputFileName
+                ?.set("LeapControl-$vName-debug.apk")
+        }
+    }
+}
+
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")

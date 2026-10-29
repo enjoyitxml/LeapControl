@@ -93,6 +93,8 @@ object GitHubUpdate {
             assetId = assetId,
             assetName = assetName,
             assetSize = assetSize,
+            // Release 正文就是「更新说明」，弹窗里折叠展示；截断防止个别超长说明把弹窗撑爆
+            notes = root.optString("body").orEmpty().trim().take(4000),
         )
     }
 
@@ -189,4 +191,6 @@ data class AppUpdateInfo(
     val assetName: String? = null,
     /** 附件大小（字节），0 表示未知。 */
     val assetSize: Long = 0L,
+    /** Release 正文（更新说明原文，可能为空 —— 兜底路径拿不到）。 */
+    val notes: String = "",
 )

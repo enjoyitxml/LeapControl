@@ -25,6 +25,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -119,6 +122,10 @@ fun JournalCheckinScreen(runtime: AppRuntime, onBack: () -> Unit) {
     val data by journal.data
 
     var showPicker by remember { mutableStateOf(false) }
+    // 待确认的删除目标：打卡与心愿各一个。点垃圾桶先弹确认，确认后才真的删 ——
+    // 打卡记录没有「撤销」，误删一个城市就得重新打卡（日期还会变成今天）。
+    var pendingCheckin by remember { mutableStateOf<CityCheckin?>(null) }
+    var pendingWish by remember { mutableStateOf<CityWish?>(null) }
 
     val totalKm = data.dailyKm.values.fold(0.0) { a, b -> a + b }
     val bestDay = data.dailyKm.maxByOrNull { it.value }
@@ -222,10 +229,7 @@ fun JournalCheckinScreen(runtime: AppRuntime, onBack: () -> Unit) {
                                     if (ok) "点亮 ${wish.city}，心愿达成" else "${wish.city} 已经打过卡了",
                                 )
                             },
-                            onRemove = {
-                                journal.removeWish(wish.id)
-                                toast(context, "已从心愿单移除 ${wish.city}")
-                            },
+                            onRemove = { pendingWish = wish },
                         )
                     }
                 }
@@ -287,10 +291,7 @@ fun JournalCheckinScreen(runtime: AppRuntime, onBack: () -> Unit) {
                         list.forEach { checkin ->
                             CheckinRow(
                                 checkin = checkin,
-                                onDelete = {
-                                    journal.removeCheckin(checkin.id)
-                                    toast(context, "已取消 ${checkin.city} 的打卡")
-                                },
+                                onDelete = { pendingCheckin = checkin },
                             )
                         }
                     }
@@ -298,6 +299,38 @@ fun JournalCheckinScreen(runtime: AppRuntime, onBack: () -> Unit) {
             }
 
             Spacer(Modifier.height(28.dp))
+        }
+
+        // ---- 删除确认：打卡与心愿都要过一道，避免误触直接丢数据 ----
+        val wishToDelete = pendingWish
+        if (wishToDelete != null) {
+            JournalConfirm(
+                title = "移出心愿单？",
+                desc = "「${wishToDelete.city}」会从心愿单移除，之后还可以重新加入。",
+                confirmText = "移出",
+                onConfirm = {
+                    journal.removeWish(wishToDelete.id)
+                    pendingWish = null
+                    toast(context, "已从心愿单移除 ${wishToDelete.city}")
+                },
+                onDismiss = { pendingWish = null },
+            )
+        }
+
+        val checkinToDelete = pendingCheckin
+        if (checkinToDelete != null) {
+            JournalConfirm(
+                title = "取消这次打卡？",
+                desc = "「${checkinToDelete.city}」的足迹会被删掉，点亮城市数与省份数立刻减少，" +
+                    "删除后不能恢复（重新打卡日期会变成当天）。",
+                confirmText = "确认删除",
+                onConfirm = {
+                    journal.removeCheckin(checkinToDelete.id)
+                    pendingCheckin = null
+                    toast(context, "已取消 ${checkinToDelete.city} 的打卡")
+                },
+                onDismiss = { pendingCheckin = null },
+            )
         }
 
         if (showPicker) {
@@ -367,15 +400,7 @@ private fun WishRow(wish: CityWish, onFulfill: () -> Unit, onRemove: () -> Unit)
             Text("去过了", color = C.accent, fontSize = 11.sp, fontWeight = FontWeight.Medium)
         }
         Spacer(Modifier.width(8.dp))
-        Text(
-            "删",
-            color = C.textSecondary,
-            fontSize = 11.sp,
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .clickable(onClick = onRemove)
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-        )
+        DeleteCircleButton(contentDescription = "移出心愿单", onClick = onRemove)
     }
 }
 
@@ -424,14 +449,32 @@ private fun CheckinRow(checkin: CityCheckin, onDelete: () -> Unit) {
             fontSize = 10.sp,
         )
         Spacer(Modifier.width(10.dp))
-        Text(
-            "删",
-            color = C.textSecondary,
-            fontSize = 11.sp,
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .clickable(onClick = onDelete)
-                .padding(horizontal = 6.dp, vertical = 4.dp),
+        DeleteCircleButton(contentDescription = "取消这次打卡", onClick = onDelete)
+    }
+}
+
+/**
+ * 圆形删除键：垃圾桶图标 + 浅底。
+ *
+ * 原来这里是一个光秃秃的「删」字，既不像按钮、点击区也只有十来个 dp。
+ * 换成带底的圆钮后，一眼能看出「这是个按钮」，手指也容易点中。
+ */
+@Composable
+private fun DeleteCircleButton(contentDescription: String, onClick: () -> Unit) {
+    val C = LocalAppColors.current
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .background(C.chipBg)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Delete,
+            contentDescription = contentDescription,
+            tint = C.textSecondary,
+            modifier = Modifier.size(14.dp),
         )
     }
 }

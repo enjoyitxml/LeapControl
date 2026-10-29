@@ -1,5 +1,6 @@
 package com.leapcontrol.app.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -47,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
@@ -257,7 +259,11 @@ fun SettingsScreen(
         // ---- 隐藏设置 ----
         // 官方 logo 那套图标带商标风险，不能摆在明面上，默认关着；
         // 打开之后「个性化」才会多出「应用图标」一项，可在两套之间切换。
-        SettingsCard("隐藏设置") {
+        // 整块默认折叠：平时不展开，外人翻设置也看不到这些开关。
+        CollapsibleSettingsCard(
+            title = "隐藏设置",
+            desc = "高级选项，点开查看",
+        ) {
             SwitchRow(
                 label = "解锁应用图标切换",
                 desc = "开启后「个性化」会出现「应用图标」，可在方向盘与官方 Logo 之间切换（切换后需重启 App）",
@@ -807,6 +813,61 @@ fun SettingsCard(
             Spacer(Modifier.height(10.dp))
         }
         content()
+    }
+}
+
+/**
+ * 可折叠设置卡片：标题行常驻，内容默认收起，点标题才展开。
+ *
+ * 用于「隐藏设置」这类不该默认摊在明面上的分组。折叠状态刻意只用 `remember`、
+ * 不落盘 —— 每次重新进设置页都回到收起状态，避免上次忘了收回、下次一进设置
+ * 就把隐藏项晾在屏幕上。
+ */
+@Composable
+fun CollapsibleSettingsCard(
+    title: String,
+    desc: String? = null,
+    initiallyExpanded: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val C = LocalAppColors.current
+    val shape = RoundedCornerShape(20.dp)
+    var expanded by remember { mutableStateOf(initiallyExpanded) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(C.panelBg, shape)
+            .padding(16.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                if (desc != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(desc, color = C.textSecondary, fontSize = 11.sp)
+                }
+            }
+            Icon(
+                Icons.Filled.ChevronRight,
+                contentDescription = if (expanded) "收起" else "展开",
+                tint = C.textSecondary,
+                modifier = Modifier
+                    .size(18.dp)
+                    .rotate(if (expanded) 90f else 0f),
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Column {
+                Spacer(Modifier.height(12.dp))
+                content()
+            }
+        }
     }
 }
 
