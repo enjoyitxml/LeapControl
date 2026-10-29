@@ -15,7 +15,7 @@ import android.content.pm.PackageManager
  *
  * 所以这里只有两个固定选项：
  *  - [STYLE_STEERING] 方向盘（默认）—— 规避与零跑官方 logo 的商标纠纷
- *  - [STYLE_OFFICIAL] 零跑官方 logo —— 收在「设置 → 隐藏设置」后面，默认不暴露
+ *  - [STYLE_OFFICIAL] 零跑官方 logo —— 收在「设置 → 高级设置」后面，默认不暴露
  *
  * Manifest 里两个 alias 的名字必须与 [ALIAS_STEERING] / [ALIAS_OFFICIAL] 一致。
  */

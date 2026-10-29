@@ -86,6 +86,8 @@ fun SettingsScreen(
     var showRename by remember { mutableStateOf(false) }
     var showPin by remember { mutableStateOf(false) }
     var showAmapKey by remember { mutableStateOf(false) }
+    // 发送到车机弹层（首页卡片与设置里的「搜一个地方」共用）
+    var showDestination by remember { mutableStateOf(false) }
     var showAsrKey by remember { mutableStateOf(false) }
     var showPowerType by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -105,6 +107,10 @@ fun SettingsScreen(
     val journalOn by runtime.journalEnabled
     // 动力类型：null = 自动推断（按车型名 + 燃油信号），否则为用户手动指定
     val powerOverride by runtime.powerTypeOverride
+    // 排查「滑动卡不卡」用的：能区分「掉帧」和「屏幕本来就只有 60Hz」两件事
+    val frameStatsOn by runtime.frameStatsVisible
+    // 官方图标那套带商标风险，默认不暴露，解锁开关在「高级设置」里
+    val iconSwitcherOn by runtime.iconSwitcherVisible
 
     Column(
         modifier = Modifier
@@ -117,7 +123,9 @@ fun SettingsScreen(
         SettingsTopBar(title = "设置", onBack = onBack)
         Spacer(Modifier.height(14.dp))
 
-        SettingsCard {
+
+        // ---- 车辆：本机显示用的信息，只影响零控里怎么称呼、怎么画这台车 ----
+        SettingsCard("车辆") {
             ClickRow(
                 title = "自定义车名",
                 desc = if (runtime.customName().isBlank()) {
@@ -145,31 +153,6 @@ fun SettingsScreen(
             ) { showPowerType = true }
             Spacer(Modifier.height(10.dp))
             ClickRow(
-                title = "控车密码",
-                desc = if (runtime.hasPin) "已保存 4 位操控密码，点击修改" else "未设置，点击设置",
-                iconRes = R.drawable.ic_qc_lock,
-            ) { showPin = true }
-            Spacer(Modifier.height(10.dp))
-            ClickRow(
-                title = "高德 Web Key",
-                desc = if (runtime.hasAmapKey()) "已配置，可搜索目的地" else "未配置，无法搜索目的地",
-                iconRes = R.drawable.ic_key,
-            ) { showAmapKey = true }
-            // 语音识别只服务于零记的灵感球；零记关掉之后这一项只剩个空配置页
-            if (journalOn) {
-                Spacer(Modifier.height(10.dp))
-                ClickRow(
-                    title = "语音识别（百度）",
-                    desc = if (runtime.hasCustomBaiduAsr()) {
-                        "已使用你填的 Key，长按灵感球可直接说话"
-                    } else {
-                        "已内置可用，长按灵感球直接说话；也可以填自己的 Key"
-                    },
-                    iconRes = R.drawable.ic_mic,
-                ) { showAsrKey = true }
-            }
-            Spacer(Modifier.height(10.dp))
-            ClickRow(
                 title = "刷新车模图片",
                 desc = if (runtime.hasCustomCarModel()) {
                     "重新拉取官方图，当前显示的自定义车模不受影响"
@@ -190,6 +173,17 @@ fun SettingsScreen(
                     }
                 }
             }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 控车与安全：下发指令前的两道闸，以及靠近解锁 ----
+        SettingsCard("控车与安全") {
+            ClickRow(
+                title = "控车密码",
+                desc = if (runtime.hasPin) "已保存 4 位操控密码，点击修改" else "未设置，点击设置",
+                iconRes = R.drawable.ic_qc_lock,
+            ) { showPin = true }
             Spacer(Modifier.height(10.dp))
             SwitchRow(
                 label = "控车二次确认",
@@ -204,10 +198,45 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(14.dp))
 
-        // ---- 首页：快速切换壁纸 / 背景 ----
-        // 单独成卡而不是塞进上面那张：上面全是"功能/安全"项，这个纯属观感偏好，
-        // 混在一起会让用户以为关掉它会影响控车。
-        SettingsCard("首页") {
+        // ---- 蓝牙钥匙 ----
+        // 只放「总开关 + 一个进详情的入口」：具体感应距离、自动解锁这些在详情页里，
+        // 免得设置页被七八个开关撑满，也避免同一项设置在两处出现两份状态。
+        val bleHost = LocalBleKeyHost.current
+        if (bleHost != null) {
+            SettingsCard("蓝牙钥匙") {
+                SwitchRow(
+                    label = "智能无感钥匙",
+                    desc = when {
+                        !bleHost.bound -> "还没有配对车辆，先点右侧进入配对吧"
+                        bleHost.pending -> "设置待车辆确认"
+                        bleHost.enabled -> "已开启，带着手机靠近车辆即可解锁"
+                        else -> "已关闭，配对记录保留"
+                    },
+                    checked = bleHost.enabled,
+                    onCheckedChange = { on ->
+                        if (!bleHost.bound) {
+                            message = "请先进入蓝牙钥匙页完成车辆配对"
+                        } else {
+                            bleHost.toggleEnabled(on)
+                            message = bleHost.notice
+                        }
+                    },
+                )
+                Spacer(Modifier.height(12.dp))
+                ClickRow(
+                    title = "蓝牙钥匙设置",
+                    desc = "配对车辆 · 靠近解锁 · 感应距离",
+                    iconRes = R.drawable.ic_phosphor_key,
+                ) { showBleKey = true }
+            }
+        }
+        // 间距放在 if 外面：没配对车辆时这张卡整块不出现，靠卡内的 Spacer 会少一截留白
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 首页外观：壁纸切换怎么触发 ----
+        // 单独成卡而不是塞进车辆卡：这几项纯属观感偏好，
+        // 混在车辆信息里会让用户以为关掉它会影响控车。
+        SettingsCard("首页外观") {
             Text(
                 "快速切换壁纸或背景",
                 color = C.textPrimary,
@@ -267,8 +296,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(14.dp))
 
         // ---- 零记：功能总开关 ----
-        // 单独成卡而不是塞进上面那张：关掉它会让底部导航少一格、首页少两张卡，
-        // 影响面比普通开关大得多，得有一段能说清楚的说明，不能混在控车项里。
+        // 单独成卡：关掉它会让底部导航少一格、首页少两张卡，影响面比普通开关大得多
         SettingsCard("零记") {
             SwitchRow(
                 label = "启用零记",
@@ -295,76 +323,49 @@ fun SettingsScreen(
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        // ---- 显示：实时帧率浮层 ----
-        // 排查「滑动卡不卡」用的：能区分「掉帧」和「屏幕本来就只有 60Hz」两件事。
-        val frameStatsOn by runtime.frameStatsVisible
-        val iconSwitcherOn by runtime.iconSwitcherVisible
-        SettingsCard("显示") {
-            SwitchRow(
-                label = "显示实时帧率",
-                desc = "右上角小药丸显示当前帧率与屏幕刷新率，用来确认是否跑满屏幕的高刷",
-                checked = frameStatsOn,
-                onCheckedChange = { runtime.setFrameStatsVisible(it) },
-            )
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        // ---- 隐藏设置 ----
-        // 官方 logo 那套图标带商标风险，不能摆在明面上，默认关着；
-        // 打开之后「个性化」才会多出「应用图标」一项，可在两套之间切换。
-        // 整块默认折叠：平时不展开，外人翻设置也看不到这些开关。
-        CollapsibleSettingsCard(
-            title = "隐藏设置",
-            desc = "高级选项，点开查看",
-        ) {
-            SwitchRow(
-                label = "解锁应用图标切换",
-                desc = "开启后「个性化」会出现「应用图标」，可在方向盘与官方 Logo 之间切换（切换后需重启 App）",
-                checked = iconSwitcherOn,
-                onCheckedChange = { runtime.setIconSwitcherVisible(it) },
-            )
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        // ---- 蓝牙钥匙 ----
-        // 只放「总开关 + 一个进详情的入口」：具体感应距离、自动解锁这些在详情页里，
-        // 免得设置页被七八个开关撑满，也避免同一项设置在两处出现两份状态。
-        val bleHost = LocalBleKeyHost.current
-        if (bleHost != null) {
-            SettingsCard("蓝牙钥匙") {
-                SwitchRow(
-                    label = "智能无感钥匙",
-                    desc = when {
-                        !bleHost.bound -> "还没有配对车辆，先点右侧进入配对吧"
-                        bleHost.pending -> "设置待车辆确认"
-                        bleHost.enabled -> "已开启，带着手机靠近车辆即可解锁"
-                        else -> "已关闭，配对记录保留"
-                    },
-                    checked = bleHost.enabled,
-                    onCheckedChange = { on ->
-                        if (!bleHost.bound) {
-                            message = "请先进入蓝牙钥匙页完成车辆配对"
-                        } else {
-                            bleHost.toggleEnabled(on)
-                            message = bleHost.notice
-                        }
-                    },
-                )
-                Spacer(Modifier.height(12.dp))
+            // 语音识别只服务于零记的灵感球；零记关掉之后这一项只剩个空配置页
+            if (journalOn) {
+                Spacer(Modifier.height(10.dp))
                 ClickRow(
-                    title = "蓝牙钥匙设置",
-                    desc = "配对车辆 · 靠近解锁 · 感应距离",
-                    iconRes = R.drawable.ic_phosphor_key,
-                ) { showBleKey = true }
+                    title = "语音识别（百度）",
+                    desc = if (runtime.hasCustomBaiduAsr()) {
+                        "已使用你填的 Key，长按灵感球可直接说话"
+                    } else {
+                        "已内置可用，长按灵感球直接说话；也可以填自己的 Key"
+                    },
+                    iconRes = R.drawable.ic_mic,
+                ) { showAsrKey = true }
             }
-            Spacer(Modifier.height(14.dp))
         }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 发送到车机：首页那张卡，以及它依赖的高德 Web Key ----
+        // 这一对原来锁在「高级设置」里，可那张卡已经回到首页了，配置就不该再藏一层：
+        // 卡片点开要 Key，而「高级设置」默认折叠 —— 等于让人先去猜东西在哪。
+        SettingsCard("发送到车机") {
+            Text(
+                "首页那张「发送到车机」卡靠高德的关键字搜索找地点，\n" +
+                    "用的是你自己的 Key（免费额度足够日常使用）。",
+                color = C.textSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+            Spacer(Modifier.height(10.dp))
+            ClickRow(
+                title = "高德 Web Key",
+                desc = if (runtime.hasAmapKey()) "已配置，可直接搜索目的地" else "未配置，点开看申请步骤",
+                iconRes = R.drawable.ic_key,
+            ) { showAmapKey = true }
+            Spacer(Modifier.height(10.dp))
+            ClickRow(
+                title = "搜一个地方",
+                desc = "不用回首页，直接在这里搜地点并发送到车机",
+                iconRes = R.drawable.ic_nav_map,
+            ) { showDestination = true }
+        }
+
+        Spacer(Modifier.height(14.dp))
 
         // ---- 系统控制中心快捷磁贴 ----
         val context = androidx.compose.ui.platform.LocalContext.current
@@ -435,6 +436,31 @@ fun SettingsScreen(
             }
         }
 
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 高级设置：默认折叠 ----
+        // 这里放「大部分人用不上、又确实有用」的东西：带商标风险的图标切换、
+        // 以及排查卡顿用的帧率浮层。
+        // 折叠状态刻意只用 remember、不落盘 —— 每次进设置都回到收起状态。
+        CollapsibleSettingsCard(
+            title = "高级设置",
+            desc = "进阶功能与排查选项，点开查看",
+        ) {
+            SwitchRow(
+                label = "解锁应用图标切换",
+                desc = "开启后「个性化」会出现「应用图标」，可在方向盘与官方 Logo 之间切换（切换后需重启 App）",
+                checked = iconSwitcherOn,
+                onCheckedChange = { runtime.setIconSwitcherVisible(it) },
+            )
+            Spacer(Modifier.height(10.dp))
+            SwitchRow(
+                label = "显示实时帧率",
+                desc = "右上角小药丸显示当前帧率与屏幕刷新率，用来确认是否跑满屏幕的高刷",
+                checked = frameStatsOn,
+                onCheckedChange = { runtime.setFrameStatsVisible(it) },
+            )
+        }
+
         message?.let {
             Spacer(Modifier.height(14.dp))
             Text(it, color = C.textSecondary, fontSize = 12.sp)
@@ -485,6 +511,15 @@ fun SettingsScreen(
         )
     }
 
+    // ---- 发送到车机（设置里也能直接搜，不必回首页翻卡片） ----
+    if (showDestination) {
+        DestinationSearchSheet(
+            runtime = runtime,
+            onDismiss = { showDestination = false },
+            onMessage = { message = it },
+        )
+    }
+
     // ---- 高德 Web Key ----
     if (showAmapKey) {
         var keyInput by remember { mutableStateOf(runtime.amapKey()) }
@@ -493,17 +528,25 @@ fun SettingsScreen(
             containerColor = C.panelBg,
             title = { Text("高德 Web Key", color = C.textPrimary) },
             text = {
-                Column {
+                // 教程比输入框长得多，不给滚动时矮屏上「保存」会被顶出弹窗
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Text(
-                        "用于搜索目的地并发送到车机。请在高德开放平台申请「Web服务」类型的 Key。",
+                        "首页那张「发送到车机」靠高德的关键字搜索找地点，\n" +
+                            "用它自己的接口，所以要你填一个自己的 Key。",
                         color = C.textSecondary,
                         fontSize = 12.sp,
+                        lineHeight = 17.sp,
                     )
+                    Spacer(Modifier.height(10.dp))
+                    AmapKeyGuide(onOpenConsole = { runtime.openExternal(AmapConsoleUrl) })
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = keyInput,
                         onValueChange = { keyInput = it.trim() },
                         singleLine = true,
+                        placeholder = {
+                            Text("粘贴 32 位 Web 服务 Key", color = C.textSecondary, fontSize = 13.sp)
+                        },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = C.textPrimary,
                             unfocusedTextColor = C.textPrimary,
@@ -971,7 +1014,7 @@ fun SettingsCard(
 /**
  * 可折叠设置卡片：标题行常驻，内容默认收起，点标题才展开。
  *
- * 用于「隐藏设置」这类不该默认摊在明面上的分组。折叠状态刻意只用 `remember`、
+ * 用于「高级设置」这类不该默认摊在明面上的分组。折叠状态刻意只用 `remember`、
  * 不落盘 —— 每次重新进设置页都回到收起状态，避免上次忘了收回、下次一进设置
  * 就把隐藏项晾在屏幕上。
  */
@@ -1096,13 +1139,20 @@ private val BaiduKeySteps = listOf(
 )
 
 /**
- * 百度语音 Key 的申请教程。
+ * 申请教程通用卡片：标题 + 「打开控制台 ›」+ 编号步骤 + 可选「申请之后能干嘛」+ 可点的网址。
  *
- * 弹层里的文字不能复制，所以控制台网址**原样印出来**（能照着敲），
+ * 弹层里的文字不能复制，所以网址**原样印出来**（能照着敲），
  * 上面再放一个「打开控制台」直接跳浏览器，省得在手机上手动输入长链接。
  */
 @Composable
-fun BaiduKeyGuide(onOpenConsole: () -> Unit) {
+private fun KeyGuideCard(
+    title: String,
+    steps: List<String>,
+    urlText: String,
+    onOpenConsole: () -> Unit,
+    benefitTitle: String = "",
+    benefits: List<String> = emptyList(),
+) {
     val C = LocalAppColors.current
     Column(
         modifier = Modifier
@@ -1114,7 +1164,7 @@ fun BaiduKeyGuide(onOpenConsole: () -> Unit) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "申请教程（约 2 分钟）",
+                title,
                 color = C.textPrimary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -1132,7 +1182,7 @@ fun BaiduKeyGuide(onOpenConsole: () -> Unit) {
             )
         }
         Spacer(Modifier.height(7.dp))
-        BaiduKeySteps.forEachIndexed { index, step ->
+        steps.forEachIndexed { index, step ->
             Row(modifier = Modifier.padding(bottom = 4.dp)) {
                 Text(
                     "${index + 1}",
@@ -1149,18 +1199,103 @@ fun BaiduKeyGuide(onOpenConsole: () -> Unit) {
                 )
             }
         }
-        Spacer(Modifier.height(2.dp))
-        Text(
-            BaiduAsrConsoleUrlText,
-            color = C.textSecondary,
-            fontSize = 10.sp,
-            lineHeight = 14.sp,
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .clickable(onClick = onOpenConsole)
-                .padding(vertical = 2.dp),
-        )
+        if (benefits.isNotEmpty()) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                benefitTitle,
+                color = C.textPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(Modifier.height(3.dp))
+            benefits.forEach { item ->
+                Row(modifier = Modifier.padding(bottom = 3.dp)) {
+                    Text(
+                        "·",
+                        color = C.accent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.width(14.dp),
+                    )
+                    Text(
+                        item,
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        // 网址做成一颗可点的浅色胶囊，而不是一行灰字 ——
+        // 灰字看不出能点，用户还是得照着敲；这里长相必须像按钮。
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = urlText,
+                color = C.accent,
+                fontSize = 10.5.sp,
+                lineHeight = 14.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(C.accent.copy(alpha = 0.10f))
+                    .clickable(onClick = onOpenConsole)
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(text = "点击打开", color = C.textSecondary, fontSize = 10.sp)
+        }
     }
+}
+
+/** 百度语音 Key 的申请教程。 */
+@Composable
+fun BaiduKeyGuide(onOpenConsole: () -> Unit) {
+    KeyGuideCard(
+        title = "申请教程（约 2 分钟）",
+        steps = BaiduKeySteps,
+        urlText = BaiduAsrConsoleUrlText,
+        onOpenConsole = onOpenConsole,
+    )
+}
+
+/** 高德开放平台「应用管理 → 我的应用」：Key 就在这里创建与查看。 */
+const val AmapConsoleUrl = "https://console.amap.com/dev/key/app"
+
+/** 照着敲的网址：同样手工断成「域名 + 路径」两行。 */
+private const val AmapConsoleUrlText = "console.amap.com\n/dev/key/app"
+
+/**
+ * 申请高德 Web Key 的四步。
+ *
+ * 第 3 步必须点明「Web 服务」：平台默认给的选项里 Android 平台最常见，
+ * 但那个要绑包名和 SHA1，填进零控只会报 `INVALID_USER_DOMAIN` / 无权限，是最容易踩的坑。
+ */
+private val AmapKeySteps = listOf(
+    "打开控制台用手机号或支付宝登录，顺手把个人实名认证做完 —— 免费额度要认证后才发放。",
+    "「应用管理 → 我的应用 → 创建新应用」，名字随意，类型选「出行」即可。",
+    "进入该应用点「添加 Key」，服务平台必须选「Web 服务」（选 Android 要绑包名和 SHA1，填了用不了）。",
+    "提交后得到一串 32 位 Key，复制它，粘到下面的输入框保存。",
+)
+
+/** 「申请之后能干嘛」：用户最关心的其实是这一步，顺手把账号同步的前提讲清楚。 */
+private val AmapKeyBenefits = listOf(
+    "首页「发送到车机」可以按关键字搜全国的地点、停车场、充电站，输入几个字就有结果",
+    "选中后一键发到车机 —— 手机与车机登录同一个高德账号，上车自动提示继续导航",
+    "也可以直接在手机高德里开始导航，比上车再逐字输地址省事得多",
+    "Web 服务每天有免费调用量，按日常搜索次数用不到上限，不需要付费",
+)
+
+/** 高德 Web Key 的申请教程（设置里与首页卡片弹层共用）。 */
+@Composable
+fun AmapKeyGuide(onOpenConsole: () -> Unit) {
+    KeyGuideCard(
+        title = "申请教程（约 3 分钟）",
+        steps = AmapKeySteps,
+        urlText = AmapConsoleUrlText,
+        onOpenConsole = onOpenConsole,
+        benefitTitle = "申请之后可以",
+        benefits = AmapKeyBenefits,
+    )
 }
 
 /** 两列信息行：左标题、右内容（关于页用）。 */

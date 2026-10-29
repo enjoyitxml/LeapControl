@@ -95,8 +95,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -106,10 +108,13 @@ import java.util.Locale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -198,12 +203,26 @@ fun HomeScreen(
         val tipIconVisible by runtime.tipIconVisible
         var showBleKey by remember { mutableStateOf(false) }
         var showPlaybook by remember { mutableStateOf(false) }
+        // ---- 首次打开首页：右上角「玩法说明」的手势引导 ----
+        // 落盘只记「看过没看过」（点开说明 / 点不再提示都算看过），一个安装只出现一次；
+        // 本次会话里 20 秒没人理它就自动收起，别一直挡着首页。
+        val coachContext = LocalContext.current
+        var coachVisible by remember { mutableStateOf(!PlaybookHint.isDone(coachContext)) }
+        // 玩法说明图标在 root 里的位置：顶栏图标会随「个性化」开关增减，写死偏移一定对不准
+        var playbookAnchor by remember { mutableStateOf(Rect.Zero) }
+        LaunchedEffect(coachVisible) {
+            if (!coachVisible) return@LaunchedEffect
+            delay(20_000)
+            coachVisible = false
+        }
         // 保养 / 保险卡（可加到首页）：数据与设置弹层都复用零记那一套
         val journalData by runtime.journal.data
         // 零记总开关：关掉后首页不再出现保险 / 保养这两张零记卡（顺序仍保留在原地）
         val journalOn by runtime.journalEnabled
         var showInsuranceSheet by remember { mutableStateOf(false) }
         var showMaintenanceSheet by remember { mutableStateOf(false) }
+        // 目的地搜索弹层（首页「发送到车机」卡）
+        var showDestination by remember { mutableStateOf(false) }
         // 行驶里程 / 能耗（独立接口，拿不到就静默保持上一次结果）
         val energySummary by runtime.mileageEnergyFlow.collectAsState()
         // 周能耗（近 6 周百公里能耗 + 上周能耗构成），两张能耗卡共用
@@ -1023,45 +1042,13 @@ fun HomeScreen(
             Box(modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 6.dp, start = 22.dp, end = 22.dp)) {
-                // 右侧图标按钮：玩法说明 → 蓝牙钥匙 → 个性化（皮肤），顶边与左侧车名顶端对齐。
-                // 靠右排列（TopEnd），所以中间任何一个关掉，后面的会自然往右补位。
-                Row(
-                    modifier = Modifier.align(Alignment.TopEnd),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // 玩法说明：换车模 / 换背景 / 快捷控车这些「怎么用」都收在这一页，
-                    // 默认显示，个性化里可以关掉
-                    if (tipIconVisible) {
-                        HeaderIconButton(
-                            iconRes = R.drawable.ic_playbook,
-                            description = "玩法说明",
-                            size = 23.dp,
-                            onClick = { showPlaybook = true },
-                        )
-                        Spacer(Modifier.width(2.dp))
-                    }
-                    // 蓝牙钥匙：不可用（没配对 / 没开 / 没权限）时是灰的，点进去就能开启
-                    if (bleHost != null && bleIconVisible) {
-                        HeaderIconButton(
-                            iconRes = R.drawable.ic_phosphor_key,
-                            description = "蓝牙钥匙",
-                            tint = when (bleHost.status) {
-                                BleKeyStatus.ACTIVE -> LocalAppColors.current.accent
-                                BleKeyStatus.STANDBY -> LocalAppColors.current.textPrimary
-                                else -> LocalAppColors.current.textSecondary.copy(alpha = 0.45f)
-                            },
-                            onClick = { showBleKey = true },
-                        )
-                        Spacer(Modifier.width(2.dp))
-                    }
-                    HeaderIconButton(
-                        iconRes = R.drawable.ic_skin,
-                        description = "皮肤",
-                        onClick = onOpenSkin,
-                    )
-                }
+                // 车名与右侧图标**放在同一行、一起垂直居中**。
+                // 原来是「图标 align(TopEnd) + 车名 align(CenterStart)」两套对齐：
+                // 系统字号调大后车名那一行变高，图标就浮在车名上方看着错位（实机反馈的就是这个）。
+                // 放进同一个 Row 之后，字号多大都对着车名居中。
                 Column(modifier = Modifier.align(Alignment.CenterStart)) {
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         // 车名：点一下直接改名（原来那个铅笔按钮已去掉，入口合并到车名本身，
@@ -1072,6 +1059,9 @@ fun HomeScreen(
                             fontSize = 20.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
+                            // 大字号下宁可省略也不折行：折行会把整块顶栏撑高、图标跟着跑
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
                                 .widthIn(max = 180.dp)
                                 .clickable { showRenameDialog = true },
@@ -1093,6 +1083,49 @@ fun HomeScreen(
                                 )
                             }
                         }
+                        // 车名与图标之间用弹簧隔开：车名再长也只会吃掉中间的空隙
+                        Spacer(Modifier.weight(1f))
+                        // 右侧图标按钮：玩法说明 → 蓝牙钥匙 → 个性化（皮肤）。
+                        // 靠右排列，所以中间任何一个关掉，后面的会自然往右补位。
+                        // 玩法说明：换车模 / 换背景 / 快捷控车这些「怎么用」都收在这一页，
+                        // 默认显示，个性化里可以关掉
+                        if (tipIconVisible) {
+                            HeaderIconButton(
+                                iconRes = R.drawable.ic_playbook,
+                                description = "玩法说明",
+                                size = 23.dp,
+                                // 记录下来给新手引导的光环/手势定位用
+                                modifier = Modifier.onGloballyPositioned {
+                                    playbookAnchor = it.boundsInRoot()
+                                },
+                                onClick = {
+                                    // 点开说明就算「看过了」，别再提示
+                                    PlaybookHint.markDone(coachContext)
+                                    coachVisible = false
+                                    showPlaybook = true
+                                },
+                            )
+                            Spacer(Modifier.width(2.dp))
+                        }
+                        // 蓝牙钥匙：不可用（没配对 / 没开 / 没权限）时是灰的，点进去就能开启
+                        if (bleHost != null && bleIconVisible) {
+                            HeaderIconButton(
+                                iconRes = R.drawable.ic_phosphor_key,
+                                description = "蓝牙钥匙",
+                                tint = when (bleHost.status) {
+                                    BleKeyStatus.ACTIVE -> LocalAppColors.current.accent
+                                    BleKeyStatus.STANDBY -> LocalAppColors.current.textPrimary
+                                    else -> LocalAppColors.current.textSecondary.copy(alpha = 0.45f)
+                                },
+                                onClick = { showBleKey = true },
+                            )
+                            Spacer(Modifier.width(2.dp))
+                        }
+                        HeaderIconButton(
+                            iconRes = R.drawable.ic_skin,
+                            description = "皮肤",
+                            onClick = onOpenSkin,
+                        )
                     }
                     // 车况更新时间：紧贴车名下方，点一下可手动刷新
                     Spacer(Modifier.height(4.dp))
@@ -1182,6 +1215,9 @@ fun HomeScreen(
                         color = LocalAppColors.current.textPrimary,
                         fontSize = 40.sp,
                         fontWeight = FontWeight.Normal,
+                        // 大字号下「445」绝不能被折成两行（折了整块续航区就塌了）
+                        maxLines = 1,
+                        softWrap = false,
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
@@ -1189,7 +1225,13 @@ fun HomeScreen(
                             color = LocalAppColors.current.textPrimary,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Normal,
-                            modifier = Modifier.padding(bottom = 6.dp),
+                            maxLines = 1,
+                            softWrap = false,
+                            // 抬高量跟着字号走：6dp 是 40sp 时量出来的基线差，
+                            // 字号被放大后大字的降部空间也变大，固定 6dp 会让 km 看着偏高
+                            modifier = Modifier.padding(
+                                bottom = 6.dp * LocalDensity.current.fontScale.coerceAtMost(1.3f),
+                            ),
                         )
                     }
                     Spacer(Modifier.height(6.dp))
@@ -1402,6 +1444,13 @@ fun HomeScreen(
                         onOpen = { showAcScreen = true },
                     )
 
+                    // 发送到车机：搜目的地 → 调起高德路径规划，手机与车机登同一账号即同步。
+                    // 卡片只负责开弹层，搜索与下发都在弹层里（见 DestinationSearch.kt）
+                    HomeCardId.DESTINATION -> DestinationSearchCard(
+                        hasKey = runtime.hasAmapKey(),
+                        onClick = { showDestination = true },
+                    )
+
                     // 胎压卡（左半，四轮数值 + 车模）+ 近 7 天行程卡（右半，每日里程柱状图）。
                     // 两张半屏卡合成一个可拖动条目：拆开时拖动过程中会出现「各占一行」的中间态。
                     HomeCardId.TIRE_TRIP -> Row(modifier = Modifier.fillMaxWidth()) {
@@ -1537,6 +1586,23 @@ fun HomeScreen(
                 onDismiss = { pendingConfirm = null },
             )
         }
+        // ---- 新手引导：首次打开时指向右上角「玩法说明」 ----
+        // 图标被用户在「个性化 → 首页图标」里关掉时不提示：没有可点的目标，指过去只会更迷惑。
+        // 一层透明浮层（不吃触摸），只有说明卡上的两个按钮可点。
+        if (coachVisible && tipIconVisible && playbookAnchor != Rect.Zero) {
+            PlaybookCoachMark(
+                anchor = playbookAnchor,
+                onOpen = {
+                    PlaybookHint.markDone(coachContext)
+                    coachVisible = false
+                    showPlaybook = true
+                },
+                onNeverShowAgain = {
+                    PlaybookHint.markDone(coachContext)
+                    coachVisible = false
+                },
+            )
+        }
         }   // 首页内容 Box(fillMaxSize)
         }   // 二级页分支链（else）
         }   // 分支链外层 Box（结果条 / 确认弹窗都在这层之上）
@@ -1601,6 +1667,15 @@ fun HomeScreen(
         }
 
         // （车辆健康弹窗 / 四季主题弹窗：入口按钮已移除，代码保留，后续可从设置页或我的页重新挂回）
+
+        // ---- 目的地搜索弹层：从首页「发送到车机」卡进入 ----
+        if (showDestination) {
+            DestinationSearchSheet(
+                runtime = runtime,
+                onDismiss = { showDestination = false },
+                onMessage = { actionMessage = it },
+            )
+        }
 
         // ---- 保养 / 保险设置弹层：从首页那两张卡直接进入，改完立刻回到首页 ----
         if (showMaintenanceSheet) {
@@ -2578,6 +2653,10 @@ private val STATUS_ALERT_RED = Color(0xFFE5484D)
 /**
  * 里程行（手绘稿样式）：从左至右依次是 图标 · 里程 · 进度条（定宽）· 百分比。
  * 进度条是定宽的，所以百分比的起点两行天然一致，不需要再靠定宽槽位去对齐。
+ *
+ * **字号要跟着系统缩放一起放大**：里程文字槽原来写死 46dp，系统字号 1.3 倍时
+ * 「445km」需要约 50dp，塞不下就折成「445k / m」—— 整个续航区被撑成两行，
+ * 底下的「充电中心」也跟着挤在一起。所以槽位宽度按 fontScale 放大，并且禁止折行。
  */
 @Composable
 private fun MileageRow(
@@ -2589,6 +2668,9 @@ private fun MileageRow(
     barWidth: Dp,
 ) {
     val C = LocalAppColors.current
+    // 48dp 是系统字号 1.0 时「445km」实测宽度（约 45dp）再留一点余量；跟着 fontScale 缩放，
+    // 1.3 倍时槽位 62dp、文字 58dp，仍装得下，不会折行也不会被裁掉
+    val labelWidth = 48.dp * LocalDensity.current.fontScale
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Icon(
             imageVector = icon,
@@ -2602,7 +2684,9 @@ private fun MileageRow(
             color = C.textPrimary,
             fontSize = 13.sp,
             fontWeight = FontWeight.Normal,
-            modifier = Modifier.width(46.dp),
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.width(labelWidth),
         )
         Spacer(Modifier.width(6.dp))
         Box(
@@ -2629,6 +2713,8 @@ private fun MileageRow(
             color = C.textPrimary,
             fontSize = 12.sp,
             fontWeight = FontWeight.Normal,
+            maxLines = 1,
+            softWrap = false,
             textAlign = TextAlign.Start,
         )
     }
@@ -2657,6 +2743,9 @@ private fun StatusItem(iconRes: Int, label: String, alert: Boolean) {
             text = label,
             color = C.textPrimary,
             fontSize = 15.sp,
+            // 状态文案不折行：折了会把右侧状态栏撑高，左边的续航区跟着错位
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
@@ -2683,6 +2772,8 @@ private fun ChargingCenterEntry(onClick: () -> Unit) {
                 fontSize = 12.sp,
                 lineHeight = 13.sp,
                 fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                softWrap = false,
             )
             Spacer(Modifier.width(1.dp))
             Icon(
@@ -2705,10 +2796,12 @@ private fun HeaderIconButton(
     description: String,
     size: androidx.compose.ui.unit.Dp = 22.dp,
     tint: Color = LocalAppColors.current.textPrimary,
+    /** 外部要在按钮上挂测量 / 引导等修饰符时用（默认什么都不加）。 */
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(32.dp)
             .clip(CircleShape)
             .clickable(onClick = onClick),

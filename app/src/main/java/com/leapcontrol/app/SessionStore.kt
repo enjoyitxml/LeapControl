@@ -534,7 +534,7 @@ class SessionStore(context: Context) {
         appPrefs.edit().putString(LAUNCHER_ICON_STYLE, style).apply()
     }
 
-    /** 「隐藏设置」里的总开关：关闭时个性化页不出现「应用图标」入口。 */
+    /** 「高级设置」里的总开关：关闭时个性化页不出现「应用图标」入口。 */
     fun loadIconSwitcherVisible(): Boolean =
         appPrefs.getBoolean(ICON_SWITCHER_VISIBLE, false)
 

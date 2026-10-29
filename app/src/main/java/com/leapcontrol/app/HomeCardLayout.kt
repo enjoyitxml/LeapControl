@@ -18,6 +18,12 @@ enum class HomeCardId(val title: String, val subtitle: String) {
     HEALTH("车辆健康", "电池温度电压电流与耗电监测"),
     OWNERSHIP("相伴", "提车天数与累计公里"),
 
+    // 目的地搜索：独立于车况的一次性动作（搜地址 → 调高德 → 车机同账号同步），
+    // 不读任何车况信号、也不依赖零记，所以是「谁都能用」的常驻卡。
+    // 0.2.49 一度把它收进「设置 → 高级设置」，但它属于出发前的高频动作，藏起来等于没有，
+    // 这一版又搬回首页，并作为版本 4 的新卡补入。
+    DESTINATION("将目的地发送到车机", "搜索目的地并同步到车机导航"),
+
     // 下面两张是「可选」卡片（见 [HomeCardLayout] 里关于 ADDED_IN 的说明）：
     // 没设置计划时它们只是一张「去设置」的引导，不该默认塞进每个人的首页。
     INSURANCE("保险续费", "到期倒计时与续保提醒"),
@@ -35,12 +41,18 @@ object HomeCardLayout {
      * 它们是「有保养 / 保险计划才有意义」的提醒卡，没设置时只是一张引导卡；
      * 直接补进所有人的首页，等于替用户做了一次他未必想要的排版改动。
      * 要看它们，编辑态里的「添加卡片」里就有。
+     *
+     * 版本号 3 是空号：那一版加的正是「发送到车机」，但紧接着又把它撤掉过一版，
+     * 已经存过 v3 的设备不会再走 3 之前的补入逻辑 —— 所以回归时用 v4 重新登记一次。
      */
-    const val VERSION = 2
+    const val VERSION = 4
 
     /** 默认顺序：新卡的默认位置也参照这里（升级补入时按相对位置插）。 */
     val DEFAULT: List<HomeCardId> = listOf(
         HomeCardId.AC,
+        // 紧跟空调条：两张都是 74dp 的通栏横条，上下相邻时高度与圆角都咬得住，
+        // 而且「发送到车机」是出发前的高频动作，放在需要下滑两三屏的末尾等于藏起来
+        HomeCardId.DESTINATION,
         HomeCardId.TIRE_TRIP,
         HomeCardId.COMPOSITION,
         HomeCardId.RANK,
@@ -51,6 +63,7 @@ object HomeCardLayout {
     /** 每个版本新增的卡片（键是引入它的版本号）。 */
     private val ADDED_IN: Map<Int, List<HomeCardId>> = mapOf(
         2 to listOf(HomeCardId.HEALTH),
+        4 to listOf(HomeCardId.DESTINATION),
     )
 
     /**

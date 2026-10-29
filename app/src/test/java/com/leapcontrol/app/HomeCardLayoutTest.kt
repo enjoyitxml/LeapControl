@@ -53,22 +53,30 @@ class HomeCardLayoutTest {
     @Test
     fun `默认顺序包含两张新能耗卡`() {
         val default = HomeCardLayout.DEFAULT
-        assertEquals(HomeCardId.COMPOSITION, default[2])
-        assertEquals(HomeCardId.RANK, default[3])
+        assertEquals(HomeCardId.COMPOSITION, default[3])
+        assertEquals(HomeCardId.RANK, default[4])
         assertEquals(HomeCardId.OWNERSHIP, default.last())
+    }
+
+    @Test
+    fun `发送到车机卡默认紧跟空调条`() {
+        // 出发前的高频动作，不该埋到需要下滑两三屏的位置
+        assertEquals(HomeCardId.AC, HomeCardLayout.DEFAULT[0])
+        assertEquals(HomeCardId.DESTINATION, HomeCardLayout.DEFAULT[1])
     }
 
     @Test
     fun `拖动排序向下`() {
         val cards = HomeCardLayout.DEFAULT
-        // 第 0 张拖到第 3 位
+        // 第 0 张（空调）拖到第 3 位
         val moved = HomeCardLayout.move(cards, 0, 3)
         assertEquals(
             listOf(
+                HomeCardId.DESTINATION,
                 HomeCardId.TIRE_TRIP,
                 HomeCardId.COMPOSITION,
-                HomeCardId.RANK,
                 HomeCardId.AC,
+                HomeCardId.RANK,
                 HomeCardId.HEALTH,
                 HomeCardId.OWNERSHIP,
             ),
@@ -84,10 +92,11 @@ class HomeCardLayoutTest {
         assertEquals(
             listOf(
                 HomeCardId.AC,
-                HomeCardId.HEALTH,
+                HomeCardId.RANK,
+                HomeCardId.DESTINATION,
                 HomeCardId.TIRE_TRIP,
                 HomeCardId.COMPOSITION,
-                HomeCardId.RANK,
+                HomeCardId.HEALTH,
                 HomeCardId.OWNERSHIP,
             ),
             moved,
@@ -107,12 +116,14 @@ class HomeCardLayoutTest {
     fun `隐藏列表是当前没显示的那些`() {
         val shown = listOf(HomeCardId.AC, HomeCardId.RANK)
         val hidden = HomeCardLayout.hidden(shown)
+        // 顺序跟着枚举声明走（「添加卡片」里的排列），不是跟着 DEFAULT 走
         assertEquals(
             listOf(
                 HomeCardId.TIRE_TRIP,
                 HomeCardId.COMPOSITION,
                 HomeCardId.HEALTH,
                 HomeCardId.OWNERSHIP,
+                HomeCardId.DESTINATION,
                 // 保养 / 保险是「可选卡」：默认不进 DEFAULT，因此总在「添加卡片」里
                 HomeCardId.INSURANCE,
                 HomeCardId.MAINTENANCE,
@@ -125,7 +136,7 @@ class HomeCardLayoutTest {
 
     @Test
     fun `老用户保存过顺序时按默认位置补入新卡`() {
-        // v1 时期保存的列表里没有 HEALTH
+        // v1 时期保存的列表里没有 HEALTH（v2 新增）与 DESTINATION（v4 新增）
         val parsed = HomeCardLayout.parse(
             "AC,TIRE_TRIP,COMPOSITION,RANK,OWNERSHIP",
             savedVersion = 1,
@@ -133,6 +144,7 @@ class HomeCardLayoutTest {
         assertEquals(
             listOf(
                 HomeCardId.AC,
+                HomeCardId.DESTINATION,
                 HomeCardId.TIRE_TRIP,
                 HomeCardId.COMPOSITION,
                 HomeCardId.RANK,
@@ -145,15 +157,27 @@ class HomeCardLayoutTest {
 
     @Test
     fun `新卡插在默认顺序里前一张卡的后面`() {
-        // 用户把相伴卡挪到了最前面，新卡仍应跟在自己的前一张（RANK）后面
+        // 用户把相伴卡挪到了最前面，新卡仍应跟在自己的前一张（HEALTH 跟 RANK）后面
         val parsed = HomeCardLayout.parse("OWNERSHIP,RANK,AC", savedVersion = 1)
-        assertEquals(listOf(HomeCardId.OWNERSHIP, HomeCardId.RANK, HomeCardId.HEALTH, HomeCardId.AC), parsed)
+        assertEquals(
+            listOf(
+                HomeCardId.OWNERSHIP,
+                HomeCardId.RANK,
+                HomeCardId.HEALTH,
+                HomeCardId.AC,
+                HomeCardId.DESTINATION,
+            ),
+            parsed,
+        )
     }
 
     @Test
     fun `前面的卡全被删掉时新卡放最前`() {
         val parsed = HomeCardLayout.parse("OWNERSHIP", savedVersion = 1)
-        assertEquals(listOf(HomeCardId.HEALTH, HomeCardId.OWNERSHIP), parsed)
+        assertEquals(
+            listOf(HomeCardId.DESTINATION, HomeCardId.HEALTH, HomeCardId.OWNERSHIP),
+            parsed,
+        )
     }
 
     @Test
@@ -166,7 +190,32 @@ class HomeCardLayoutTest {
 
     @Test
     fun `卡片全删但版本落后时补入新卡`() {
-        assertEquals(listOf(HomeCardId.HEALTH), HomeCardLayout.parse("", savedVersion = 1))
+        assertEquals(
+            listOf(HomeCardId.DESTINATION, HomeCardId.HEALTH),
+            HomeCardLayout.parse("", savedVersion = 1),
+        )
+    }
+
+    @Test
+    fun `停在 v3 的设备也能补回发送到车机卡`() {
+        // v3 加过这张卡又撤掉过一版，存过 v3 的设备不会走更早的补入逻辑，
+        // 所以它在 v4 重新登记：只补这一张，别把用户删掉的其它卡带回来。
+        val parsed = HomeCardLayout.parse(
+            "AC,TIRE_TRIP,COMPOSITION,RANK,HEALTH,OWNERSHIP",
+            savedVersion = 3,
+        )
+        assertEquals(
+            listOf(
+                HomeCardId.AC,
+                HomeCardId.DESTINATION,
+                HomeCardId.TIRE_TRIP,
+                HomeCardId.COMPOSITION,
+                HomeCardId.RANK,
+                HomeCardId.HEALTH,
+                HomeCardId.OWNERSHIP,
+            ),
+            parsed,
+        )
     }
 
     // ---- 零记总开关：保险 / 保养这两张卡的数据来自零记 ----

@@ -226,7 +226,7 @@ fun PersonalizationScreen(
         Spacer(Modifier.height(18.dp))
 
         // ---- 应用图标 ----
-        // 只有「设置 → 隐藏设置」里解锁了才出现：官方 logo 那套带商标风险，
+        // 只有「设置 → 高级设置」里解锁了才出现：官方 logo 那套带商标风险，
         // 默认就用方向盘，不把它摆在明面上。切换靠 activity-alias 换组件，重启后生效。
         if (runtime.iconSwitcherVisible.value) {
             SettingsSection(title = "应用图标", desc = "切换后重启生效") {

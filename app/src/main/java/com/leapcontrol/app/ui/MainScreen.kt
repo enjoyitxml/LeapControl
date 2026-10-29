@@ -115,10 +115,11 @@ internal const val SHOW_DEV_ENTRIES = true
  */
 internal const val SHOW_UPDATE_CHECK = true
 
-/** 二级页路由：「我的」页 → 设置 / 个性化 / 关于（内嵌 免责声明、隐私条款）/ 车模外观 / 开源协议 / 支持开发者 */
+/** 二级页路由：「我的」页 → 设置 / 个性化 / 玩法说明 / 关于（内嵌 免责声明、隐私条款）/ 车模外观 / 开源协议 / 支持开发者 */
 enum class SettingsPage {
     SETTINGS,
     PERSONALIZATION,
+    PLAYBOOK,
     CAR_APPEARANCE,
     ABOUT,
     DISCLAIMER,
@@ -345,6 +346,13 @@ fun MainScreen(
                             },
                             onOpenCarAppearance = { openSettings(SettingsPage.CAR_APPEARANCE) },
                             onBack = { closeSettings() },
+                        )
+
+                        // 玩法说明：「我的」页的常驻入口（首页右上角那个图标可以被关掉，
+                        // 关掉之后这一页就没有别的入口了，所以这里必须留一个）
+                        SettingsPage.PLAYBOOK -> PlaybookScreen(
+                            onBack = { closeSettings() },
+                            journalEnabled = journalEnabled,
                         )
 
                         // 车模外观从个性化进，返回也回个性化 —— 别让用户按一次返回直接掉回「我的」

@@ -2,7 +2,7 @@
 <!--
   「官网 logo」版图标：零跑官方标志（原 ic_launcher 的观感，原样保留）。
 
-  为规避商标风险，这一套不再作为默认图标，只能在「设置 → 隐藏设置」打开开关后，
+  为规避商标风险，这一套不再作为默认图标，只能在「设置 → 高级设置」打开开关后，
   进「个性化 → 应用图标」手动切过去；切回方向盘随时可以。
 -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">

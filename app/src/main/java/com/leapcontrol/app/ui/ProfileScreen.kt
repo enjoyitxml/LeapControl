@@ -52,6 +52,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +63,9 @@ import kotlinx.coroutines.launch
 
 /** QQ 交流群群号。 */
 private const val QQ_GROUP = "179731222"
+
+/** 入口卡片之间的间距：整页要在一屏里放完，12dp 收到 8dp（七条入口就是 24dp）。 */
+private val ITEM_GAP = 8.dp
 
 /**
  * 「我的」页面：入口列表 —— 设置 / 个性化 / 支持开发者 / 开源协议与致谢 / 关于，
@@ -138,87 +142,102 @@ fun ProfileScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 22.dp),
         ) {
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(14.dp))
             Text(
                 "我的",
                 color = LocalAppColors.current.textPrimary,
-                fontSize = 22.sp,
+                fontSize = 21.sp,
                 fontWeight = FontWeight.SemiBold,
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
 
             // 车辆 / 账号信息
-            SettingsCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    ProfileAvatar(
-                        choice = AvatarChoice.decode(avatarRaw),
-                        customBitmap = customBitmap,
-                        size = 46.dp,
-                        onClick = { showAvatarPicker = true },
+            // 整页的诉求是「一屏看完」，所以这张卡的内边距 / 头像都比别处紧一档
+            // （设置页的 SettingsCard 仍是 16dp，那边条目少、留白本来就够）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(LocalAppColors.current.panelBg, RoundedCornerShape(20.dp))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ProfileAvatar(
+                    choice = AvatarChoice.decode(avatarRaw),
+                    customBitmap = customBitmap,
+                    size = 42.dp,
+                    onClick = { showAvatarPicker = true },
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        runtime.displayName(),
+                        color = LocalAppColors.current.textPrimary,
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            runtime.displayName(),
-                            color = LocalAppColors.current.textPrimary,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
+                    Spacer(Modifier.height(3.dp))
+                    val model = runtime.vehicleModel()
+                    Text(
+                        text = listOfNotNull(
+                            model.takeIf { it.isNotBlank() },
+                            runtime.session.selectedVin.takeLast(6).takeIf { it.isNotBlank() }
+                                ?.let { "VIN $it" },
+                        ).joinToString(" · ").ifEmpty { "暂无车辆信息" },
+                        color = LocalAppColors.current.textSecondary,
+                        fontSize = 11.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                // 退出登录：放在车名容器右侧
+                Box(
+                    modifier = Modifier
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(LocalAppColors.current.chipBg)
+                        .clickable { scope.launch { runtime.logout(); onLogout() } }
+                        .padding(horizontal = 11.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.Logout,
+                            null,
+                            tint = Color(0xFFFF6B6B),
+                            modifier = Modifier.size(15.dp),
                         )
-                        Spacer(Modifier.height(4.dp))
-                        val model = runtime.vehicleModel()
-                        Text(
-                            text = listOfNotNull(
-                                model.takeIf { it.isNotBlank() },
-                                runtime.session.selectedVin.takeLast(6).takeIf { it.isNotBlank() }
-                                    ?.let { "VIN $it" },
-                            ).joinToString(" · ").ifEmpty { "暂无车辆信息" },
-                            color = LocalAppColors.current.textSecondary,
-                            fontSize = 12.sp,
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    // 退出登录：放在车名容器右侧
-                    Box(
-                        modifier = Modifier
-                            .height(36.dp)
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(LocalAppColors.current.chipBg)
-                            .clickable { scope.launch { runtime.logout(); onLogout() } }
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.Logout,
-                                null,
-                                tint = Color(0xFFFF6B6B),
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("退出登录", color = Color(0xFFFF6B6B), fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                        }
+                        Spacer(Modifier.width(5.dp))
+                        Text("退出登录", color = Color(0xFFFF6B6B), fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
                     }
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(14.dp))
 
             // ---- 入口 ----
             ProfileItem(
                 R.drawable.ic_settings,
                 "设置",
-                "控车密码、高德 Web Key、车模与系统磁贴",
+                "控车密码、高德 Key、磁贴与车模",
             ) { onOpenPage(SettingsPage.SETTINGS) }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(ITEM_GAP))
             ProfileItem(
                 R.drawable.ic_skin,
                 "个性化",
                 "外观模式、四季主题与动态背景",
             ) { onOpenPage(SettingsPage.PERSONALIZATION) }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(ITEM_GAP))
+            // 玩法说明：首页右上角那个手柄图标能进，这里也留一个常驻入口 ——
+            // 首页图标可以在个性化里关掉，关掉之后「怎么用」就没有别的入口了。
+            ProfileItem(
+                R.drawable.ic_playbook,
+                "玩法说明",
+                "车模、主题、快捷控车，一页看完",
+            ) { onOpenPage(SettingsPage.PLAYBOOK) }
+            Spacer(Modifier.height(ITEM_GAP))
             // 支持开发者 / 开源协议与致谢：两个都是「面向外部」的模块，
             // 统一由 SHOW_DEV_ENTRIES 控制（对外发布版为 true）
             if (SHOW_DEV_ENTRIES) {
@@ -226,15 +245,15 @@ fun ProfileScreen(
                 ProfileItem(
                     R.drawable.ic_support,
                     "支持开发者",
-                    "软件完全免费，如果帮到了你，请开发者喝杯咖啡",
+                    "完全免费，愿意的话请开发者喝杯咖啡",
                 ) { onOpenPage(SettingsPage.SUPPORT) }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(ITEM_GAP))
                 ProfileItem(
                     R.drawable.ic_opensource,
                     "开源协议与致谢",
                     "基于开源项目二次开发，感谢原作者",
                 ) { onOpenPage(SettingsPage.OPEN_SOURCE) }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(ITEM_GAP))
             }
 
             // 检查更新：入口开关见 SHOW_UPDATE_CHECK（当前启用）。
@@ -246,7 +265,7 @@ fun ProfileScreen(
                     desc = when {
                         checkingUpdate -> "正在检查…"
                         checkFailed -> "检查失败，请检查网络后重试"
-                        updateInfo != null -> "发现新版本 v${updateInfo?.version}，点击前往下载"
+                        updateInfo != null -> "发现新版本 v${updateInfo?.version}，点击下载"
                         else -> "当前已是最新版本（v${runtime.currentVersion()}）"
                     },
                     showDot = updateInfo != null,
@@ -269,7 +288,7 @@ fun ProfileScreen(
                         }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(ITEM_GAP))
             }
 
             // 关于放最底部：内嵌「免责声明」「隐私条款」入口
@@ -281,7 +300,8 @@ fun ProfileScreen(
 
             // 页脚：交流群（放在所有入口之下，居中的小字，不抢主内容的视觉）。
             // 整行可点：点一下就把群号复制到剪贴板，省得手动选数字。
-            Spacer(Modifier.height(26.dp))
+            // 间距 / 行高都比正文紧：这三行是「版权声明」性质，不该由它们把页面撑出第二屏
+            Spacer(Modifier.height(14.dp))
             val clipboard = LocalClipboardManager.current
             Row(
                 modifier = Modifier
@@ -291,45 +311,47 @@ fun ProfileScreen(
                         clipboard.setText(AnnotatedString(QQ_GROUP))
                         Toast.makeText(context, "已复制群号 $QQ_GROUP", Toast.LENGTH_SHORT).show()
                     }
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 5.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = "QQ交流群：$QQ_GROUP",
                     color = LocalAppColors.current.textSecondary.copy(alpha = 0.75f),
-                    fontSize = 12.sp,
+                    fontSize = 11.5.sp,
                 )
                 Spacer(Modifier.width(5.dp))
                 Icon(
                     Icons.Filled.ContentCopy,
                     contentDescription = "复制群号",
                     tint = LocalAppColors.current.textSecondary.copy(alpha = 0.55f),
-                    modifier = Modifier.size(13.dp),
+                    modifier = Modifier.size(12.dp),
                 )
             }
 
             // 署名一行小字：不写真名，统一称「开发者」。
             // 项目已重新开源，这里恢复「开源」字样；但公开的是源码，分发范围仍限定车友自用。
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = "由开发者个人开发 · 完全免费 · 开源",
                 modifier = Modifier.fillMaxWidth(),
                 color = LocalAppColors.current.textSecondary.copy(alpha = 0.6f),
-                fontSize = 11.sp,
-                lineHeight = 17.sp,
+                fontSize = 10.5.sp,
+                lineHeight = 14.sp,
                 textAlign = TextAlign.Center,
+                maxLines = 1,
             )
             Text(
                 text = "仅供车友自用体验，请勿外传、请勿二次分发",
                 modifier = Modifier.fillMaxWidth(),
                 color = LocalAppColors.current.textSecondary.copy(alpha = 0.45f),
-                fontSize = 10.5.sp,
-                lineHeight = 16.sp,
+                fontSize = 10.sp,
+                lineHeight = 13.sp,
                 textAlign = TextAlign.Center,
+                maxLines = 1,
             )
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(10.dp))
 
             if (showAvatarPicker) {
                 AvatarPickerDialog(
@@ -420,40 +442,55 @@ internal fun ProfileItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(C.panelBg, RoundedCornerShape(16.dp))
+            // 圆角 16 → 14、内边距 14 → 10：整页七条入口，光这一项就能省下五十多 dp，
+            // 才不会把「关于」和页脚挤到屏幕外
+            .clip(RoundedCornerShape(14.dp))
+            .background(C.panelBg, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 15.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             painterResource(iconRes),
             null,
             tint = C.textPrimary,
-            modifier = Modifier.size(24.dp),
+            modifier = Modifier.size(22.dp),
         )
-        Spacer(Modifier.width(14.dp))
+        Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(title, color = C.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    title,
+                    color = C.textPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
                 if (showDot) {
-                    Spacer(Modifier.width(7.dp))
+                    Spacer(Modifier.width(6.dp))
                     Box(
                         modifier = Modifier
-                            .size(8.dp)
+                            .size(7.dp)
                             .background(Color(0xFFFF3B30), CircleShape),
                     )
                 }
             }
-            Spacer(Modifier.height(3.dp))
-            Text(desc, color = C.textSecondary, fontSize = 11.5.sp)
+            Spacer(Modifier.height(2.dp))
+            // 副标题一律单行：换行会让这一条变成三行高，整页高度立刻失控
+            Text(
+                desc,
+                color = C.textSecondary,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(6.dp))
         Icon(
             Icons.Filled.KeyboardArrowRight,
             null,
             tint = C.textSecondary,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(17.dp),
         )
     }
 }

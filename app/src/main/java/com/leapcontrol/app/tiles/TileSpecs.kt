@@ -70,13 +70,47 @@ object QuickTiles {
 
     private const val PREFS = "quick_tiles_state"
 
+    private fun prefsOf(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
     fun isAdded(context: Context, spec: TileSpec): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean("added_${spec.id}", false)
+        prefsOf(context).getBoolean("added_${spec.id}", false)
 
     fun markAdded(context: Context, spec: TileSpec, added: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putBoolean("added_${spec.id}", added).apply()
+        prefsOf(context).edit().putBoolean("added_${spec.id}", added).apply()
+    }
+
+    // ---------------- 开关磁贴的开合态（本地记忆）----------------
+    //
+    // 磁贴点击的**方向只由这里决定**：先读本地开合态取反，再下发指令，下发成功才回写。
+    //
+    // 曾经用 `refreshStatus()` 回来的车况当判据（status.acOn / trunkOpen / windowOpen / sunshadeOpen），
+    // 但这些信号在部分车型上根本读不到（null），`if (车况开着) 关 else 开` 就永远判成「当前是关的」，
+    // 于是每次点磁贴都只发开启指令 —— 用户看到的就是「点开了之后没办法取消」。
+    // 空调卡片当初也是同一个坑（见 ComfortScreens 里那段注释）。
+    //
+    // 车况仍然有用，但只用来**校准**（用户可能在车里手动开了后备箱），而且信号为 null 时一律不动本地状态。
+
+    fun isOn(context: Context, spec: TileSpec): Boolean =
+        prefsOf(context).getBoolean("state_${spec.id}", false)
+
+    fun setOn(context: Context, spec: TileSpec, on: Boolean) {
+        prefsOf(context).edit()
+            .putBoolean("state_${spec.id}", on)
+            // 同一份时间戳既是「最后一次动作时间」，也用来挡住过期车况把状态改回去
+            .putLong("state_at_${spec.id}", System.currentTimeMillis())
+            .apply()
+    }
+
+    /** 上一次由用户（或指令回写）改动这块磁贴状态的时间。 */
+    fun lastActionAt(context: Context, spec: TileSpec): Long =
+        prefsOf(context).getLong("state_at_${spec.id}", 0L)
+
+    /** 上一次用车况校准这块磁贴的时间。 */
+    fun syncedAt(context: Context, spec: TileSpec): Long =
+        prefsOf(context).getLong("sync_at_${spec.id}", 0L)
+
+    fun markSynced(context: Context, spec: TileSpec) {
+        prefsOf(context).edit().putLong("sync_at_${spec.id}", System.currentTimeMillis()).apply()
     }
 
     /** 让所有磁贴重新走一次 onStartListening，刷新文案与激活态。 */
@@ -117,7 +151,9 @@ object QuickTiles {
                 if (ok) markAdded(context, spec, true)
                 val text = when (code) {
                     StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> "已添加【${spec.title}】到控制中心"
-                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED -> "【${spec.title}】已在控制中心"
+                    // 系统没有「移除磁贴」的接口，只能告诉用户去哪儿拖走它
+                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED ->
+                        "【${spec.title}】已在控制中心，要移除请下拉后点「编辑」拖走它"
                     StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED -> "已取消添加"
                     else -> "添加失败（系统拒绝）"
                 }
