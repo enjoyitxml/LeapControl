@@ -35,7 +35,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.journal.CostCategory
-import com.leapcontrol.app.journal.CostStats
 import com.leapcontrol.app.journal.InsurancePlan
 import com.leapcontrol.app.journal.JournalDates
 import com.leapcontrol.app.journal.MaintenancePlan
@@ -64,7 +63,7 @@ private val DangerRed = Color(0xFFE2503C)
 enum class ReminderStyle { HALF, WIDE }
 
 /** 半屏卡固定高度：两张卡内容长短不一，靠固定高度保证底边齐平。 */
-private val HalfCardHeight = 132.dp
+private val HalfCardHeight = 126.dp
 
 /** 状态色：过期红、临期橙、其余用主题色。 */
 @Composable
@@ -204,14 +203,9 @@ fun InsuranceCard(
         else -> "保障中"
     }
     val expireText = "到期 ${JournalDates.shortLabel(plan.expireDate())}"
-    val wideNote = buildString {
-        if (plan.company.isNotBlank()) {
-            append(plan.company)
-            append(" · ")
-        }
-        append(expireText)
-        if (plan.premium > 0) append(" · 保费 ¥${CostStats.money(plan.premium)}")
-    }
+    // 首页整行卡左边要留给主数字，副信息只放「公司 · 到期日」；
+    // 保费留给设置弹层，塞进来会把这一行挤到省略号后面。
+    val wideNote = if (plan.company.isNotBlank()) "${plan.company} · $expireText" else expireText
 
     ReminderBody(
         category = CostCategory.INSURANCE,
