@@ -70,6 +70,15 @@ class JournalRuntime(
     private val _data = mutableStateOf(JournalData.EMPTY)
     val data: State<JournalData> get() = _data
 
+    /**
+     * 概览页卡片的顺序 / 显隐。
+     *
+     * 不给每个 VIN 各存一份：卡片顺序是「个人习惯」，换车不该重置排版；
+     * 而账单、打卡这些是车辆自己的账，必须按 VIN 隔离。所以它放在 prefs 而不是 JSON 里。
+     */
+    private val _cardOrder = mutableStateOf(JournalCardLayout.parse(prefs.getString(KEY_CARD_ORDER, null)))
+    val cardOrder: State<List<JournalCardId>> get() = _cardOrder
+
     private var loadedVin: String? = null
 
     /** 当前数据属于哪个 VIN（UI 用它判断要不要重读）。 */
@@ -86,16 +95,15 @@ class JournalRuntime(
     }
 
     /**
-     * 首次引导是否已经弹过。
+     * 保存概览页的卡片顺序 / 显隐。
      *
-     * 「第一次进零记要先设目标」只在**装置第一次**成立：用户如果看完整页又返回了
-     * （只想记账、暂时不想定目标），下次再点零记不该又把他按回表单里 ——
-     * 概览上那张「定一个用车目标」的引导卡已经足够。
+     * 空列表是合法值（用户把卡片全删了），所以这里不能做「空的就回退默认」。
      */
-    fun onboardingShown(): Boolean = prefs.getBoolean("onboarding_shown", false)
-
-    fun markOnboardingShown() {
-        prefs.edit().putBoolean("onboarding_shown", true).apply()
+    fun setCardOrder(cards: List<JournalCardId>) {
+        val safe = cards.distinct()
+        if (safe == _cardOrder.value) return
+        _cardOrder.value = safe
+        prefs.edit().putString(KEY_CARD_ORDER, JournalCardLayout.serialize(safe)).apply()
     }
 
     /** 从磁盘重新读（外部改过 / 修复用）。 */
@@ -311,3 +319,6 @@ data class DailyKm(
     val date: java.time.LocalDate,
     val km: Double,
 )
+
+/** 概览页卡片顺序的存储键（与账单数据分开：这是排版偏好，不按 VIN 隔离）。 */
+private const val KEY_CARD_ORDER = "card_order"

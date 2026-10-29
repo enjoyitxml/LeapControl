@@ -346,6 +346,43 @@ private fun ReminderEmpty(
     }
 }
 
+/**
+ * 整行的「空卡」：一个角标 + 标题 + 一行说明 + 「去设置」。
+ *
+ * 保养、保险、用车目标都用这一套观感 —— 没填的时候它们本来就该长得像，
+ * 用户扫一眼就知道「这几张都是待填的表」，而不是三张风格各异的引导卡。
+ */
+@Composable
+fun JournalEmptyCard(
+    badge: String,
+    title: String,
+    desc: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val C = LocalAppColors.current
+    JournalCard(modifier = modifier, onClick = onClick) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(C.accent.copy(alpha = 0.13f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(badge, color = C.accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(3.dp))
+                Text(desc, color = C.textSecondary, fontSize = 11.sp)
+            }
+            Text("去设置", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
 // ---------------- 编辑弹层 ----------------
 
 /** 保养计划设置弹层。 */

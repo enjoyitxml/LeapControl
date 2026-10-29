@@ -19,6 +19,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -39,6 +43,9 @@ import com.leapcontrol.app.journal.CostStats
 import com.leapcontrol.app.journal.CostSummary
 import com.leapcontrol.app.journal.GoalProgress
 import com.leapcontrol.app.journal.JournalData
+import com.leapcontrol.app.journal.JournalCardId
+import com.leapcontrol.app.journal.JournalCardLayout
+import com.leapcontrol.app.journal.JournalRow
 import com.leapcontrol.app.journal.MedalGroup
 import com.leapcontrol.app.journal.MedalStats
 import com.leapcontrol.app.journal.Medals
@@ -54,18 +61,19 @@ enum class JournalPage {
 /**
  * 「零记」首页（底部导航第二格）。
  *
- * 三段构成一个人和车的关系：**还要一起多久**（用车目标）、**一起花了多少**（用车成本）、
- * **一起去过哪儿**（城市打卡）。三张卡都可点进详情页；一个数都没有的时候也不会空着，
- * 每张卡都会说明「这里能记什么」。
+ * 由几张可自定义的卡片组成：**还要一起多久**（用车目标）、**该花钱了**（保险 / 保养提醒）、
+ * **一起花了多少**（用车成本）、**一起去过哪儿**（城市打卡）。卡片顺序与显隐都能改
+ * （最下面的「编辑」），存在 prefs 里、按卡片名当协议。
  *
- * 首次进入且没设过目标时，直接跳到目标页 —— 这是「长期主义」的起点：
- * 没有目标就没有进度，后面的勋章与日均成本都无从谈起。
+ * 没设目标也不拦人进页面：目标卡会留成一张空卡，随时能补 ——
+ * 一进来就被表单挡住，对「只想先记一笔」的人来说是纯粹的阻力。
  */
 @Composable
 fun JournalScreen(runtime: AppRuntime) {
     val C = LocalAppColors.current
     val journal = runtime.journal
     val data by journal.data
+    val order by journal.cardOrder
     // 里程勋章看的是**车辆总里程**，不是本地那几天的累计：
     // 本地 daily 表刚开始只有近 7 天，用它会让人均「千公里」勋章卡住不动。
     val energy by runtime.mileageEnergyFlow.collectAsState()
@@ -77,17 +85,15 @@ fun JournalScreen(runtime: AppRuntime) {
     // 两张提醒卡的编辑弹层
     var showMaintenance by remember { mutableStateOf(false) }
     var showInsurance by remember { mutableStateOf(false) }
+    // 卡片区的编辑态（长按拖动排序 / 删除 / 添加）
+    var editingCards by remember { mutableStateOf(false) }
+    // 拖拽到屏幕边缘时要能驱动同一个滚动容器，所以状态得提到这里
+    val scrollState = rememberScrollState()
     val context = LocalContext.current
 
     LaunchedEffect(Unit) {
-        val loadedData = journal.ensureLoaded()
+        journal.ensureLoaded()
         loaded = true
-        // 第一次进来就要求「设一个目标」：没有目标，进度和勋章都无从谈起。
-        // 允许返回（有人只想记账），返回后概览会留一张引导卡，随时能补。
-        if (loadedData.goal == null && !journal.onboardingShown()) {
-            journal.markOnboardingShown()
-            page = JournalPage.GOAL
-        }
 
         // 顺手把「提车天数 + 近 7 日里程 + 总里程」同步进来：
         // 这些数据零记自己不产生，全靠控车链路已有的接口，调一次就够（15 分钟缓存）。
@@ -103,6 +109,8 @@ fun JournalScreen(runtime: AppRuntime) {
 
     // 系统返回（返回键 / 左右滑手势）：先退回零记概览，别直接退出 App
     BackHandler(enabled = page != null) { page = null }
+    // 编辑态里的返回：先退出编辑，而不是切到别的页面或退出 App
+    BackHandler(enabled = page == null && editingCards) { editingCards = false }
 
     val target = page
     if (loaded && target != null) {
@@ -135,6 +143,9 @@ fun JournalScreen(runtime: AppRuntime) {
         km = vehicleKm,
     )
     val unlocked = Medals.unlockedIds(stats)
+    val totalKm = data.dailyKm.values.fold(0.0) { a, b -> a + b }
+    // 卡片顺序 → 排版行：相邻两张半屏卡并成一行（保险左、保养右）
+    val rows = remember(order) { JournalCardLayout.rows(order) }
 
     // 外层 Box 只为了那枚悬浮球：内容照旧滚动，球固定在底部正中
     Box(Modifier.fillMaxSize()) {
@@ -142,7 +153,7 @@ fun JournalScreen(runtime: AppRuntime) {
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 22.dp),
         ) {
             Spacer(Modifier.height(20.dp))
@@ -159,48 +170,88 @@ fun JournalScreen(runtime: AppRuntime) {
             }
             Spacer(Modifier.height(16.dp))
 
-            // ---- 保险 / 保养：不记就会忘，摆在零记最上面并排两张半屏卡 ----
-            // 保险在左、保养在右（用户指定的顺序）；两张卡固定高度，底边对齐。
-            Row(modifier = Modifier.fillMaxWidth()) {
-                InsuranceCard(
-                    plan = data.insurance,
-                    modifier = Modifier.weight(1f),
-                    style = ReminderStyle.HALF,
-                    onClick = { showInsurance = true },
-                )
-                Spacer(Modifier.width(10.dp))
-                MaintenanceCard(
-                    plan = data.maintenance,
-                    currentKm = vehicleKm?.takeIf { it > 0 },
-                    modifier = Modifier.weight(1f),
-                    style = ReminderStyle.HALF,
-                    onClick = { showMaintenance = true },
-                )
+            // ---- 卡片区：顺序 / 显隐都可改，最下面是「编辑」 ----
+            ReorderableCardArea(
+                cards = rows,
+                editing = editingCards,
+                onEditingChange = { editingCards = it },
+                onCardsChange = { newRows ->
+                    journal.setCardOrder(JournalCardLayout.flatten(newRows))
+                },
+                scrollState = scrollState,
+                hidden = JournalCardLayout.hidden(order).map { JournalRow(listOf(it)) },
+                titleOf = { row -> row.cards.joinToString(" + ") { it.title } },
+                // 一行里可能摆着两张半屏卡，删除键得各归各的，交给下面自己画
+                showDelete = false,
+                overlay = { row ->
+                    RowDeleteButtons(
+                        row = row,
+                        onRemove = { id -> journal.setCardOrder(order.filterNot { it == id }) },
+                        modifier = Modifier.matchParentSize(),
+                    )
+                },
+                onAdd = { row ->
+                    val added = row.cards.first()
+                    journal.setCardOrder(JournalCardLayout.withAdded(order, added))
+                },
+            ) { row ->
+                val second = row.cards.getOrNull(1)
+                if (second != null) {
+                    Row(Modifier.fillMaxWidth()) {
+                        JournalCardById(
+                            id = row.cards[0],
+                            data = data,
+                            progress = progress,
+                            unlockedIds = unlocked,
+                            costSummary = costSummary,
+                            totalKm = totalKm,
+                            vehicleKm = vehicleKm?.takeIf { it > 0 },
+                            style = ReminderStyle.HALF,
+                            modifier = Modifier.weight(1f),
+                            onGoal = { page = JournalPage.GOAL },
+                            onCost = { page = JournalPage.COST },
+                            onCheckin = { page = JournalPage.CHECKIN },
+                            onInsurance = { showInsurance = true },
+                            onMaintenance = { showMaintenance = true },
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        JournalCardById(
+                            id = second,
+                            data = data,
+                            progress = progress,
+                            unlockedIds = unlocked,
+                            costSummary = costSummary,
+                            totalKm = totalKm,
+                            vehicleKm = vehicleKm?.takeIf { it > 0 },
+                            style = ReminderStyle.HALF,
+                            modifier = Modifier.weight(1f),
+                            onGoal = { page = JournalPage.GOAL },
+                            onCost = { page = JournalPage.COST },
+                            onCheckin = { page = JournalPage.CHECKIN },
+                            onInsurance = { showInsurance = true },
+                            onMaintenance = { showMaintenance = true },
+                        )
+                    }
+                } else {
+                    JournalCardById(
+                        id = row.cards[0],
+                        data = data,
+                        progress = progress,
+                        unlockedIds = unlocked,
+                        costSummary = costSummary,
+                        totalKm = totalKm,
+                        vehicleKm = vehicleKm?.takeIf { it > 0 },
+                        // 半屏卡落单时撑成整行，不在旁边留一块空白
+                        style = ReminderStyle.WIDE,
+                        modifier = Modifier.fillMaxWidth(),
+                        onGoal = { page = JournalPage.GOAL },
+                        onCost = { page = JournalPage.COST },
+                        onCheckin = { page = JournalPage.CHECKIN },
+                        onInsurance = { showInsurance = true },
+                        onMaintenance = { showMaintenance = true },
+                    )
+                }
             }
-
-            Spacer(Modifier.height(12.dp))
-
-            GoalOverviewCard(
-                data = data,
-                progress = progress,
-                unlockedIds = unlocked,
-                onClick = { page = JournalPage.GOAL },
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            CostOverviewCard(
-                summary = costSummary,
-                onClick = { page = JournalPage.COST },
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            FootprintOverviewCard(
-                data = data,
-                totalKm = data.dailyKm.values.fold(0.0) { a, b -> a + b },
-                onClick = { page = JournalPage.CHECKIN },
-            )
 
             Spacer(Modifier.height(18.dp))
             Text(
@@ -252,44 +303,126 @@ private val OrbReservedHeight = 134.dp
 private fun currentOdometer(runtime: AppRuntime): Double? =
     OwnershipStats.kmFromText(runtime.statusFlow.value?.totalMileage)
 
+/**
+ * 按 id 渲染零记的一张卡。
+ *
+ * 保险 / 保养由调用方给 [ReminderStyle]：两张并排时是 HALF，落单时撑成 WIDE；
+ * 另外三张本来就是整行卡，样式参数对它们没影响。
+ */
+@Composable
+private fun JournalCardById(
+    id: JournalCardId,
+    data: JournalData,
+    progress: GoalProgress?,
+    unlockedIds: Set<String>,
+    costSummary: CostSummary,
+    totalKm: Double,
+    vehicleKm: Double?,
+    style: ReminderStyle,
+    modifier: Modifier,
+    onGoal: () -> Unit,
+    onCost: () -> Unit,
+    onCheckin: () -> Unit,
+    onInsurance: () -> Unit,
+    onMaintenance: () -> Unit,
+) {
+    when (id) {
+        JournalCardId.GOAL ->
+            GoalOverviewCard(
+                data = data,
+                progress = progress,
+                unlockedIds = unlockedIds,
+                modifier = modifier,
+                onClick = onGoal,
+            )
+
+        JournalCardId.COST ->
+            CostOverviewCard(summary = costSummary, modifier = modifier, onClick = onCost)
+
+        JournalCardId.FOOTPRINT ->
+            FootprintOverviewCard(data = data, totalKm = totalKm, modifier = modifier, onClick = onCheckin)
+
+        JournalCardId.INSURANCE ->
+            InsuranceCard(
+                plan = data.insurance,
+                modifier = modifier,
+                style = style,
+                onClick = onInsurance,
+            )
+
+        JournalCardId.MAINTENANCE ->
+            MaintenanceCard(
+                plan = data.maintenance,
+                currentKm = vehicleKm,
+                modifier = modifier,
+                style = style,
+                onClick = onMaintenance,
+            )
+    }
+}
+
+/**
+ * 编辑态里每一张卡的删除键。
+ *
+ * 不能用卡片区自带的那个（它只能钉在整行右上角）：一行并排两张半屏卡时，
+ * 左卡的删除键会跑到右卡头上。这里按行内卡片数量均分，各归各位。
+ */
+@Composable
+private fun RowDeleteButtons(
+    row: JournalRow,
+    onRemove: (JournalCardId) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier) {
+        row.cards.forEachIndexed { index, id ->
+            if (index > 0) Spacer(Modifier.width(10.dp))
+            Box(Modifier.weight(1f)) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 6.dp, end = 6.dp)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .clickable { onRemove(id) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "删除${id.title}",
+                        tint = Color.White,
+                        modifier = Modifier.size(13.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun GoalOverviewCard(
     data: JournalData,
     progress: GoalProgress?,
     unlockedIds: Set<String>,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val C = LocalAppColors.current
     val goal = data.goal
     if (goal == null) {
-        JournalCard(onClick = onClick) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(C.accent.copy(alpha = 0.14f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("定", color = C.accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("定一个用车目标", color = C.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "写下打算陪它多久，剩下的日子会被算成进度",
-                        color = C.textSecondary,
-                        fontSize = 11.sp,
-                    )
-                }
-                Text("去设置", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            }
-        }
+        // 没设目标就留一张空卡，和保养 / 保险的引导卡同一个样子：
+        // 不逼着人一进零记就填表单，想记笔账的人可以直接记账。
+        JournalEmptyCard(
+            badge = "定",
+            title = "设定用车目标",
+            desc = "写下打算陪它多久，进度自动累计",
+            modifier = modifier,
+            onClick = onClick,
+        )
         return
     }
 
-    JournalCard(onClick = onClick) {
+    JournalCard(modifier = modifier, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(contentAlignment = Alignment.Center) {
                 JournalRing(
@@ -364,9 +497,13 @@ private fun GoalOverviewCard(
 }
 
 @Composable
-private fun CostOverviewCard(summary: CostSummary, onClick: () -> Unit) {
+private fun CostOverviewCard(
+    summary: CostSummary,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val C = LocalAppColors.current
-    JournalCard(onClick = onClick) {
+    JournalCard(modifier = modifier, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("本月用车", color = C.textSecondary, fontSize = 12.sp)
             Spacer(Modifier.weight(1f))
@@ -423,9 +560,14 @@ private fun CostOverviewCard(summary: CostSummary, onClick: () -> Unit) {
 }
 
 @Composable
-private fun FootprintOverviewCard(data: JournalData, totalKm: Double, onClick: () -> Unit) {
+private fun FootprintOverviewCard(
+    data: JournalData,
+    totalKm: Double,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val C = LocalAppColors.current
-    JournalCard(onClick = onClick) {
+    JournalCard(modifier = modifier, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("足迹", color = C.textSecondary, fontSize = 12.sp)
             Spacer(Modifier.weight(1f))
