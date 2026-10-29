@@ -158,9 +158,9 @@ fun AcQuickCard(
             AcIcon(
                 glyph = AcGlyph.ChevronRight,
                 tint = C.textSecondary.copy(alpha = 0.7f),
-                size = 15.dp,
-                stroke = 1.7.dp,
-                modifier = Modifier.padding(start = 2.dp),
+                size = 17.dp,
+                stroke = 1.9.dp,
+                modifier = Modifier.padding(start = 4.dp),
             )
 
             // 中部弹性留白：没有它右侧那组会紧贴左边文字，读数一变长度整条就会抖

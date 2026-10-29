@@ -2576,8 +2576,8 @@ internal fun ScrollHintBar(
 private val STATUS_ALERT_RED = Color(0xFFE5484D)
 
 /**
- * 里程行（手绘稿样式）：从左至右依次是 图标 · 里程 · 进度条（撑满剩余）· 百分比。
- * 百分比列固定宽度右对齐，保证上下两行的进度条长度一致。
+ * 里程行（手绘稿样式）：从左至右依次是 图标 · 里程 · 进度条（定宽）· 百分比。
+ * 进度条是定宽的，所以百分比的起点两行天然一致，不需要再靠定宽槽位去对齐。
  */
 @Composable
 private fun MileageRow(
@@ -2620,14 +2620,16 @@ private fun MileageRow(
                     .background(barColor),
             )
         }
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(9.dp))
+        // 百分比紧贴进度条右侧：原来给它 38dp 定宽 + 右对齐，短数字（如 30%）左边的空位
+        // 会全部留在条与数字之间，看起来像进度条断了一截。改为左对齐、宽度自适应后，
+        // 上下两行的百分比起点都跟着同宽的进度条走，天然对齐
         Text(
             text = percent,
             color = C.textPrimary,
             fontSize = 12.sp,
             fontWeight = FontWeight.Normal,
-            textAlign = TextAlign.End,
-            modifier = Modifier.width(38.dp),
+            textAlign = TextAlign.Start,
         )
     }
 }
