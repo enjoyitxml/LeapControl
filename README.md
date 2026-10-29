@@ -75,16 +75,12 @@
 ```bash
 cd LeapControl
 
-# 构建发布包（release 变体，已签名、非 debuggable）
-JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :app:assembleRelease --no-daemon -q
+# 构建调试包
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :app:assembleDebug --no-daemon -q
 
 # 产物
-app/build/outputs/apk/release/app-release.apk
+app/build/outputs/apk/debug/app-debug.apk
 ```
-
-发布包沿用本机 `~/.android/debug.keystore` 签名（见 `app/build.gradle.kts` 的 `signingConfigs`），
-这样从早期 debug 包一路升级上来的车友可以直接覆盖安装；若换成新 keystore，
-所有已装用户必须先卸载才能升级。
 
 日常最省事的还是用发版脚本（见下），它会负责改版本号、构建、写变更记录、打标签。
 
@@ -130,7 +126,7 @@ cd LeapControl
 
 说明：
 
-- 构建产物会照常复制一份到上层目录 `零控.apk`，习惯不变
+- 构建产物会照常复制一份到上层目录 `零控-debug.apk`，习惯不变
 - 渲染走**本机 GPU**（AVD 里 `hw.gpu.mode=host`），比默认的软件渲染流畅得多；
   传感器 / 音频 / GPS 也关掉了，少一批无用开销。若在本机 GPU 上出异常，加 `--software` 退回 CPU 渲染
 - 开机走快照快速启动：首次约 1 分钟，之后 10 秒内；`--cold` 强制干净开机
@@ -227,7 +223,7 @@ cd LeapControl
 1. 检查工作区干净（有未提交改动会先提示你处理）
 2. 改 `app/build.gradle.kts` 的 `versionName` / `versionCode`
 3. 把自上一个标签以来的提交整理成条目，写进 `CHANGELOG.md`
-4. 构建 **release** 变体的 APK，另存为 `release/LeapControl-v0.1.1.apk`（附件名用英文名，GitHub 会过滤文件名中的中文）
+4. 构建 APK，另存为 `release/LeapControl-v0.1.1-debug.apk`（附件名用英文名，GitHub 会过滤文件名中的中文）
 5. 提交 + 打标签 `v0.1.1`
 6. 推送到 GitHub；若本机 git 协议被网络拦截，自动改用 API 通道同步
 7. 在 GitHub 上创建 Release 并把 APK 作为附件上传

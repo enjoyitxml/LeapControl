@@ -57,21 +57,21 @@ src = re.sub(r'versionName = "[^"]*"', f'versionName = "{version}"', src, count=
 open(path, "w", encoding="utf-8").write(src)
 PY
 
-# ---- 2. 构建（release 变体：已签名、非 debuggable、无调试面板）----
-APK_SRC="app/build/outputs/apk/release/app-release.apk"
+# ---- 2. 构建 ----
+APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
 if [[ "$NO_BUILD" == "1" ]]; then
   echo "==> 跳过构建（--no-build）"
 else
-  echo "==> 构建中（约 1~2 分钟）…"
-  JAVA_HOME="$(/usr/libexec/java_home -v 21)" ./gradlew :app:assembleRelease --no-daemon -q
+  echo "==> 构建中（约 1 分钟）…"
+  JAVA_HOME="$(/usr/libexec/java_home -v 21)" ./gradlew :app:assembleDebug --no-daemon -q
 fi
 
 mkdir -p release
 # 附件名用英文名：GitHub 会过滤附件名里的中文，中文名上传后会变成一串残缺字符
-APK_DST="release/LeapControl-v${VERSION}.apk"
+APK_DST="release/LeapControl-v${VERSION}-debug.apk"
 if [[ -f "$APK_SRC" ]]; then
   cp -f "$APK_SRC" "$APK_DST"
-  cp -f "$APK_SRC" "../零控.apk"
+  cp -f "$APK_SRC" "../零控-debug.apk"
   echo "==> APK：${APK_DST}（$(du -h "$APK_DST" | cut -f1)）"
 else
   echo "⚠️  没有找到 APK：$APK_SRC"
