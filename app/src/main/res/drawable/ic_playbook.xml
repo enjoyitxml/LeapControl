@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  「玩法说明」入口图标：一只握柄 + 「+ / −」的玩法手柄。
+
+  几何是从用户给的 200×200 PNG 上量出来的（线宽 13、圆头圆角、顶端两段带圆头的断口，
+  上方一条没有闭合的弧尾），这里用三次贝塞尔把两段半圆展开画，
+  不用 arcTo —— 弧线的 sweep 方向在两种渲染器上容易画反，贝塞尔没有歧义。
+  颜色留黑，实际用色由 Compose 的 Icon(tint=…) 覆盖。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- 主体：左右两个半圆 + 底边；顶边刻意留空，两端是圆头断口 -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M64,67.75 C35.42,67.75 12.25,90.92 12.25,119.5 C12.25,148.08 35.42,171.25 64,171.25 L134.5,171.25 C163.08,171.25 186.25,148.08 186.25,119.5 C186.25,90.92 163.08,67.75 134.5,67.75"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="13" />
+
+    <!-- 加号与减号：圆头短棍 -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M47,121 L75,121 M61,107 L61,135 M125,121 L153,121"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="13" />
+
+    <!-- 顶部的弧尾：从左上起笔，向右卷下后收在断口中间 -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M68,30 Q101,27.5 101.5,70.5"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="13" />
+</vector>

@@ -203,7 +203,7 @@ fun PersonalizationScreen(
         Spacer(Modifier.height(18.dp))
 
         // ---- 首页图标 ----
-        // 只给「显示 / 不显示」，不给排序：顶栏就两个图标，藏起来是为了画面干净，
+        // 只给「显示 / 不显示」，不给排序：顶栏就三个图标，藏起来是为了画面干净，
         // 不是为了让人再学一套拖拽。
         SettingsSection(title = "首页图标", desc = "右上角") {
             SettingsCard {
@@ -212,6 +212,13 @@ fun PersonalizationScreen(
                     desc = "在「个性化」图标左边显示蓝牙钥匙入口，关掉后只能从设置进入",
                     checked = runtime.bleIconVisible.value,
                     onCheckedChange = { runtime.setBleIconVisible(it) },
+                )
+                Spacer(Modifier.height(12.dp))
+                SwitchRow(
+                    label = "玩法说明",
+                    desc = "显示换车模、换背景、快捷控车等玩法的入口；关掉后蓝牙钥匙会直接贴到个性化左边",
+                    checked = runtime.tipIconVisible.value,
+                    onCheckedChange = { runtime.setTipIconVisible(it) },
                 )
             }
         }

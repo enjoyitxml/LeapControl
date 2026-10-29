@@ -1,0 +1,196 @@
+package com.leapcontrol.app.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+/**
+ * 「玩法说明」页（首页右上角那个手柄图标进入）。
+ *
+ * 这里不做「功能清单」，只回答五件新用户最常问的事：车模怎么换、背景怎么换、
+ * 快捷控车怎么加、首页卡片怎么排、零记是什么。文案尽量给可执行的路径
+ * （哪个页面 → 哪个按钮），而不是泛泛的「可在设置中修改」。
+ *
+ * 图标可以在「个性化 → 首页图标」里关掉，但页面本身保留：
+ * 关了入口不代表内容该消失，设置里仍可从这里之外的地方被再次打开。
+ */
+@Composable
+fun PlaybookScreen(onBack: () -> Unit) {
+    val C = LocalAppColors.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 22.dp),
+    ) {
+        Spacer(Modifier.height(12.dp))
+        SettingsTopBar(title = "玩法说明", onBack = onBack)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "零控是个偏「自己用着顺手」的工具，说明书就这几条，看完基本不会再有「这功能在哪儿」的疑问。",
+            color = C.textSecondary,
+            fontSize = 12.sp,
+            lineHeight = 19.sp,
+            modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 2.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+
+        PlaybookSection(
+            no = 1,
+            title = "如何更换车模",
+            body = "点击右上角「个性化」，下拉找到「车模外观」，这里有两个方案：\n\n" +
+                "① 直接改色：软件内置了各色车漆，点一下就能换，立刻生效；\n" +
+                "② AI 自定义涂装：先点「保存当前车模到相册」，把车模图发给豆包等 AI 软件，" +
+                "告诉它「请帮我把这个车换成 XX 涂装」，生成好的图片再回到零控导入即可。",
+            tip = "一定要关掉 AI 软件的水印，否则会影响车模的裁切。" +
+                "例如豆包：进入设置 → 内容生成与产物设置 → AI 生成水印管理 → 关闭水印。",
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        PlaybookSection(
+            no = 2,
+            title = "自定义背景",
+            body = "零控提供了比较丰富的背景自定义：点界面上的小白点可以快速切换主题；" +
+                "也可以在设置里改成「点车模 / 点卡片就换壁纸」。\n\n" +
+                "四季主题、动态背景、外观模式（跟随系统 / 浅色 / 深色）都在「个性化」里，请自行探索。",
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        PlaybookSection(
+            no = 3,
+            title = "如何快捷控车",
+            body = "下拉手机控制中心，点「编辑」，找到零控的快捷控车按钮添加进去。" +
+                "之后不用打开 App 就能直接控车，而且控车无需密码验证，享受畅快体验。\n\n" +
+                "桌面小组件功能已经删掉了 —— 前后做了好几版，安卓原生小组件的效果始终达不到我的审美要求，" +
+                "干脆直接去掉，把精力放在控制中心磁贴上。",
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        PlaybookSection(
+            no = 4,
+            title = "首页小卡片",
+            body = "首页卡片支持自定义排序、任意添加删除：滑到卡片区最下面点「编辑」，" +
+                "长按卡片拖动排序，点卡片右上角的叉删掉，底部的「添加卡片」再挑回来，改完点「完成」。\n\n" +
+                "后续可能会上架更多小卡片。",
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        PlaybookSection(
+            no = 5,
+            title = "零记",
+            body = "零记是我在原作者版本的基础上加进来的记录功能：" +
+                "可以设定用车目标、记录日常用车成本、打卡去过的城市，也会提醒保养与保险到期。\n\n" +
+                "功能还在进一步完善中，欢迎体验。如果你有更好玩、更有趣的想法，" +
+                "可以在「我的 → 支持开发者」里找到我，或者到车友群里说一声。",
+        )
+
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "本软件仅供车友自用交流，请勿外传或二次分发。",
+            color = C.textSecondary.copy(alpha = 0.75f),
+            fontSize = 10.sp,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+
+        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.navigationBarsPadding())
+    }
+}
+
+/**
+ * 一条玩法：序号 + 标题 + 正文，正文下面可以挂一条「注意」提示。
+ *
+ * 用实心卡片而不是可折叠条目：这五条都不长，全部展开也只是一屏多一点，
+ * 折叠反而让人多点五次。
+ */
+@Composable
+private fun PlaybookSection(
+    no: Int,
+    title: String,
+    body: String,
+    tip: String? = null,
+) {
+    val C = LocalAppColors.current
+    SettingsCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .width(22.dp)
+                    .height(22.dp)
+                    .background(C.accent.copy(alpha = 0.14f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = no.toString(),
+                    color = C.accent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.width(9.dp))
+            Text(
+                text = title,
+                color = C.textPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = body,
+            color = C.textSecondary,
+            fontSize = 12.sp,
+            lineHeight = 19.sp,
+        )
+        if (tip != null) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(C.accent.copy(alpha = 0.09f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 11.dp, vertical = 9.dp),
+            ) {
+                // 竖条 + 文字：比整块高饱和底色更克制，压在白卡片上不会跳
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .height(14.dp)
+                        .background(C.accent, RoundedCornerShape(1.dp)),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = tip,
+                    color = if (C.isDark) C.textPrimary else C.accent,
+                    fontSize = 11.sp,
+                    lineHeight = 17.sp,
+                )
+            }
+        }
+    }
+}

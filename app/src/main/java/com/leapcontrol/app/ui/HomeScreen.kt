@@ -194,7 +194,9 @@ fun HomeScreen(
         // 蓝牙钥匙：宿主由 LeapControlApp 下发（进程级单例，设置页也共用同一份状态）
         val bleHost = LocalBleKeyHost.current
         val bleIconVisible by runtime.bleIconVisible
+        val tipIconVisible by runtime.tipIconVisible
         var showBleKey by remember { mutableStateOf(false) }
+        var showPlaybook by remember { mutableStateOf(false) }
         // 行驶里程 / 能耗（独立接口，拿不到就静默保持上一次结果）
         val energySummary by runtime.mileageEnergyFlow.collectAsState()
         // 周能耗（近 6 周百公里能耗 + 上周能耗构成），两张能耗卡共用
@@ -323,7 +325,7 @@ fun HomeScreen(
         // 打开时向 MainScreen 汇报，让场景动画只在首页主界面跑
         val onMainPage = !showChargingCenter && !showSeatComfort && !showFridge && !showClimate &&
             !showAcScreen && !showScheduledAc && !showVehicleHealth && !showOta &&
-            !showControlEditor
+            !showControlEditor && !showBleKey && !showPlaybook
         LaunchedEffect(onMainPage) { onMainPageChange(onMainPage) }
 
         // ---- 系统返回（返回键 / 左右滑返回手势）：逐级退回，不再直接退出 App ----
@@ -354,6 +356,9 @@ fun HomeScreen(
                     showChargingCenter = false
                 }
                 showControlEditor -> showControlEditor = false
+                // 蓝牙钥匙页自己没注册返回处理，不在这里兜底就会一滑直接退出 App
+                showBleKey -> showBleKey = false
+                showPlaybook -> showPlaybook = false
             }
         }
 
@@ -990,6 +995,8 @@ fun HomeScreen(
             )
         } else if (showBleKey && bleHost != null) {
             BluetoothKeyScreen(host = bleHost, onBack = { showBleKey = false })
+        } else if (showPlaybook) {
+            PlaybookScreen(onBack = { showPlaybook = false })
         } else {
             // 外层 Box：承载悬浮反馈条（指令结果必须让用户看到，放在滚动列表底部等于看不见）
             Box(modifier = Modifier.fillMaxSize()) {
@@ -1002,11 +1009,23 @@ fun HomeScreen(
             Box(modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 6.dp, start = 22.dp, end = 22.dp)) {
-                // 右侧图标按钮：蓝牙钥匙（个性化左边）+ 个性化（皮肤），顶边与左侧车名顶端对齐
+                // 右侧图标按钮：玩法说明 → 蓝牙钥匙 → 个性化（皮肤），顶边与左侧车名顶端对齐。
+                // 靠右排列（TopEnd），所以中间任何一个关掉，后面的会自然往右补位。
                 Row(
                     modifier = Modifier.align(Alignment.TopEnd),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // 玩法说明：换车模 / 换背景 / 快捷控车这些「怎么用」都收在这一页，
+                    // 默认显示，个性化里可以关掉
+                    if (tipIconVisible) {
+                        HeaderIconButton(
+                            iconRes = R.drawable.ic_playbook,
+                            description = "玩法说明",
+                            size = 23.dp,
+                            onClick = { showPlaybook = true },
+                        )
+                        Spacer(Modifier.width(2.dp))
+                    }
                     // 蓝牙钥匙：不可用（没配对 / 没开 / 没权限）时是灰的，点进去就能开启
                     if (bleHost != null && bleIconVisible) {
                         HeaderIconButton(

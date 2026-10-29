@@ -295,6 +295,20 @@ class AppRuntime(context: Context) {
     }
 
     /**
+     * 首页顶部「玩法说明」图标是否显示（个性化 → 首页图标）。
+     *
+     * 默认显示：新用户第一次进来最缺的就是「这功能在哪儿」，
+     * 老用户嫌挤可以在个性化里关掉，关掉只是少一个入口，页面本身还在。
+     */
+    private val _tipIconVisible = mutableStateOf(namingPrefs.getBoolean("tip_icon_visible", true))
+    val tipIconVisible: State<Boolean> get() = _tipIconVisible
+
+    fun setTipIconVisible(visible: Boolean) {
+        _tipIconVisible.value = visible
+        namingPrefs.edit().putBoolean("tip_icon_visible", visible).apply()
+    }
+
+    /**
      * 当前桌面图标样式（[LauncherIcon.STYLE_STEERING] / [LauncherIcon.STYLE_OFFICIAL]）。
      *
      * 真值存在 PackageManager 的组件状态里，这里只是给界面看的快照；
