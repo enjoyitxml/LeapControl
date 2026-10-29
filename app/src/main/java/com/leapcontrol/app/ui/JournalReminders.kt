@@ -54,16 +54,11 @@ private const val DUE_SOON_KM = 500.0
 private val WarnOrange = Color(0xFFD98324)
 private val DangerRed = Color(0xFFE2503C)
 
-/**
- * 提醒卡的展示形态。
- *
- * - [HALF]：零记顶部两张并排（半屏），信息压到「一个主数字 + 一行小字」；
- * - [WIDE]：首页整行，左边标题与说明、右边主数字，和首页其它卡片一个观感。
- */
-enum class ReminderStyle { HALF, WIDE }
-
-/** 半屏卡固定高度：两张卡内容长短不一，靠固定高度保证底边齐平。 */
-private val HalfCardHeight = 126.dp
+// 排版：整行横向 —— 左边角标 + 标题 + 一行说明，右边主数字。
+//
+// 早先在零记里是两张并排的半屏卡，靠一个固定 126dp 的高度把底边对齐，
+// 结果「还剩 10 000 km」这种稍长的副信息直接被卡片下沿切掉。半屏宽度下
+// 要么砍信息、要么加高到两张卡不齐，都不成立；干脆整行铺开，和首页统一。
 
 /** 状态色：过期红、临期橙、其余用主题色。 */
 @Composable
@@ -93,23 +88,22 @@ private fun ReminderChip(text: String, color: Color) {
  * 保养提醒卡。
  *
  * 主数字只报一个维度：**时间优先**（天数比公里数更容易感知），
- * 只有「按里程」模式才报公里；两个都设了时，另一个维度写在下面一行小字里。
+ * 只有「按里程」模式才报公里；另一个维度写在标题下面那行小字里。
  */
 @Composable
 fun MaintenanceCard(
     plan: MaintenancePlan?,
     currentKm: Double?,
     modifier: Modifier = Modifier,
-    style: ReminderStyle = ReminderStyle.WIDE,
     onClick: () -> Unit,
 ) {
     if (plan == null) {
         ReminderEmpty(
             category = CostCategory.SERVICE,
             title = "添加保养提醒",
-            desc = "填上次保养的时间与里程，到期前在这里提醒",
+            // 一行放得下才不至于把引导卡撑成两行（11sp 下 284dp 约合 25 个汉字）
+            desc = "填上次保养的时间与里程",
             modifier = modifier,
-            style = style,
             onClick = onClick,
         )
         return
@@ -148,13 +142,13 @@ fun MaintenanceCard(
         expired -> "已超期"
         else -> "距下次保养"
     }
-    // 副信息：两个维度都设了就先报另一个维度，否则报「设定的周期」
-    val note = when {
-        km != null && days != null ->
-            if (km >= 0) "还剩 ${formatKm(km)} km" else "已超 ${formatKm(kotlin.math.abs(km))} km"
+    // 副信息：主数字报的是天数，这里补「还剩多少公里」—— 保养最该被看见的两个维度；
+    // 没设里程时就退回「设定周期」或「上次保养」。都控制在一行内，超了走省略号。
+    val subtitle = when {
+        km != null -> if (km >= 0) "还剩 ${formatKm(km)} km" else "已超 ${formatKm(kotlin.math.abs(km))} km"
         plan.nextDate() != null -> "每 ${plan.months} 个月一次"
         plan.nextKm() != null -> "每 ${formatKm(plan.km)} km 一次"
-        else -> ""
+        else -> "上次 ${JournalDates.shortLabel(plan.lastDate)} · ${formatKm(plan.lastKm)} km"
     }
 
     ReminderBody(
@@ -165,10 +159,8 @@ fun MaintenanceCard(
         value = value,
         unit = unit,
         label = label,
-        note = note,
-        wideNote = "上次 ${JournalDates.shortLabel(plan.lastDate)} · ${formatKm(plan.lastKm)} km",
+        subtitle = subtitle,
         modifier = modifier,
-        style = style,
         onClick = onClick,
     )
 }
@@ -178,7 +170,6 @@ fun MaintenanceCard(
 fun InsuranceCard(
     plan: InsurancePlan?,
     modifier: Modifier = Modifier,
-    style: ReminderStyle = ReminderStyle.WIDE,
     onClick: () -> Unit,
 ) {
     if (plan == null) {
@@ -187,7 +178,6 @@ fun InsuranceCard(
             title = "添加保险续费",
             desc = "记下购买时间，到期前提醒你续费",
             modifier = modifier,
-            style = style,
             onClick = onClick,
         )
         return
@@ -202,10 +192,11 @@ fun InsuranceCard(
         soon -> "即将到期"
         else -> "保障中"
     }
-    val expireText = "到期 ${JournalDates.shortLabel(plan.expireDate())}"
-    // 首页整行卡左边要留给主数字，副信息只放「公司 · 到期日」；
-    // 保费留给设置弹层，塞进来会把这一行挤到省略号后面。
-    val wideNote = if (plan.company.isNotBlank()) "${plan.company} · $expireText" else expireText
+    val expiry = JournalDates.shortLabel(plan.expireDate())
+    // 副信息「公司 · 到期日」；保费留给设置弹层，塞进来会把这一行挤到省略号后面。
+    // 右边那列已经写着「距到期」，日期前不再重复「到期」两个字 ——
+    // 省下的 24dp 让「平安车险 · 2026年12月31日」在窄屏上也能整行放下。
+    val subtitle = if (plan.company.isNotBlank()) "${plan.company} · $expiry" else "到期 $expiry"
 
     ReminderBody(
         category = CostCategory.INSURANCE,
@@ -215,15 +206,13 @@ fun InsuranceCard(
         value = if (days >= 0) "$days" else "${-days}",
         unit = if (days >= 0) "天" else "天前已到期",
         label = if (days >= 0) "距到期" else "已过期",
-        note = if (plan.company.isNotBlank()) plan.company else expireText,
-        wideNote = wideNote,
+        subtitle = subtitle,
         modifier = modifier,
-        style = style,
         onClick = onClick,
     )
 }
 
-/** 卡片外壳：半屏与整行两种排版共用同一份数据。 */
+/** 卡片外壳：整行横向 —— 左边角标 + 标题 + 一行说明，右边主数字。 */
 @Composable
 private fun ReminderBody(
     category: CostCategory,
@@ -233,45 +222,11 @@ private fun ReminderBody(
     value: String,
     unit: String,
     label: String,
-    note: String,
-    wideNote: String,
+    subtitle: String,
     modifier: Modifier,
-    style: ReminderStyle,
     onClick: () -> Unit,
 ) {
     val C = LocalAppColors.current
-
-    if (style == ReminderStyle.HALF) {
-        JournalCard(
-            modifier = modifier.height(HalfCardHeight),
-            padding = 14.dp,
-            onClick = onClick,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CategoryIcon(category = category, size = 26.dp)
-                Spacer(Modifier.weight(1f))
-                ReminderChip(chip, status)
-            }
-            Spacer(Modifier.weight(1f))
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(value, color = C.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.width(2.dp))
-                Text(unit, color = status, fontSize = 10.sp, modifier = Modifier.padding(bottom = 3.dp))
-            }
-            Text(label, color = C.textSecondary, fontSize = 10.sp)
-            if (note.isNotBlank()) {
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    note,
-                    color = C.textSecondary,
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        return
-    }
 
     JournalCard(modifier = modifier, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -285,7 +240,7 @@ private fun ReminderBody(
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    wideNote,
+                    subtitle,
                     color = C.textSecondary,
                     fontSize = 11.sp,
                     maxLines = 1,
@@ -305,32 +260,16 @@ private fun ReminderBody(
     }
 }
 
-/** 还没设置时的引导卡（半屏也放得下，只是少一行说明）。 */
+/** 还没设置时的引导卡。 */
 @Composable
 private fun ReminderEmpty(
     category: CostCategory,
     title: String,
     desc: String,
     modifier: Modifier,
-    style: ReminderStyle,
     onClick: () -> Unit,
 ) {
     val C = LocalAppColors.current
-
-    if (style == ReminderStyle.HALF) {
-        JournalCard(
-            modifier = modifier.height(HalfCardHeight),
-            padding = 14.dp,
-            onClick = onClick,
-        ) {
-            CategoryIcon(category = category, size = 26.dp)
-            Spacer(Modifier.weight(1f))
-            Text(title, color = C.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(3.dp))
-            Text("去设置", color = C.accent, fontSize = 11.sp)
-        }
-        return
-    }
 
     JournalCard(modifier = modifier, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {

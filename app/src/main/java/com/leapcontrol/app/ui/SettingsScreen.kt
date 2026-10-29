@@ -480,16 +480,17 @@ fun SettingsScreen(
             containerColor = C.panelBg,
             title = { Text("百度语音识别", color = C.textPrimary) },
             text = {
-                Column {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Text(
-                        "语音记账开箱可用：App 已内置一组百度短语音凭据，不需要任何配置。\n" +
-                            "这里只是「换用自己的 Key」的入口 —— 想用自己的额度就在百度智能云" +
-                            "「语音技术 → 短语音识别」创建应用，把 API Key 与 Secret Key 填进来即可；" +
-                            "个人认证送 5 万次。\n" +
-                            "保存时会先用这两个 Key 换一次 token，换得到才算配置成功。",
+                        // 每行控制在 22 个汉字以内（弹层正文宽约 272dp，12sp 放得下 22 个），
+                        // 否则会被系统折成四行、把上面的教程挤下去
+                        "开箱可用：已内置百度语音凭据，不填也能说话。\n" +
+                            "想用自己的额度，就按下面 4 步申请后填进来。",
                         color = C.textSecondary,
                         fontSize = 12.sp,
                     )
+                    Spacer(Modifier.height(10.dp))
+                    BaiduKeyGuide(onOpenConsole = { runtime.openExternal(BaiduAsrConsoleUrl) })
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = apiInput,
@@ -921,6 +922,93 @@ fun OptionRow(
             Spacer(Modifier.height(2.dp))
             Text(desc, color = C.textSecondary, fontSize = 11.sp, lineHeight = 15.sp)
         }
+    }
+}
+
+/** 百度智能云「语音技术」控制台（短语音识别就在这里创建应用、拿 Key）。 */
+const val BaiduAsrConsoleUrl = "https://console.bce.baidu.com/ai/#/ai/speech/overview/index"
+
+/**
+ * 给用户照着敲的网址：在域名后**手工断行**。
+ * 弹层里正文只有 ~248dp 宽，整条 305dp 的 URL 会被系统随意折断（常常断在 "inde/x" 这种地方），
+ * 主动分成「域名 + 路径」两行更像是有意排版，也不会多占高度。
+ */
+private const val BaiduAsrConsoleUrlText =
+    "console.bce.baidu.com\n/ai/#/ai/speech/overview/index"
+
+/** 申请教程的四步文案：写给不熟悉百度智能云的人看，照着走一遍就能拿到 Key。 */
+private val BaiduKeySteps = listOf(
+    "打开控制台，用百度账号登录并完成实名认证 —— 免费额度要认证之后才发放。",
+    "左侧「应用列表」→「创建应用」，接口勾「短语音识别」，应用名随便写。",
+    "创建后回到应用列表，复制这个应用的 API Key 与 Secret Key。",
+    "粘到下面两个输入框，点「保存并校验」；通过后就长期用你的额度。",
+)
+
+/**
+ * 百度语音 Key 的申请教程。
+ *
+ * 弹层里的文字不能复制，所以控制台网址**原样印出来**（能照着敲），
+ * 上面再放一个「打开控制台」直接跳浏览器，省得在手机上手动输入长链接。
+ */
+@Composable
+fun BaiduKeyGuide(onOpenConsole: () -> Unit) {
+    val C = LocalAppColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(C.chipBg)
+            .border(1.dp, C.border, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "申请教程（约 2 分钟）",
+                color = C.textPrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "打开控制台 ›",
+                color = C.accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = onOpenConsole)
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+            )
+        }
+        Spacer(Modifier.height(7.dp))
+        BaiduKeySteps.forEachIndexed { index, step ->
+            Row(modifier = Modifier.padding(bottom = 4.dp)) {
+                Text(
+                    "${index + 1}",
+                    color = C.accent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.width(14.dp),
+                )
+                Text(
+                    step,
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            BaiduAsrConsoleUrlText,
+            color = C.textSecondary,
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .clickable(onClick = onOpenConsole)
+                .padding(vertical = 2.dp),
+        )
     }
 }
 

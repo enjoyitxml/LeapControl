@@ -1444,7 +1444,7 @@ fun HomeScreen(
                         onRandomBackdrop = onRandomBackdrop,
                     )
 
-                    // 保险续费 / 保养提醒：与零记那两张半屏卡同源（数据、弹层都复用）。
+                    // 保险续费 / 保养提醒：与零记那两张卡同源（数据、弹层都复用）。
                     // 首页这里是整行卡，点一下直接开设置弹层，不用绕到零记。
                     HomeCardId.INSURANCE -> InsuranceCard(
                         plan = journalData.insurance,

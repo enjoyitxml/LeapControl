@@ -2,14 +2,15 @@ package com.leapcontrol.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -19,9 +20,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,9 +31,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.OwnershipStats
@@ -45,7 +43,6 @@ import com.leapcontrol.app.journal.GoalProgress
 import com.leapcontrol.app.journal.JournalData
 import com.leapcontrol.app.journal.JournalCardId
 import com.leapcontrol.app.journal.JournalCardLayout
-import com.leapcontrol.app.journal.JournalRow
 import com.leapcontrol.app.journal.MedalGroup
 import com.leapcontrol.app.journal.MedalStats
 import com.leapcontrol.app.journal.Medals
@@ -144,8 +141,6 @@ fun JournalScreen(runtime: AppRuntime) {
     )
     val unlocked = Medals.unlockedIds(stats)
     val totalKm = data.dailyKm.values.fold(0.0) { a, b -> a + b }
-    // 卡片顺序 → 排版行：相邻两张半屏卡并成一行（保险左、保养右）
-    val rows = remember(order) { JournalCardLayout.rows(order) }
 
     // 外层 Box 只为了那枚悬浮球：内容照旧滚动，球固定在底部正中
     Box(Modifier.fillMaxSize()) {
@@ -165,92 +160,41 @@ fun JournalScreen(runtime: AppRuntime) {
                         ?: "记录和爱车的长期主义",
                     color = C.textSecondary,
                     fontSize = 12.sp,
-                    modifier = Modifier.padding(bottom = 2.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .padding(bottom = 2.dp),
                 )
             }
             Spacer(Modifier.height(16.dp))
 
             // ---- 卡片区：顺序 / 显隐都可改，最下面是「编辑」 ----
             ReorderableCardArea(
-                cards = rows,
+                cards = order,
                 editing = editingCards,
                 onEditingChange = { editingCards = it },
-                onCardsChange = { newRows ->
-                    journal.setCardOrder(JournalCardLayout.flatten(newRows))
-                },
+                onCardsChange = { journal.setCardOrder(it) },
                 scrollState = scrollState,
-                hidden = JournalCardLayout.hidden(order).map { JournalRow(listOf(it)) },
-                titleOf = { row -> row.cards.joinToString(" + ") { it.title } },
-                // 一行里可能摆着两张半屏卡，删除键得各归各的，交给下面自己画
-                showDelete = false,
-                overlay = { row ->
-                    RowDeleteButtons(
-                        row = row,
-                        onRemove = { id -> journal.setCardOrder(order.filterNot { it == id }) },
-                        modifier = Modifier.matchParentSize(),
-                    )
-                },
-                onAdd = { row ->
-                    val added = row.cards.first()
-                    journal.setCardOrder(JournalCardLayout.withAdded(order, added))
-                },
-            ) { row ->
-                val second = row.cards.getOrNull(1)
-                if (second != null) {
-                    Row(Modifier.fillMaxWidth()) {
-                        JournalCardById(
-                            id = row.cards[0],
-                            data = data,
-                            progress = progress,
-                            unlockedIds = unlocked,
-                            costSummary = costSummary,
-                            totalKm = totalKm,
-                            vehicleKm = vehicleKm?.takeIf { it > 0 },
-                            style = ReminderStyle.HALF,
-                            modifier = Modifier.weight(1f),
-                            onGoal = { page = JournalPage.GOAL },
-                            onCost = { page = JournalPage.COST },
-                            onCheckin = { page = JournalPage.CHECKIN },
-                            onInsurance = { showInsurance = true },
-                            onMaintenance = { showMaintenance = true },
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        JournalCardById(
-                            id = second,
-                            data = data,
-                            progress = progress,
-                            unlockedIds = unlocked,
-                            costSummary = costSummary,
-                            totalKm = totalKm,
-                            vehicleKm = vehicleKm?.takeIf { it > 0 },
-                            style = ReminderStyle.HALF,
-                            modifier = Modifier.weight(1f),
-                            onGoal = { page = JournalPage.GOAL },
-                            onCost = { page = JournalPage.COST },
-                            onCheckin = { page = JournalPage.CHECKIN },
-                            onInsurance = { showInsurance = true },
-                            onMaintenance = { showMaintenance = true },
-                        )
-                    }
-                } else {
-                    JournalCardById(
-                        id = row.cards[0],
-                        data = data,
-                        progress = progress,
-                        unlockedIds = unlocked,
-                        costSummary = costSummary,
-                        totalKm = totalKm,
-                        vehicleKm = vehicleKm?.takeIf { it > 0 },
-                        // 半屏卡落单时撑成整行，不在旁边留一块空白
-                        style = ReminderStyle.WIDE,
-                        modifier = Modifier.fillMaxWidth(),
-                        onGoal = { page = JournalPage.GOAL },
-                        onCost = { page = JournalPage.COST },
-                        onCheckin = { page = JournalPage.CHECKIN },
-                        onInsurance = { showInsurance = true },
-                        onMaintenance = { showMaintenance = true },
-                    )
-                }
+                hidden = JournalCardLayout.hidden(order),
+                titleOf = { it.title },
+                onAdd = { journal.setCardOrder(order + it) },
+            ) { id ->
+                JournalCardById(
+                    id = id,
+                    data = data,
+                    progress = progress,
+                    unlockedIds = unlocked,
+                    costSummary = costSummary,
+                    totalKm = totalKm,
+                    vehicleKm = vehicleKm?.takeIf { it > 0 },
+                    modifier = Modifier.fillMaxWidth(),
+                    onGoal = { page = JournalPage.GOAL },
+                    onCost = { page = JournalPage.COST },
+                    onCheckin = { page = JournalPage.CHECKIN },
+                    onInsurance = { showInsurance = true },
+                    onMaintenance = { showMaintenance = true },
+                )
             }
 
             Spacer(Modifier.height(18.dp))
@@ -306,8 +250,8 @@ private fun currentOdometer(runtime: AppRuntime): Double? =
 /**
  * 按 id 渲染零记的一张卡。
  *
- * 保险 / 保养由调用方给 [ReminderStyle]：两张并排时是 HALF，落单时撑成 WIDE；
- * 另外三张本来就是整行卡，样式参数对它们没影响。
+ * 一律整行横排（和零控首页同一个观感）；保险 / 保养的文字长短不一，
+ * 半屏宽度下压不住副信息，这也是它们改成整行的原因。
  */
 @Composable
 private fun JournalCardById(
@@ -318,7 +262,6 @@ private fun JournalCardById(
     costSummary: CostSummary,
     totalKm: Double,
     vehicleKm: Double?,
-    style: ReminderStyle,
     modifier: Modifier,
     onGoal: () -> Unit,
     onCost: () -> Unit,
@@ -346,7 +289,6 @@ private fun JournalCardById(
             InsuranceCard(
                 plan = data.insurance,
                 modifier = modifier,
-                style = style,
                 onClick = onInsurance,
             )
 
@@ -355,47 +297,8 @@ private fun JournalCardById(
                 plan = data.maintenance,
                 currentKm = vehicleKm,
                 modifier = modifier,
-                style = style,
                 onClick = onMaintenance,
             )
-    }
-}
-
-/**
- * 编辑态里每一张卡的删除键。
- *
- * 不能用卡片区自带的那个（它只能钉在整行右上角）：一行并排两张半屏卡时，
- * 左卡的删除键会跑到右卡头上。这里按行内卡片数量均分，各归各位。
- */
-@Composable
-private fun RowDeleteButtons(
-    row: JournalRow,
-    onRemove: (JournalCardId) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(modifier = modifier) {
-        row.cards.forEachIndexed { index, id ->
-            if (index > 0) Spacer(Modifier.width(10.dp))
-            Box(Modifier.weight(1f)) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 6.dp, end = 6.dp)
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.55f))
-                        .clickable { onRemove(id) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "删除${id.title}",
-                        tint = Color.White,
-                        modifier = Modifier.size(13.dp),
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -427,75 +330,105 @@ private fun GoalOverviewCard(
             Box(contentAlignment = Alignment.Center) {
                 JournalRing(
                     fraction = progress?.barFraction ?: 0f,
-                    modifier = Modifier.size(94.dp),
+                    modifier = Modifier.size(88.dp),
                     stroke = 9.dp,
                 )
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         "${progress?.percent ?: 0}%",
                         color = C.textPrimary,
-                        fontSize = 21.sp,
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text("目标进度", color = C.textSecondary, fontSize = 9.sp)
                 }
             }
-            Spacer(Modifier.width(18.dp))
+            Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     "${goal.targetYears} 年之约",
                     color = C.textPrimary,
-                    fontSize = 15.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 Text(
                     "已陪伴 ${progress?.daysOwned ?: 0} 天 / ${goal.targetDays} 天",
                     color = C.textSecondary,
                     fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    if (progress?.reached == true) "目标已达成，继续相伴"
-                    else "还差 ${progress?.remainingDays ?: 0} 天" +
-                        (progress?.etaDate?.let { " · 预计 ${yearOf(it)} 年达成" } ?: ""),
-                    color = C.accent,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 概览只放 6 枚，而且**每组先挑一枚**：108 枚按组分块排列，
-                    // 直接取前 6 个已解锁的会全是「陪伴」那几枚，看起来像同一枚勋章换了数字。
-                    // 每组各来一枚，最后用没拿到的补齐 —— 既显得有广度，也留了钩子。
-                    val preview = buildList {
-                        MedalGroup.entries.forEach { g ->
-                            Medals.of(g).firstOrNull { unlockedIds.contains(it.id) }?.let { add(it) }
-                        }
-                        if (size < 6) {
-                            addAll(Medals.ALL.filterNot { unlockedIds.contains(it.id) }.take(6 - size))
-                        }
-                    }.take(6)
-                    preview.forEach { medal ->
-                        MedalBadge(
-                            medal = medal,
-                            unlocked = unlockedIds.contains(medal.id),
-                            size = 26.dp,
-                            modifier = Modifier.padding(end = 4.dp),
+                Spacer(Modifier.height(5.dp))
+                if (progress?.reached == true) {
+                    Text(
+                        "目标已达成，继续相伴",
+                        color = C.accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                } else {
+                    // 「还差 … 天 · 预计 … 年达成」原来塞一行要 196dp，窄屏会被省略号吃掉，
+                    // 拆成两行各自成句：第一行是要紧的数字，第二行是预期时间。
+                    Text(
+                        "还差 ${progress?.remainingDays ?: 0} 天",
+                        color = C.accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    progress?.etaDate?.let { eta ->
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "预计 ${yearOf(eta)} 年达成",
+                            color = C.textSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Spacer(Modifier.width(2.dp))
-                    Text(
-                        "已解锁 ${unlockedIds.size} / ${Medals.ALL.size}",
-                        color = C.textSecondary,
-                        fontSize = 10.sp,
-                    )
                 }
             }
+        }
+        Spacer(Modifier.height(14.dp))
+        // 勋章与「已解锁」各自占位：早先挤在环形图右边那一列里，
+        // 6 枚勋章把宽度吃光，数字被压成三行。改成整行铺开，左边勋章、右边计数。
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // 概览只放 5 枚，而且**每组先挑一枚**：108 枚按组分块排列，
+            // 直接取前几个已解锁的会全是「陪伴」那几枚，看起来像同一枚勋章换了数字。
+            // 每组各来一枚，最后用没拿到的补齐 —— 既显得有广度，也留了钩子。
+            val preview = buildList {
+                MedalGroup.entries.forEach { g ->
+                    Medals.of(g).firstOrNull { unlockedIds.contains(it.id) }?.let { add(it) }
+                }
+                if (size < 5) {
+                    addAll(Medals.ALL.filterNot { unlockedIds.contains(it.id) }.take(5 - size))
+                }
+            }.take(5)
+            preview.forEach { medal ->
+                MedalBadge(
+                    medal = medal,
+                    unlocked = unlockedIds.contains(medal.id),
+                    size = 24.dp,
+                    modifier = Modifier.padding(end = 7.dp),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                "已解锁 ${unlockedIds.size} / ${Medals.ALL.size}",
+                color = C.textSecondary,
+                fontSize = 11.sp,
+                maxLines = 1,
+                modifier = Modifier.padding(start = 4.dp),
+            )
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CostOverviewCard(
     summary: CostSummary,
@@ -510,22 +443,24 @@ private fun CostOverviewCard(
             Text("明细", color = C.accent, fontSize = 11.sp)
         }
         Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                "¥${CostStats.money(summary.thisMonth)}",
-                color = C.textPrimary,
-                fontSize = 26.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.width(12.dp))
-            Text(
-                if (summary.empty) "还没有记过一笔"
-                else "日均 ¥${CostStats.moneyFine(summary.perDay)} · 近半年 ¥${CostStats.money(summary.months.sumOf { it.amount })}",
-                color = C.textSecondary,
-                fontSize = 11.sp,
-                modifier = Modifier.padding(bottom = 3.dp),
-            )
-        }
+        Text(
+            "¥${CostStats.money(summary.thisMonth)}",
+            color = C.textPrimary,
+            fontSize = 26.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(4.dp))
+        // 金额单独一行，说明另起一行：和 26sp 的大数字并排时这段小字只剩 145dp，
+        // 花费稍大一点就被省略号截掉；拆行后整行 284dp 随便放。
+        Text(
+            if (summary.empty) "还没有记过一笔"
+            else "日均 ¥${CostStats.moneyFine(summary.perDay)} · 近半年 ¥${CostStats.money(summary.months.sumOf { it.amount })}",
+            color = C.textSecondary,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         Spacer(Modifier.height(12.dp))
         if (summary.empty) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -541,9 +476,13 @@ private fun CostOverviewCard(
             // 分类堆叠条：一眼看出钱花在哪，占比不写数字也不影响判断
             CategoryStackBar(byCategory = summary.byCategory, total = summary.total)
             Spacer(Modifier.height(10.dp))
-            Row {
-                summary.byCategory.take(3).forEachIndexed { index, (cat, amount) ->
-                    if (index > 0) Spacer(Modifier.width(12.dp))
+            // 用 FlowRow 而不是 Row：分类名长短不一（「充电」两个字节俭，「保险」后面还要带金额），
+            // 三条并排很容易顶到卡片右边被裁掉，换成能自动折行的一版最省事。
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                summary.byCategory.take(3).forEach { (cat, amount) ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CategoryIcon(category = cat, size = 20.dp)
                         Spacer(Modifier.width(5.dp))
@@ -551,6 +490,7 @@ private fun CostOverviewCard(
                             "${cat.label} ¥${CostStats.money(amount)}",
                             color = C.textSecondary,
                             fontSize = 11.sp,
+                            maxLines = 1,
                         )
                     }
                 }
@@ -580,18 +520,25 @@ private fun FootprintOverviewCard(
                 color = C.textPrimary,
                 fontSize = 26.sp,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
             )
+            // 中间这段吃剩余宽度：城市名再长也只是自己省略，不会把右边的累计里程顶出卡片
             Text(
                 " 座城市 · ${data.provinceCount} 个省份",
                 color = C.textSecondary,
                 fontSize = 11.sp,
-                modifier = Modifier.padding(bottom = 4.dp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(bottom = 4.dp),
             )
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
             Text(
                 "累计 ${formatKm(totalKm)} km",
                 color = C.textSecondary,
                 fontSize = 11.sp,
+                maxLines = 1,
                 modifier = Modifier.padding(bottom = 4.dp),
             )
         }
