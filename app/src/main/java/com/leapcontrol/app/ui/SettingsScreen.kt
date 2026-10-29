@@ -134,7 +134,11 @@ fun SettingsScreen(
             Spacer(Modifier.height(10.dp))
             ClickRow(
                 title = "语音识别（百度）",
-                desc = if (runtime.hasBaiduAsr()) "已配置，长按灵感球可直接说话" else "未配置，长按说话会用系统识别",
+                desc = if (runtime.hasCustomBaiduAsr()) {
+                    "已使用你填的 Key，长按灵感球可直接说话"
+                } else {
+                    "已内置可用，长按灵感球直接说话；也可以填自己的 Key"
+                },
                 iconRes = R.drawable.ic_mic,
             ) { showAsrKey = true }
             Spacer(Modifier.height(10.dp))
@@ -446,8 +450,8 @@ fun SettingsScreen(
     // ---- 语音识别（百度短语音） ----
     if (showAsrKey) {
         val current = runtime.baiduAsrKeys()
-        var apiInput by remember { mutableStateOf(current?.first.orEmpty()) }
-        var secretInput by remember { mutableStateOf(current?.second.orEmpty()) }
+        var apiInput by remember { mutableStateOf(current.first) }
+        var secretInput by remember { mutableStateOf(current.second) }
         var checking by remember { mutableStateOf(false) }
         var failure by remember { mutableStateOf<String?>(null) }
         AlertDialog(
@@ -457,8 +461,10 @@ fun SettingsScreen(
             text = {
                 Column {
                     Text(
-                        "用于把说的一句话转成文字。到百度智能云「语音技术 → 短语音识别」创建应用后，" +
-                            "把应用列表里的 API Key 与 Secret Key 粘到这里；个人认证送 5 万次，够用很久。\n" +
+                        "语音记账开箱可用：App 已内置一组百度短语音凭据，不需要任何配置。\n" +
+                            "这里只是「换用自己的 Key」的入口 —— 想用自己的额度就在百度智能云" +
+                            "「语音技术 → 短语音识别」创建应用，把 API Key 与 Secret Key 填进来即可；" +
+                            "个人认证送 5 万次。\n" +
                             "保存时会先用这两个 Key 换一次 token，换得到才算配置成功。",
                         color = C.textSecondary,
                         fontSize = 12.sp,

@@ -1,5 +1,6 @@
 package com.leapcontrol.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -94,6 +95,9 @@ fun JournalScreen(runtime: AppRuntime) {
             journal.recordOdometer(summary?.totalMileageKm ?: currentOdometer(runtime))
         }
     }
+
+    // 系统返回（返回键 / 左右滑手势）：先退回零记概览，别直接退出 App
+    BackHandler(enabled = page != null) { page = null }
 
     val target = page
     if (loaded && target != null) {

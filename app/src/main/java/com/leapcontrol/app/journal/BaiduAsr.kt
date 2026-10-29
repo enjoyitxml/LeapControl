@@ -41,6 +41,18 @@ private class AsrException(message: String) : Exception(message)
  */
 object BaiduAsr {
 
+    /**
+     * 内置的百度短语音凭据（「语音技术 → 短语音识别」应用）。
+     *
+     * 内置是为了让语音记账开箱可用，不必先在设置里填 Key；
+     * 设置页仍可填自己的 Key 覆盖这里（用户填的优先级更高）。
+     *
+     * 注意：Key 会随 APK 一起分发，反编译即可取到。若公开发布后用量异常，
+     * 到百度智能云控制台重置 Key 并重新构建即可。
+     */
+    const val BUILTIN_API_KEY = "MHTUqgK7kj5LFmvEF4ol2drE"
+    const val BUILTIN_SECRET_KEY = "yzb5QTGZQ8bFrgdSY0CgQh0cfsI13oUz"
+
     private const val TOKEN_URL = "https://aip.baidubce.com/oauth/2.0/token"
     private const val ASR_URL = "https://vop.baidu.com/server_api"
 

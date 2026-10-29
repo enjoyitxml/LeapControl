@@ -50,6 +50,9 @@ import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.AppearanceMode
 import com.leapcontrol.app.R
 
+/** 本项目开源仓库地址（关于页可直接点击跳转）。 */
+private const val PROJECT_GITHUB_URL = "https://github.com/enjoyitxml/LeapControl"
+
 /**
  * 主题中心的两个分类，对应页面上横向的两个 tab。
  *
@@ -378,9 +381,9 @@ private fun ThemeSlotSummary(
 }
 
 /**
- * 「关于」页：版本信息 + 内嵌「免责声明」「隐私条款」两个子入口。
+ * 「关于」页：版本信息 + 开源仓库地址 + 内嵌「免责声明」「隐私条款」两个子入口。
  *
- * 「检查更新」入口已上移到「我的」页（放在「关于」上面），这里只留版本号。
+ * 「检查更新」入口平时在「我的」页（由 SHOW_UPDATE_CHECK 控制，当前隐藏），这里只留版本号。
  */
 @Composable
 fun AboutScreen(
@@ -408,7 +411,7 @@ fun AboutScreen(
             InfoRow(label = "版本", value = appVersionText())
             Spacer(Modifier.height(12.dp))
             androidx.compose.material3.Text(
-                "零控是作者本人开发的非官方客户端，仅自己和好友使用，与零跑汽车官方无关。"
+                "零控是车主自发开发的非官方客户端，与零跑汽车官方无关。"
                     + "所有车况读取与控车指令均通过零跑官方云端接口下发，"
                     + "使用前请确保车辆处于安全状态，并遵守车辆使用规范。",
                 color = C.textSecondary,
@@ -417,6 +420,14 @@ fun AboutScreen(
             )
         }
 
+        Spacer(Modifier.height(12.dp))
+        // 本项目开源仓库：点击直接用浏览器打开
+        ClickRow(
+            title = "项目开源地址",
+            desc = PROJECT_GITHUB_URL,
+            iconRes = com.leapcontrol.app.R.drawable.ic_github,
+            onClick = { runtime.openExternal(PROJECT_GITHUB_URL) },
+        )
         Spacer(Modifier.height(12.dp))
         ClickRow(
             title = "免责声明",

@@ -8,9 +8,9 @@ import java.util.concurrent.TimeUnit
 /**
  * GitHub 版本更新检测。
  *
- * 仓库已改为**私有**，匿名访问 `releases/latest` 会直接 404，所以请求要带一个只读令牌。
- * 令牌由构建时注入（见 `app/build.gradle.kts` 的 `GH_RELEASE_TOKEN`），源码里不出现；
- * 缺失时退化为匿名请求（公开仓库可用，私有仓库会走「检测失败」分支）。
+ * 仓库为**公开**仓库，检测与下载全部走匿名请求 —— APK 里不携带任何令牌。
+ * （历史版本曾在私有仓库时期用构建注入的只读令牌，现已彻底移除；
+ * 若要接入私有仓库，请改用服务端代理，不要把凭据编译进客户端。）
  *
  * 取数分两级、逐级降级，尽量不让「检测」因为单一接口故障而静默失败：
  *  1. REST API `releases/latest`：能拿到版本号、发布页与 APK 附件信息，信息最全；
@@ -26,9 +26,6 @@ object GitHubUpdate {
     private const val REPO = "enjoyitxml/LeapControl"
     private const val API = "https://api.github.com/repos/$REPO/releases/latest"
     private const val RELEASES_LATEST = "https://github.com/$REPO/releases/latest"
-
-    /** 构建时注入的只读令牌；为空时按匿名请求处理。 */
-    private val token: String get() = BuildConfig.GH_RELEASE_TOKEN
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
@@ -50,12 +47,12 @@ object GitHubUpdate {
     }
 
     private fun requestApi(): AppUpdateInfo? {
-        val builder = Request.Builder()
+        val request = Request.Builder()
             .url(API)
             .header("Accept", "application/vnd.github+json")
-        // 私有仓库必须带令牌；没有令牌时不加头，由服务端按匿名处理
-        if (token.isNotBlank()) builder.header("Authorization", "Bearer $token")
-        val body = client.newCall(builder.get().build()).execute().use { resp ->
+            .get()
+            .build()
+        val body = client.newCall(request).execute().use { resp ->
             if (!resp.isSuccessful) return null
             resp.body?.string()
         }
@@ -103,15 +100,15 @@ object GitHubUpdate {
      * 兜底路径：请求 `github.com/{repo}/releases/latest`，OkHttp 自动跟随 302，
      * 从最终 URL（`.../releases/tag/vX.Y.Z`）里解析版本号。
      *
-     * 私有仓库下这条路径通常也会失败（未登录返回 404），留着只为公开仓库或
-     * api 被限流时仍有一次机会。
+     * 公开仓库下匿名即可访问；只在 api 被限流 / 不可达时作为备选通道。
      */
     private fun fetchViaRedirect(): AppUpdateInfo? = try {
-        val builder = Request.Builder()
+        val request = Request.Builder()
             .url(RELEASES_LATEST)
             .header("Accept", "text/html")
-        if (token.isNotBlank()) builder.header("Authorization", "Bearer $token")
-        client.newCall(builder.get().build()).execute().use { resp ->
+            .get()
+            .build()
+        client.newCall(request).execute().use { resp ->
             if (!resp.isSuccessful) return null
             // 跟随重定向后的最终地址，如 https://github.com/xxx/LeapControl/releases/tag/v0.2.4
             val finalUrl = resp.request.url.toString()
@@ -134,16 +131,13 @@ object GitHubUpdate {
     }
 
     /**
-     * 附件下载地址（带令牌的 API 路径）。
+     * 附件下载地址（API 路径）。
      *
      * `GET /releases/assets/{id}` + `Accept: application/octet-stream` 会 302 到
-     * 一个短期签名的对象存储地址，OkHttp 跟随后即可下载——这是私有仓库里
-     * 唯一能程序化下载附件的通道。
+     * 一个短期签名的对象存储地址，OkHttp 跟随后即可下载。公开仓库匿名可用。
      */
     internal fun assetApiUrl(assetId: Long): String =
         "https://api.github.com/repos/$REPO/releases/assets/$assetId"
-
-    internal fun authHeader(): String? = token.takeIf { it.isNotBlank() }
 
     /** [latest] 是否比 [current] 更新（语义化版本比较）。 */
     fun isNewer(latest: String, current: String): Boolean = compareVersion(latest, current) > 0

@@ -43,6 +43,7 @@ import com.leapcontrol.app.ShumeiSecurityManager
 import com.leapcontrol.app.TrunkState
 import com.leapcontrol.app.TrunkStateMapper
 import com.leapcontrol.app.UpdateCheckResult
+import com.leapcontrol.app.journal.BaiduAsr
 import com.leapcontrol.app.Vehicle
 import com.leapcontrol.app.VehicleChargePlan
 import com.leapcontrol.app.WeeklyEnergyData
@@ -400,17 +401,33 @@ class AppRuntime(context: Context) {
      * 任一项为空就返回 null —— 此时语音走设备自带的 `SpeechRecognizer`，
      * 只是国产 ROM 上基本不可用，所以正常使用需要把这两项填上。
      */
-    fun baiduAsrKeys(): Pair<String, String>? {
+    /**
+     * 百度语音凭据：用户自己填的优先，没填就用内置的。
+     *
+     * 内置之后语音记账开箱可用，不需要先到设置里配 Key；返回类型仍是可空的，
+     * 只是当前实现不会返回 null（保留类型是为了后续可能改成「不内置」的构建）。
+     */
+    fun baiduAsrKeys(): Pair<String, String> {
+        val api = sessionStore.loadBaiduAsrApiKey().orEmpty()
+            .ifBlank { BaiduAsr.BUILTIN_API_KEY }
+        val secret = sessionStore.loadBaiduAsrSecretKey().orEmpty()
+            .ifBlank { BaiduAsr.BUILTIN_SECRET_KEY }
+        return api to secret
+    }
+
+    /** 用户是否自己填过 Key（设置页据此显示「正在用内置凭据」还是「已自定义」）。 */
+    fun hasCustomBaiduAsr(): Boolean {
         val api = sessionStore.loadBaiduAsrApiKey().orEmpty()
         val secret = sessionStore.loadBaiduAsrSecretKey().orEmpty()
-        return if (api.isNotBlank() && secret.isNotBlank()) api to secret else null
+        return api.isNotBlank() && secret.isNotBlank()
     }
 
     fun setBaiduAsrKeys(apiKey: String, secretKey: String) {
         sessionStore.saveBaiduAsrKeys(apiKey, secretKey)
     }
 
-    fun hasBaiduAsr(): Boolean = baiduAsrKeys() != null
+    /** 内置凭据始终可用，这个判断恒为真；保留方法是为了调用方语义清晰。 */
+    fun hasBaiduAsr(): Boolean = true
 
     /** 搜索目的地 POI。无 Key 时返回空列表。 */
     suspend fun searchDestination(keyword: String): List<AmapPoi> = withContext(Dispatchers.IO) {

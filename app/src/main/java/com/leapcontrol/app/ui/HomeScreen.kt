@@ -1,5 +1,6 @@
 package com.leapcontrol.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -324,6 +325,37 @@ fun HomeScreen(
             !showAcScreen && !showScheduledAc && !showVehicleHealth && !showOta &&
             !showControlEditor
         LaunchedEffect(onMainPage) { onMainPageChange(onMainPage) }
+
+        // ---- 系统返回（返回键 / 左右滑返回手势）：逐级退回，不再直接退出 App ----
+        // 顺序与下面渲染用的 else-if 链一致：三级页（预约充电 / 预约预热）→ 定时空调
+        // （回到进来时的那一页）→ 其余二级页 → 首页主界面。
+        BackHandler(enabled = !onMainPage) {
+            when {
+                showChargeSchedule -> showChargeSchedule = false
+                showPreheatSchedule -> showPreheatSchedule = false
+                showScheduledAc -> {
+                    showScheduledAc = false
+                    when (scheduledAcReturnTo) {
+                        "ac" -> showAcScreen = true
+                        "climate" -> showClimate = true
+                    }
+                    scheduledAcReturnTo = null
+                }
+                showOta -> showOta = false
+                showVehicleHealth -> showVehicleHealth = false
+                showAcScreen -> showAcScreen = false
+                showClimate -> showClimate = false
+                showFridge -> showFridge = false
+                showSeatComfort -> showSeatComfort = false
+                showChargingCenter -> {
+                    // 与 ChargingScreen 的 onBack 保持一致：三级页开关一并复位
+                    showChargeSchedule = false
+                    showPreheatSchedule = false
+                    showChargingCenter = false
+                }
+                showControlEditor -> showControlEditor = false
+            }
+        }
 
         // ---- 车模滚出可视区 / 正在滑动：两个「滚动派生信号」----
         // 这里绝对不能在组合期直接读 homeScrollState.value：它在滑动时每帧都会变，

@@ -385,13 +385,12 @@ LeapControl/
 
 ## 安全须知
 
-- 本仓库已转为**私有**，源码含零跑官方服务端的逆向协议实现，**仅供个人学习与技术研究**，请勿用于商业用途或任何非法目的。
+- 本仓库为**公开**仓库，源码含零跑官方服务端的逆向协议实现，**仅供个人学习与技术研究**，请勿用于商业用途或任何非法目的。
 - `AmapWebApi` 的高德 Key 由使用者自己在「我的」页面填写，未硬编码。
 - 登录凭证与控车密码走 Android Keystore 加密存储（`SecureValueStore`）。
-- **版本更新检测需要令牌**：仓库私有后匿名请求 `releases/latest` 会 404，所以构建时会把一个
-  GitHub 只读令牌注入 `BuildConfig.GH_RELEASE_TOKEN`，App 用它查最新版本、并在应用内下载安装包。
-  令牌来自 `local.properties` 的 `leapcontrol.gh.token` 或环境变量 `LEAPCONTROL_GH_TOKEN`，
-  **不进 git**；但它会随 APK 一起分发，反编译 APK 即可取到 —— 所以务必使用**单独签发、
-  只勾选该仓库 `Contents: Read` 的 fine-grained 令牌**，绝不使用账号主令牌或有写权限的令牌。
-  发现泄漏时到 GitHub 设置里吊销重签即可，App 只需重新构建一次。
+- **APK 内不含任何 GitHub 凭据**：版本检测与附件下载全部走匿名请求，构建时不再注入令牌
+  （历史版本曾在私有仓库时期注入 `BuildConfig.GH_RELEASE_TOKEN`，现已彻底移除，相关配置也从
+  `app/build.gradle.kts` 与 `local.properties` 一并删掉）。
+- 当前版本的「检查更新」入口与启动自动检测默认隐藏（`SHOW_UPDATE_CHECK = false`），
+  请到 Releases 页面手动下载安装包；实现代码完整保留，改回 `true` 即可恢复。
 - 切勿把 `local.properties`、签名文件（`.jks`）、个人账号密码或访问令牌提交进来——已在 `.gitignore` 中屏蔽。

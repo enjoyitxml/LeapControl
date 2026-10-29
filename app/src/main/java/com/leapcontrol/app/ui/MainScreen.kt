@@ -5,6 +5,7 @@ import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.os.Build
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -25,6 +26,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -96,7 +98,23 @@ private val HEADER_VEIL_STOPS = arrayOf(
     1.00f to 0.78f,   // 屏幕顶端：最浓，再往外保持不变
 )
 
-/** 二级页路由：「我的」页 → 设置 / 个性化 / 关于（内嵌 免责声明、隐私条款）/ 车模外观 */
+/**
+ * 「支持开发者 / 开源协议与致谢 / 意见反馈 / QQ 交流群」这几个「面向社区」的模块是否显示。
+ *
+ * 当前已恢复对外发布，入口全部开放；若将来再转回纯自用，把这里改成 false 即可整体收起
+ * （页面与路由都保留，不会编译不过）。
+ */
+internal const val SHOW_DEV_ENTRIES = true
+
+/**
+ * 「检查更新」是否启用：控制「我的」页入口与启动后的自动检测弹窗。
+ *
+ * 当前暂时隐藏（避免自动弹窗干扰、也便于按发布页手动下载安装包），
+ * 更新检测、下载、安装的实现全部保留，改回 true 即恢复。
+ */
+internal const val SHOW_UPDATE_CHECK = false
+
+/** 二级页路由：「我的」页 → 设置 / 个性化 / 关于（内嵌 免责声明、隐私条款）/ 车模外观 / 开源协议 / 支持开发者 */
 enum class SettingsPage {
     SETTINGS,
     PERSONALIZATION,
@@ -104,6 +122,8 @@ enum class SettingsPage {
     ABOUT,
     DISCLAIMER,
     PRIVACY,
+    OPEN_SOURCE,
+    SUPPORT,
 }
 
 /** 底部 Dock：零控 / 零记 / 我的 */
@@ -114,6 +134,40 @@ fun MainScreen(
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var settingsPage by remember { mutableStateOf<SettingsPage?>(null) }
+    // 二级页返回栈：「关于 → 隐私条款 → 开源协议」这种链条要能逐级退回。
+    // 之前没有栈，系统返回手势（或返回键）找不到可退的层级，会直接把 Activity 关掉。
+    val settingsStack = remember { mutableStateListOf<SettingsPage>() }
+    /**
+     * 进入二级页：把当前页压栈，返回时就能原路回到上一级。
+     *
+     * 目标页若已经在栈里（「支持开发者 ⇄ 开源协议」这两个页面互相有入口），
+     * 就当成「回退到它」处理并截断栈，否则来回点几次会叠出一长串重复项，
+     * 返回键要按很多下才出得来。
+     */
+    fun openSettings(target: SettingsPage) {
+        val current = settingsPage
+        if (current == null) {
+            settingsPage = target
+            return
+        }
+        if (current == target) return
+        val existing = settingsStack.indexOf(target)
+        if (existing >= 0) {
+            while (settingsStack.size > existing) settingsStack.removeAt(settingsStack.lastIndex)
+            settingsPage = target
+            return
+        }
+        settingsStack.add(current)
+        settingsPage = target
+    }
+    /** 退一级：栈空则回「我的」页本体（settingsPage = null）。 */
+    fun closeSettings() {
+        settingsPage = if (settingsStack.isEmpty()) {
+            null
+        } else {
+            settingsStack.removeAt(settingsStack.lastIndex)
+        }
+    }
     // 首页是否停在「主界面」（打开充电中心 / 空调 / 体检等二级页时为 false）。
     // 动态场景只在零控首页主界面跑动画，其余界面一律用主题色渐变。
     var homeOnMainPage by remember { mutableStateOf(true) }
@@ -190,8 +244,10 @@ fun MainScreen(
     LaunchedEffect(Unit) {
         ForegroundSignal.pauseEvents.collect { resumed = false }
     }
-    // 启动后检测一次 GitHub 更新；确有新版本且未对该版本选择「不再提醒」才弹窗
+    // 启动后检测一次 GitHub 更新；确有新版本且未对该版本选择「不再提醒」才弹窗。
+    // 开关 SHOW_UPDATE_CHECK 关闭时整段不执行，App 不会主动联网查版本。
     LaunchedEffect(Unit) {
+        if (!SHOW_UPDATE_CHECK) return@LaunchedEffect
         val result = runCatching { runtime.checkForUpdate() }.getOrNull()
         if (result is UpdateCheckResult.Newer && result.info.version != runtime.dismissedVersion()) {
             pendingUpdate = result.info
@@ -222,11 +278,20 @@ fun MainScreen(
         onDispose { }
     }
 
+    // ---- 系统返回（返回键 / 左右滑返回手势）----
+    // 层级：二级页 → 二级页的上一级 → 所属 Tab 回到零控首页 → 最后才交给系统退出。
+    // 以前完全没有拦截，在任意二级页划一下手势就直接 finish 掉 Activity，
+    // 看起来就像「一滑就退出 App」。内层页面（HomeScreen / JournalScreen）自己注册的
+    // BackHandler 会覆盖这里，因为它在组合顺序上更靠后。
+    BackHandler(enabled = settingsPage != null) { closeSettings() }
+    BackHandler(enabled = settingsPage == null && tab != 0) { tab = 0 }
+
     ProvideAppColors(dark = dark, accent = themeAccent) {
         MaterialTheme(
             colorScheme = materialScheme,
         ) {
-            // 二级页（设置 / 个性化 / 车模外观 / 关于，关于内嵌 免责声明 与 隐私条款 两个子页）：
+            // 二级页（设置 / 个性化 / 车模外观 / 关于 / 开源协议与致谢 / 支持开发者，
+            // 关于内嵌 免责声明 与 隐私条款 两个子页）：
             // 非首页一律铺当前主题的主题色渐变（不跑场景动画）
             if (settingsPage != null) {
                 Box(
@@ -237,7 +302,7 @@ fun MainScreen(
                     when (settingsPage) {
                         SettingsPage.SETTINGS -> SettingsScreen(
                             runtime = runtime,
-                            onBack = { settingsPage = null },
+                            onBack = { closeSettings() },
                         )
 
                         SettingsPage.PERSONALIZATION -> PersonalizationScreen(
@@ -263,27 +328,38 @@ fun MainScreen(
                                 lightThemeId = pick.lightThemeId
                                 darkThemeId = pick.darkThemeId
                             },
-                            onOpenCarAppearance = { settingsPage = SettingsPage.CAR_APPEARANCE },
-                            onBack = { settingsPage = null },
+                            onOpenCarAppearance = { openSettings(SettingsPage.CAR_APPEARANCE) },
+                            onBack = { closeSettings() },
                         )
 
                         // 车模外观从个性化进，返回也回个性化 —— 别让用户按一次返回直接掉回「我的」
                         SettingsPage.CAR_APPEARANCE -> CarAppearanceScreen(
                             runtime = runtime,
-                            onBack = { settingsPage = SettingsPage.PERSONALIZATION },
+                            onBack = { closeSettings() },
                         )
 
                         SettingsPage.ABOUT -> AboutScreen(
                             runtime = runtime,
-                            onBack = { settingsPage = null },
-                            onOpenDisclaimer = { settingsPage = SettingsPage.DISCLAIMER },
-                            onOpenPrivacy = { settingsPage = SettingsPage.PRIVACY },
+                            onBack = { closeSettings() },
+                            onOpenDisclaimer = { openSettings(SettingsPage.DISCLAIMER) },
+                            onOpenPrivacy = { openSettings(SettingsPage.PRIVACY) },
                         )
 
-                        SettingsPage.DISCLAIMER -> DisclaimerScreen(onBack = { settingsPage = null })
+                        SettingsPage.DISCLAIMER -> DisclaimerScreen(onBack = { closeSettings() })
 
                         SettingsPage.PRIVACY -> PrivacyScreen(
-                            onBack = { settingsPage = null },
+                            onBack = { closeSettings() },
+                            onOpenOpenSource = { openSettings(SettingsPage.OPEN_SOURCE) },
+                        )
+
+                        SettingsPage.OPEN_SOURCE -> OpenSourceScreen(
+                            onBack = { closeSettings() },
+                            onOpenSupport = { openSettings(SettingsPage.SUPPORT) },
+                        )
+
+                        SettingsPage.SUPPORT -> SupportScreen(
+                            onBack = { closeSettings() },
+                            onOpenOpenSource = { openSettings(SettingsPage.OPEN_SOURCE) },
                         )
 
                         null -> Unit
@@ -356,7 +432,7 @@ fun MainScreen(
                             0 -> HomeScreen(
                                 runtime = runtime,
                                 onLogout = onLogout,
-                                onOpenSkin = { settingsPage = SettingsPage.PERSONALIZATION },
+                                onOpenSkin = { openSettings(SettingsPage.PERSONALIZATION) },
                                 // 两处快捷切换各管一摊：车模换主题壁纸，相伴卡换卡片背景
                                 onRandomTheme = randomizeTheme,
                                 onRandomBackdrop = { runtime.randomizeOwnershipBackdrop() },
@@ -371,7 +447,7 @@ fun MainScreen(
                             else -> ProfileScreen(
                                 runtime = runtime,
                                 onLogout = onLogout,
-                                onOpenPage = { settingsPage = it },
+                                onOpenPage = { openSettings(it) },
                             )
                         }
                     }

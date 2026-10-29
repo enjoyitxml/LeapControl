@@ -259,8 +259,9 @@ fun LoginScreen(
             Spacer(Modifier.weight(1f))
 
             // ---- 底部说明 ----
+            // 对外发布：不出现真名，统一以「开发者」指称
             Text(
-                "本软件仅限夏明亮和他的好朋友使用\n登录与控车均直连零跑官方服务",
+                "非官方客户端，由开发者个人开发\n登录与控车均直连零跑官方服务",
                 color = Color.White.copy(alpha = 0.45f),
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,

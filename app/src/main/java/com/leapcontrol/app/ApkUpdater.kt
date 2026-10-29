@@ -52,7 +52,7 @@ object ApkUpdater {
         val builder = Request.Builder()
             .url(GitHubUpdate.assetApiUrl(assetId))
             .header("Accept", "application/octet-stream")
-        GitHubUpdate.authHeader()?.let { builder.header("Authorization", "Bearer $it") }
+        // 公开仓库：匿名请求即可，不带任何凭据
 
         client.newCall(builder.get().build()).execute().use { resp ->
             if (!resp.isSuccessful) error("下载失败（HTTP ${resp.code}）")

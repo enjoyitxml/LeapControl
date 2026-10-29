@@ -25,6 +25,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,6 +66,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -354,6 +358,8 @@ private fun OnlineVoiceContent(
     var error by remember { mutableStateOf<String?>(null) }
     /** 录满上限（55 秒）自动收尾，由下面那个 LaunchedEffect 接住。 */
     var autoStop by remember { mutableStateOf(false) }
+    /** 麦克风权限是否已给：没给时按下先去申请，不白白开一个必然失败的录音。 */
+    var micGranted by remember { mutableStateOf(false) }
 
     val recorder = remember {
         VoiceRecorder(
@@ -393,7 +399,9 @@ private fun OnlineVoiceContent(
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) startRecording() else onTypeLatest.value("没有麦克风权限，先用打字吧")
+        micGranted = granted
+        // 授权后不再自动开录：录音只由「按住」触发，授权完再按一次即可
+        if (!granted) error = "没有麦克风权限，先用打字吧"
     }
 
     DisposableEffect(Unit) {
@@ -408,10 +416,12 @@ private fun OnlineVoiceContent(
         onDispose { if (wasLight != null) controller?.isAppearanceLightStatusBars = wasLight }
     }
 
+    // 进浮层先确认权限，但**不自动开录** —— 现在的交互是「按住球说话、松手结束」
     LaunchedEffect(Unit) {
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
-        if (granted) startRecording() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        micGranted = granted
+        if (!granted) permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     LaunchedEffect(autoStop) {
@@ -442,8 +452,8 @@ private fun OnlineVoiceContent(
                 when {
                     failure != null -> "没听清"
                     recognizing -> "正在识别"
-                    recording -> "我在听"
-                    else -> "正在准备"
+                    recording -> "我在听，松手结束"
+                    else -> "按住说话"
                 },
                 color = Color.White.copy(alpha = 0.92f),
                 fontSize = 17.sp,
@@ -452,19 +462,37 @@ private fun OnlineVoiceContent(
 
             Spacer(Modifier.height(30.dp))
 
-            // 识别中让球维持在一点微光，别一下子塌回去
+            // 识别中让球维持在一点微光，别一下子塌回去。
+            // 交互：按住 = 开始录，松手 = 立刻收音并送去识别，不再要求点「说完了」。
+            // pointerInput 的 key 必须是常量：用 recording 当 key 的话，一开录就重组、
+            // 手势会被立刻取消，等于刚按下就"松手"，录到一片空白。
             SiriOrb(
                 level = if (recognizing) 0.14f else level,
-                modifier = Modifier.size(176.dp),
+                modifier = Modifier
+                    .size(176.dp)
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false).consume()
+                            if (recognizing) return@awaitEachGesture
+                            if (!micGranted) {
+                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                return@awaitEachGesture
+                            }
+                            error = null
+                            startRecording()
+                            waitForUpOrCancellation()
+                            if (recording) stopAndSend()
+                        }
+                    },
             )
 
             Spacer(Modifier.height(30.dp))
 
             Text(
-                text = failure ?: if (recognizing) {
-                    "正在把语音转成文字…"
-                } else {
-                    "说一句就行，比如「今天充电花了 50」"
+                text = failure ?: when {
+                    recognizing -> "正在把语音转成文字…"
+                    recording -> "松手就结束，说一句就行"
+                    else -> "按住下面的球说一句，比如「今天充电花了 50」"
                 },
                 color = if (failure != null) Color.White.copy(alpha = 0.62f) else Color.White,
                 fontSize = 16.sp,
@@ -482,17 +510,16 @@ private fun OnlineVoiceContent(
                 when {
                     failure != null -> {
                         VoiceButton(text = "改用打字", primary = false) { onTypeLatest.value(failure) }
-                        VoiceButton(text = "再试一次", primary = true) { startRecording() }
+                        // 报错后不清空状态：点它只是回到「按住说话」，录不录由手指决定
+                        VoiceButton(text = "再试一次", primary = true) { error = null }
                     }
 
                     recognizing -> VoiceButton(text = "取消", primary = false) { onCancel() }
 
-                    else -> {
-                        VoiceButton(text = "取消", primary = false) {
-                            recorder.stop()
-                            onCancel()
-                        }
-                        VoiceButton(text = "说完了", primary = true) { stopAndSend() }
+                    else -> VoiceButton(text = "取消", primary = false) {
+                        recorder.stop()
+                        recording = false
+                        onCancel()
                     }
                 }
             }
