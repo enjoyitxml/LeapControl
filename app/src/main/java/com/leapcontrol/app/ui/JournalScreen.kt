@@ -216,12 +216,17 @@ fun JournalScreen(runtime: AppRuntime) {
             Spacer(Modifier.height(OrbReservedHeight))
         }
 
-        JournalOrb(
-            runtime = runtime,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 10.dp),
-        )
+        // 两张提醒卡的弹层是全屏抽屉（遮罩 + 底部升起），而灵感球带着 zIndex(2f) ——
+        // 它得浮在「记一句」那片黑遮罩之上，否则那个「×」会被压成灰点。代价是球会
+        // 一起压到这两个弹层头上，正好挡住输入框和「保存」。所以弹层一亮相就把球收起来。
+        if (!showMaintenance && !showInsurance) {
+            JournalOrb(
+                runtime = runtime,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 10.dp),
+            )
+        }
 
         if (showMaintenance) {
             MaintenanceSheet(

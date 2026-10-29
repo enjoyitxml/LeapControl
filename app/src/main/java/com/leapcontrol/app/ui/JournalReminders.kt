@@ -1,5 +1,6 @@
 package com.leapcontrol.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -594,6 +595,9 @@ private fun SheetShell(
     content: @Composable () -> Unit,
 ) {
     val C = LocalAppColors.current
+    // 弹层开着时侧滑 / 返回键应该只收弹层。不接管的话这个手势会漏到外层的
+    // BackHandler（零记退页、首页退二级页），看起来就像「一滑就把页面退掉了」。
+    BackHandler(enabled = true, onBack = onDismiss)
     Box(
         modifier = Modifier
             .fillMaxSize()
