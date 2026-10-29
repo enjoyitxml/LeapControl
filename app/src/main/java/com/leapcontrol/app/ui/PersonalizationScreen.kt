@@ -509,12 +509,15 @@ private fun ThemeSlotSummary(
     }
 }
 
+/** 本项目在 GitHub 上的公开仓库地址（关于页可直接点击跳转）。 */
+private const val PROJECT_GITHUB_URL = "https://github.com/enjoyitxml/LeapControl"
+
 /**
- * 「关于」页：版本信息 + 内嵌「免责声明」「隐私条款」两个子入口。
+ * 「关于」页：版本信息 + 开源仓库地址 + 内嵌「免责声明」「隐私条款」两个子入口。
  *
- * 本项目**不开源**：只基于开源项目二次开发，因此这里不提供任何源码仓库地址，
- * 只说明软件性质与使用范围（仅供车友自用体验，请勿外传）。
- * 「检查更新」入口平时在「我的」页（由 SHOW_UPDATE_CHECK 控制，当前隐藏），这里只留版本号。
+ * 本项目已在 GitHub 公开：这里给出仓库地址，方便车友查阅源码、提 issue。
+ * 使用范围仍然写明「仅供车友自用体验，请勿外传」—— 公开的是源码，不是分发授权。
+ * 「检查更新」入口在「我的」页（由 SHOW_UPDATE_CHECK 控制，当前启用），这里只留版本号。
  */
 @Composable
 fun AboutScreen(
@@ -550,10 +553,10 @@ fun AboutScreen(
                 lineHeight = 16.sp,
             )
             Spacer(Modifier.height(10.dp))
-            // 使用范围：放在关于页最显眼的位置，去掉「项目地址」之后这里就是唯一的定性说明
+            // 使用范围：公开的是源码，不是分发授权，两句话都要在
             androidx.compose.material3.Text(
                 "本软件仅供车友自用体验，请勿外传、请勿二次分发。"
-                    + "本项目不开源、不提供源码，仅基于开源项目二次开发而来。",
+                    + "本项目源码已在 GitHub 公开，基于开源项目二次开发而来。",
                 color = C.textSecondary,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -561,6 +564,14 @@ fun AboutScreen(
             )
         }
 
+        Spacer(Modifier.height(12.dp))
+        // 开源仓库：点一下用系统浏览器打开
+        ClickRow(
+            title = "开源项目地址",
+            desc = PROJECT_GITHUB_URL,
+            iconRes = com.leapcontrol.app.R.drawable.ic_github,
+            onClick = { runtime.openExternal(PROJECT_GITHUB_URL) },
+        )
         Spacer(Modifier.height(12.dp))
         ClickRow(
             title = "免责声明",

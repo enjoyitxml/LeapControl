@@ -70,7 +70,7 @@ private const val QQ_GROUP = "179731222"
  * 页面底部是 QQ 交流群页脚与退出登录。
  *
  * 「意见反馈」入口已按需求删除（问卷地址一并不再保留）。
- * 「检查更新」入口由 [SHOW_UPDATE_CHECK] 控制，当前隐藏（改为按发布页手动下载）。
+ * 「检查更新」入口由 [SHOW_UPDATE_CHECK] 控制，当前启用（启动自动检测 + 手动检查）。
  */
 @Composable
 fun ProfileScreen(
@@ -237,8 +237,8 @@ fun ProfileScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
-            // 检查更新：已按对外发布策略隐藏（开关见 SHOW_UPDATE_CHECK），
-            // 页面与弹窗实现都保留，改回 true 即恢复「启动自动检测 + 手动检查」。
+            // 检查更新：入口开关见 SHOW_UPDATE_CHECK（当前启用）。
+            // 点击即查一次最新 Release，查到新版本直接弹下载弹窗。
             if (SHOW_UPDATE_CHECK) {
                 ProfileItem(
                     R.drawable.ic_system_update,
@@ -309,11 +309,11 @@ fun ProfileScreen(
                 )
             }
 
-            // 署名一行小字：不写真名，统一称「开发者」；不说「开源」——本项目不开源，
-            // 只是基于开源项目二次开发，页面里只强调「自用体验、请勿外传」。
+            // 署名一行小字：不写真名，统一称「开发者」。
+            // 项目已重新开源，这里恢复「开源」字样；但公开的是源码，分发范围仍限定车友自用。
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "由开发者个人开发 · 完全免费 · 仅供车友自用体验",
+                text = "由开发者个人开发 · 完全免费 · 开源",
                 modifier = Modifier.fillMaxWidth(),
                 color = LocalAppColors.current.textSecondary.copy(alpha = 0.6f),
                 fontSize = 11.sp,
@@ -321,7 +321,7 @@ fun ProfileScreen(
                 textAlign = TextAlign.Center,
             )
             Text(
-                text = "请勿外传、请勿二次分发",
+                text = "仅供车友自用体验，请勿外传、请勿二次分发",
                 modifier = Modifier.fillMaxWidth(),
                 color = LocalAppColors.current.textSecondary.copy(alpha = 0.45f),
                 fontSize = 10.5.sp,

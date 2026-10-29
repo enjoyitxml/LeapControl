@@ -14,10 +14,13 @@ import java.util.concurrent.TimeUnit
 /**
  * 更新包下载与安装。
  *
- * 为什么必须走 App 内下载：仓库是私有的，Release 附件的网页直链
- * （`browser_download_url`）用系统浏览器打开会 404——它需要 GitHub 登录态。
- * 唯一可行的通道是 GitHub API 的 `releases/assets/{id}` + `Accept: application/octet-stream`，
- * 带上只读令牌后 302 到签名地址，响应里拿到的是真正的 APK 字节流。
+ * 仓库为**公开**仓库，下载全程匿名，APK 内不带任何凭据。
+ *
+ * 走 GitHub API 的 `releases/assets/{id}` + `Accept: application/octet-stream`：
+ * 该端点会 302 到短期签名的对象存储地址（`objects.githubusercontent.com`），
+ * 真正的字节流从 CDN 取，不反复消耗 API 限额。
+ * 备选的 `browser_download_url` 也匿名可用，但它是网页直链，将来若仓库再转为私有会失效；
+ * asset id 是接口返回的稳定标识，两种仓库状态下都能用，所以沿用它。
  */
 object ApkUpdater {
 

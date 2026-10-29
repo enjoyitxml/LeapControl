@@ -109,10 +109,11 @@ internal const val SHOW_DEV_ENTRIES = true
 /**
  * 「检查更新」是否启用：控制「我的」页入口与启动后的自动检测弹窗。
  *
- * 当前暂时隐藏（避免自动弹窗干扰、也便于按发布页手动下载安装包），
- * 更新检测、下载、安装的实现全部保留，改回 true 即恢复。
+ * 仓库已转回公开，检测与下载全部走匿名请求（APK 内不再携带任何令牌），因此恢复启用：
+ * 启动时静默查一次最新 Release，确有新版本且未对该版本选择「不再提醒」才弹窗；
+ * 「我的」页入口则随时可手动检查。临时想关掉的话改回 false 即可。
  */
-internal const val SHOW_UPDATE_CHECK = false
+internal const val SHOW_UPDATE_CHECK = true
 
 /** 二级页路由：「我的」页 → 设置 / 个性化 / 关于（内嵌 免责声明、隐私条款）/ 车模外观 / 开源协议 / 支持开发者 */
 enum class SettingsPage {

@@ -2,9 +2,12 @@
 <!--
   默认图标：方向盘（新标，避免与零跑官方 logo 产生商标纠纷）。
 
-  前景是 drawable-nodpi/ic_launcher_fg_steering.png —— 由 FangXiangPan4.png
-  （200×200 透明底黑图形）处理而来：裁到图形边界、放大到 432px（108dp @ xxxhdpi）、
-  白色填充、图形占画布 68%，落在 adaptive icon 的安全区内，圆形遮罩也不会切边。
+  前景是 drawable-nodpi/ic_launcher_fg_steering.png —— 由 FangXiangPan4 原图（1024×1024 深底白图形）
+  按亮度还原 alpha、裁到图形边界、白色填充而来。
+
+  **比例必须留在安全区内**：108dp 画布中，启动器实际只显示中间约 72dp（66.7%）。
+  这里图形取画布的 48%，即可见区内的 72%，四边留白均衡；早先设成 68% 时正好顶满可见区，
+  圆环左右会被掩膜切掉。改这个数字前先算一遍 66.7% 这条线。
   背景沿用 ic_launcher_background（深色竖向渐变 + 底部光晕），只换前景。
 
   另一套「官方 logo」见 mipmap-anydpi-v26/ic_launcher_official.xml，
