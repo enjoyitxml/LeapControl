@@ -159,17 +159,24 @@ fun JournalScreen(runtime: AppRuntime) {
             }
             Spacer(Modifier.height(16.dp))
 
-            // ---- 保养 / 保险：不记就会忘，摆在零记最上面 ----
-            MaintenanceCard(
-                plan = data.maintenance,
-                currentKm = vehicleKm?.takeIf { it > 0 },
-                onClick = { showMaintenance = true },
-            )
-            Spacer(Modifier.height(10.dp))
-            InsuranceCard(
-                plan = data.insurance,
-                onClick = { showInsurance = true },
-            )
+            // ---- 保险 / 保养：不记就会忘，摆在零记最上面并排两张半屏卡 ----
+            // 保险在左、保养在右（用户指定的顺序）；两张卡固定高度，底边对齐。
+            Row(modifier = Modifier.fillMaxWidth()) {
+                InsuranceCard(
+                    plan = data.insurance,
+                    modifier = Modifier.weight(1f),
+                    style = ReminderStyle.HALF,
+                    onClick = { showInsurance = true },
+                )
+                Spacer(Modifier.width(10.dp))
+                MaintenanceCard(
+                    plan = data.maintenance,
+                    currentKm = vehicleKm?.takeIf { it > 0 },
+                    modifier = Modifier.weight(1f),
+                    style = ReminderStyle.HALF,
+                    onClick = { showMaintenance = true },
+                )
+            }
 
             Spacer(Modifier.height(12.dp))
 

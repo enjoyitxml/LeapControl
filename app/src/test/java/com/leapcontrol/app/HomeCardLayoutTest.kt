@@ -13,6 +13,23 @@ class HomeCardLayoutTest {
     }
 
     @Test
+    fun `保养与保险卡是可选卡，不自动塞进首页`() {
+        // 这两张卡没设置计划时只是引导卡，默认顺序里不该有它们；
+        // 老用户列表（savedVersion 偏低）走补入逻辑时也一样不会被塞进去。
+        assertTrue(HomeCardId.INSURANCE !in HomeCardLayout.DEFAULT)
+        assertTrue(HomeCardId.MAINTENANCE !in HomeCardLayout.DEFAULT)
+        val old = listOf(HomeCardId.AC, HomeCardId.RANK)
+        assertEquals(old, HomeCardLayout.parse("AC,RANK", savedVersion = HomeCardLayout.VERSION))
+        // 低版本列表触发补入逻辑时，也只会补协议里登记过的卡，不会补这两张
+        val upgraded = HomeCardLayout.parse("AC,RANK", savedVersion = 1)
+        assertTrue(HomeCardId.INSURANCE !in upgraded)
+        assertTrue(HomeCardId.MAINTENANCE !in upgraded)
+        // 但它们必须能从「添加卡片」里被加回来
+        assertTrue(HomeCardId.INSURANCE in HomeCardLayout.hidden(old))
+        assertTrue(HomeCardId.MAINTENANCE in HomeCardLayout.hidden(old))
+    }
+
+    @Test
     fun `空串表示用户把卡片全删了`() {
         assertTrue(HomeCardLayout.parse("").isEmpty())
         assertTrue(HomeCardLayout.parse("   ").isEmpty())
@@ -96,6 +113,9 @@ class HomeCardLayoutTest {
                 HomeCardId.COMPOSITION,
                 HomeCardId.HEALTH,
                 HomeCardId.OWNERSHIP,
+                // 保养 / 保险是「可选卡」：默认不进 DEFAULT，因此总在「添加卡片」里
+                HomeCardId.INSURANCE,
+                HomeCardId.MAINTENANCE,
             ),
             hidden,
         )

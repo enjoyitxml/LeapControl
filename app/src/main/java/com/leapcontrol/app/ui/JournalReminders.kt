@@ -31,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.journal.CostCategory
@@ -54,32 +55,64 @@ private const val DUE_SOON_KM = 500.0
 private val WarnOrange = Color(0xFFD98324)
 private val DangerRed = Color(0xFFE2503C)
 
-/** 保养提醒卡。 */
+/**
+ * 提醒卡的展示形态。
+ *
+ * - [HALF]：零记顶部两张并排（半屏），信息压到「一个主数字 + 一行小字」；
+ * - [WIDE]：首页整行，左边标题与说明、右边主数字，和首页其它卡片一个观感。
+ */
+enum class ReminderStyle { HALF, WIDE }
+
+/** 半屏卡固定高度：两张卡内容长短不一，靠固定高度保证底边齐平。 */
+private val HalfCardHeight = 132.dp
+
+/** 状态色：过期红、临期橙、其余用主题色。 */
+@Composable
+private fun reminderColor(expired: Boolean, soon: Boolean): Color {
+    val C = LocalAppColors.current
+    return when {
+        expired -> DangerRed
+        soon -> WarnOrange
+        else -> C.accent
+    }
+}
+
+/** 右上角的胶囊小标（已过期 / 即将到期 / 正常）。 */
+@Composable
+private fun ReminderChip(text: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(color.copy(alpha = 0.14f))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    ) {
+        Text(text, color = color, fontSize = 9.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+/**
+ * 保养提醒卡。
+ *
+ * 主数字只报一个维度：**时间优先**（天数比公里数更容易感知），
+ * 只有「按里程」模式才报公里；两个都设了时，另一个维度写在下面一行小字里。
+ */
 @Composable
 fun MaintenanceCard(
     plan: MaintenancePlan?,
     currentKm: Double?,
+    modifier: Modifier = Modifier,
+    style: ReminderStyle = ReminderStyle.WIDE,
     onClick: () -> Unit,
 ) {
-    val C = LocalAppColors.current
-
     if (plan == null) {
-        JournalCard(onClick = onClick) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CategoryIcon(category = CostCategory.SERVICE, size = 40.dp)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("添加保养提醒", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        "填上次保养的时间与里程，到期前在这里提醒",
-                        color = C.textSecondary,
-                        fontSize = 11.sp,
-                    )
-                }
-                Text("去设置", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            }
-        }
+        ReminderEmpty(
+            category = CostCategory.SERVICE,
+            title = "添加保养提醒",
+            desc = "填上次保养的时间与里程，到期前在这里提醒",
+            modifier = modifier,
+            style = style,
+            onClick = onClick,
+        )
         return
     }
 
@@ -88,194 +121,234 @@ fun MaintenanceCard(
     // 取「更紧急」的那个维度做整卡状态：时间先到就按时间，里程先到就按里程
     val expired = (days != null && days < 0) || (km != null && km < 0)
     val soon = !expired && ((days != null && days <= DUE_SOON_DAYS) || (km != null && km <= DUE_SOON_KM))
-    val statusColor = when {
-        expired -> DangerRed
-        soon -> WarnOrange
-        else -> C.accent
+    val status = reminderColor(expired, soon)
+    val chip = when {
+        expired -> "已过期"
+        soon -> "即将到期"
+        else -> "正常"
     }
 
-    JournalCard(onClick = onClick) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CategoryIcon(category = CostCategory.SERVICE, size = 40.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("保养提醒", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(statusColor.copy(alpha = 0.14f))
-                            .padding(horizontal = 7.dp, vertical = 2.dp),
-                    ) {
-                        Text(
-                            when {
-                                expired -> "已过期"
-                                soon -> "即将到期"
-                                else -> "正常"
-                            },
-                            color = statusColor,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(5.dp))
-                Text(
-                    "上次 ${JournalDates.shortLabel(plan.lastDate)} · ${formatKm(plan.lastKm)} km",
-                    color = C.textSecondary,
-                    fontSize = 11.sp,
-                )
-            }
+    val value: String
+    val unit: String
+    when {
+        days != null -> {
+            value = if (days >= 0) "$days" else "${-days}"
+            unit = if (days >= 0) "天" else "天前已到期"
         }
-        Spacer(Modifier.height(12.dp))
-        // 剩余量：时间与里程都是「还剩多少」，过期时写「已超」
-        Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            days?.let { d ->
-                RemainingStat(
-                    value = if (d >= 0) "$d" else "${-d}",
-                    unit = if (d >= 0) "天" else "天前已到期",
-                    label = if (d >= 0) "距下次保养" else "已超期",
-                    color = statusColor,
-                )
-            }
-            km?.let { k ->
-                RemainingStat(
-                    value = formatKm(kotlin.math.abs(k)),
-                    unit = if (k >= 0) "km" else "km 已超",
-                    label = if (k >= 0) "距下次保养" else "已超里程",
-                    color = statusColor,
-                )
-            }
-            if (days == null && km == null) {
-                // 设了保养计划但车况总里程拿不到：只报时间那一侧，别显示一个假的公里数
-                Text("拿不到当前总里程，先按时间提醒", color = C.textSecondary, fontSize = 11.sp)
-            }
+        km != null -> {
+            value = formatKm(kotlin.math.abs(km))
+            unit = if (km >= 0) "km" else "km 已超"
         }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            buildString {
-                append("设定：")
-                if (plan.nextDate() != null) {
-                    append("每 ${plan.months} 个月")
-                }
-                if (plan.nextDate() != null && plan.nextKm() != null) append(" / ")
-                if (plan.nextKm() != null) append("每 ${formatKm(plan.km)} km")
-            },
-            color = C.textSecondary,
-            fontSize = 10.sp,
-        )
+        else -> {
+            value = "--"
+            unit = ""
+        }
     }
+    val label = when {
+        days == null && km == null -> "拿不到当前总里程"
+        expired -> "已超期"
+        else -> "距下次保养"
+    }
+    // 副信息：两个维度都设了就先报另一个维度，否则报「设定的周期」
+    val note = when {
+        km != null && days != null ->
+            if (km >= 0) "还剩 ${formatKm(km)} km" else "已超 ${formatKm(kotlin.math.abs(km))} km"
+        plan.nextDate() != null -> "每 ${plan.months} 个月一次"
+        plan.nextKm() != null -> "每 ${formatKm(plan.km)} km 一次"
+        else -> ""
+    }
+
+    ReminderBody(
+        category = CostCategory.SERVICE,
+        title = "保养提醒",
+        chip = chip,
+        status = status,
+        value = value,
+        unit = unit,
+        label = label,
+        note = note,
+        wideNote = "上次 ${JournalDates.shortLabel(plan.lastDate)} · ${formatKm(plan.lastKm)} km",
+        modifier = modifier,
+        style = style,
+        onClick = onClick,
+    )
 }
 
 /** 保险续费卡。 */
 @Composable
-fun InsuranceCard(plan: InsurancePlan?, onClick: () -> Unit) {
-    val C = LocalAppColors.current
-
+fun InsuranceCard(
+    plan: InsurancePlan?,
+    modifier: Modifier = Modifier,
+    style: ReminderStyle = ReminderStyle.WIDE,
+    onClick: () -> Unit,
+) {
     if (plan == null) {
-        JournalCard(onClick = onClick) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CategoryIcon(category = CostCategory.INSURANCE, size = 40.dp)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("添加保险续费提醒", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        "记下购买时间，到期前提醒你续费",
-                        color = C.textSecondary,
-                        fontSize = 11.sp,
-                    )
-                }
-                Text("去设置", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            }
-        }
+        ReminderEmpty(
+            category = CostCategory.INSURANCE,
+            title = "添加保险续费",
+            desc = "记下购买时间，到期前提醒你续费",
+            modifier = modifier,
+            style = style,
+            onClick = onClick,
+        )
         return
     }
 
     val days = plan.remainingDays()
     val expired = days < 0
     val soon = !expired && days <= DUE_SOON_DAYS
-    val statusColor = when {
-        expired -> DangerRed
-        soon -> WarnOrange
-        else -> C.accent
+    val status = reminderColor(expired, soon)
+    val chip = when {
+        expired -> "已过期"
+        soon -> "即将到期"
+        else -> "保障中"
+    }
+    val expireText = "到期 ${JournalDates.shortLabel(plan.expireDate())}"
+    val wideNote = buildString {
+        if (plan.company.isNotBlank()) {
+            append(plan.company)
+            append(" · ")
+        }
+        append(expireText)
+        if (plan.premium > 0) append(" · 保费 ¥${CostStats.money(plan.premium)}")
     }
 
-    JournalCard(onClick = onClick) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CategoryIcon(category = CostCategory.INSURANCE, size = 40.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        plan.company.ifBlank { "保险续费" },
-                        color = C.textPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(statusColor.copy(alpha = 0.14f))
-                            .padding(horizontal = 7.dp, vertical = 2.dp),
-                    ) {
-                        Text(
-                            when {
-                                expired -> "已过期"
-                                soon -> "即将到期"
-                                else -> "保障中"
-                            },
-                            color = statusColor,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(5.dp))
+    ReminderBody(
+        category = CostCategory.INSURANCE,
+        title = "保险续费",
+        chip = chip,
+        status = status,
+        value = if (days >= 0) "$days" else "${-days}",
+        unit = if (days >= 0) "天" else "天前已到期",
+        label = if (days >= 0) "距到期" else "已过期",
+        note = if (plan.company.isNotBlank()) plan.company else expireText,
+        wideNote = wideNote,
+        modifier = modifier,
+        style = style,
+        onClick = onClick,
+    )
+}
+
+/** 卡片外壳：半屏与整行两种排版共用同一份数据。 */
+@Composable
+private fun ReminderBody(
+    category: CostCategory,
+    title: String,
+    chip: String,
+    status: Color,
+    value: String,
+    unit: String,
+    label: String,
+    note: String,
+    wideNote: String,
+    modifier: Modifier,
+    style: ReminderStyle,
+    onClick: () -> Unit,
+) {
+    val C = LocalAppColors.current
+
+    if (style == ReminderStyle.HALF) {
+        JournalCard(
+            modifier = modifier.height(HalfCardHeight),
+            padding = 14.dp,
+            onClick = onClick,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CategoryIcon(category = category, size = 26.dp)
+                Spacer(Modifier.weight(1f))
+                ReminderChip(chip, status)
+            }
+            Spacer(Modifier.weight(1f))
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(value, color = C.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(2.dp))
+                Text(unit, color = status, fontSize = 10.sp, modifier = Modifier.padding(bottom = 3.dp))
+            }
+            Text(label, color = C.textSecondary, fontSize = 10.sp)
+            if (note.isNotBlank()) {
+                Spacer(Modifier.height(3.dp))
                 Text(
-                    "${JournalDates.shortLabel(plan.startDate)} 起保 · 保期 ${plan.months} 个月" +
-                        if (plan.premium > 0) " · 保费 ¥${CostStats.money(plan.premium)}" else "",
+                    note,
                     color = C.textSecondary,
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
-        Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.Bottom) {
-            RemainingStat(
-                value = if (days >= 0) "$days" else "${-days}",
-                unit = if (days >= 0) "天" else "天前已到期",
-                label = if (days >= 0) "距到期" else "已过期",
-                color = statusColor,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                when {
-                    expired -> "请尽快续保"
-                    soon -> "该续费了"
-                    else -> "到期日 ${JournalDates.shortLabel(plan.expireDate())}"
-                },
-                color = if (expired || soon) statusColor else C.textSecondary,
-                fontSize = 11.sp,
-                fontWeight = if (expired || soon) FontWeight.Medium else FontWeight.Normal,
-            )
+        return
+    }
+
+    JournalCard(modifier = modifier, onClick = onClick) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CategoryIcon(category = category, size = 34.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.width(7.dp))
+                    ReminderChip(chip, status)
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    wideNote,
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(value, color = C.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.width(2.dp))
+                    Text(unit, color = status, fontSize = 10.sp, modifier = Modifier.padding(bottom = 3.dp))
+                }
+                Text(label, color = C.textSecondary, fontSize = 10.sp)
+            }
         }
     }
 }
 
+/** 还没设置时的引导卡（半屏也放得下，只是少一行说明）。 */
 @Composable
-private fun RemainingStat(value: String, unit: String, label: String, color: Color) {
+private fun ReminderEmpty(
+    category: CostCategory,
+    title: String,
+    desc: String,
+    modifier: Modifier,
+    style: ReminderStyle,
+    onClick: () -> Unit,
+) {
     val C = LocalAppColors.current
-    Column {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, color = C.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(2.dp))
-            Text(unit, color = color, fontSize = 11.sp, modifier = Modifier.padding(bottom = 3.dp))
+
+    if (style == ReminderStyle.HALF) {
+        JournalCard(
+            modifier = modifier.height(HalfCardHeight),
+            padding = 14.dp,
+            onClick = onClick,
+        ) {
+            CategoryIcon(category = category, size = 26.dp)
+            Spacer(Modifier.weight(1f))
+            Text(title, color = C.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(3.dp))
+            Text("去设置", color = C.accent, fontSize = 11.sp)
         }
-        Text(label, color = C.textSecondary, fontSize = 10.sp)
+        return
+    }
+
+    JournalCard(modifier = modifier, onClick = onClick) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CategoryIcon(category = category, size = 40.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(3.dp))
+                Text(desc, color = C.textSecondary, fontSize = 11.sp)
+            }
+            Text("去设置", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
     }
 }
 

@@ -197,6 +197,10 @@ fun HomeScreen(
         val tipIconVisible by runtime.tipIconVisible
         var showBleKey by remember { mutableStateOf(false) }
         var showPlaybook by remember { mutableStateOf(false) }
+        // 保养 / 保险卡（可加到首页）：数据与设置弹层都复用零记那一套
+        val journalData by runtime.journal.data
+        var showInsuranceSheet by remember { mutableStateOf(false) }
+        var showMaintenanceSheet by remember { mutableStateOf(false) }
         // 行驶里程 / 能耗（独立接口，拿不到就静默保持上一次结果）
         val energySummary by runtime.mileageEnergyFlow.collectAsState()
         // 周能耗（近 6 周百公里能耗 + 上周能耗构成），两张能耗卡共用
@@ -319,7 +323,13 @@ fun HomeScreen(
         }
         val acTargetTemp = AcTempDraft.shown(acOnNow, remoteAcTemp, pendingAcTempDraft)
 
-        LaunchedEffect(Unit) { vehicles = runCatching { runtime.vehicles() }.getOrDefault(emptyList()) }
+        LaunchedEffect(Unit) {
+            vehicles = runCatching { runtime.vehicles() }.getOrDefault(emptyList())
+            // 首页可能挂着保养 / 保险卡：零记的数据是按需加载的，这里主动读一次，
+            // 否则没进过零记就等于「没有计划」，卡片会一直显示「去设置」。
+            // 一个 VIN 只读一次盘（JournalRuntime 内部按 VIN 缓存），代价可以忽略。
+            runCatching { runtime.journal.ensureLoaded() }
+        }
 
         // 二级页（充电中心 / 座椅 / 空调 / 体检 / OTA…）不属于「首页」，
         // 打开时向 MainScreen 汇报，让场景动画只在首页主界面跑
@@ -1433,6 +1443,19 @@ fun HomeScreen(
                         quickTarget = quickSwitch.cardTarget,
                         onRandomBackdrop = onRandomBackdrop,
                     )
+
+                    // 保险续费 / 保养提醒：与零记那两张半屏卡同源（数据、弹层都复用）。
+                    // 首页这里是整行卡，点一下直接开设置弹层，不用绕到零记。
+                    HomeCardId.INSURANCE -> InsuranceCard(
+                        plan = journalData.insurance,
+                        onClick = { showInsuranceSheet = true },
+                    )
+
+                    HomeCardId.MAINTENANCE -> MaintenanceCard(
+                        plan = journalData.maintenance,
+                        currentKm = energySummary?.totalMileageKm?.takeIf { it > 0 },
+                        onClick = { showMaintenanceSheet = true },
+                    )
                 }
             }
 
@@ -1566,6 +1589,32 @@ fun HomeScreen(
         }
 
         // （车辆健康弹窗 / 四季主题弹窗：入口按钮已移除，代码保留，后续可从设置页或我的页重新挂回）
+
+        // ---- 保养 / 保险设置弹层：从首页那两张卡直接进入，改完立刻回到首页 ----
+        if (showMaintenanceSheet) {
+            MaintenanceSheet(
+                plan = journalData.maintenance,
+                currentKm = energySummary?.totalMileageKm?.takeIf { it > 0 },
+                onDismiss = { showMaintenanceSheet = false },
+                onSave = { plan ->
+                    runtime.journal.setMaintenance(plan)
+                    showMaintenanceSheet = false
+                    actionMessage = if (plan == null) "已关闭保养提醒" else "保养提醒已保存"
+                },
+            )
+        }
+
+        if (showInsuranceSheet) {
+            InsuranceSheet(
+                plan = journalData.insurance,
+                onDismiss = { showInsuranceSheet = false },
+                onSave = { plan ->
+                    runtime.journal.setInsurance(plan)
+                    showInsuranceSheet = false
+                    actionMessage = if (plan == null) "已关闭保险提醒" else "保险提醒已保存"
+                },
+            )
+        }
 
         // ---- 控车密码弹窗 ----
         if (showPinDialog) {
