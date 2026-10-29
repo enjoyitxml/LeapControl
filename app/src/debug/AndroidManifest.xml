@@ -6,6 +6,6 @@
             android:name=".ui.ThemePreviewActivity"
             android:exported="true"
             android:screenOrientation="portrait"
-            android:theme="@style/Theme.LeapBuddy" />
+            android:theme="@style/Theme.LeapControl" />
     </application>
 </manifest>
