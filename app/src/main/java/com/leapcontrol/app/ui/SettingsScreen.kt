@@ -99,6 +99,8 @@ fun SettingsScreen(
     // 快速切换壁纸/背景：三态模式 + 两块各自的小白点开关（都挂在 runtime 的 State 上，
     // 这里直接订阅，改完即时生效，不在页面里存第二份）
     val quick by runtime.quickSwitch
+    // 零记总开关：关掉后语音 Key 这一项就没有服务对象了（语音只服务于灵感球），一起收起
+    val journalOn by runtime.journalEnabled
 
     Column(
         modifier = Modifier
@@ -133,16 +135,19 @@ fun SettingsScreen(
                 desc = if (runtime.hasAmapKey()) "已配置，可搜索目的地" else "未配置，无法搜索目的地",
                 iconRes = R.drawable.ic_key,
             ) { showAmapKey = true }
-            Spacer(Modifier.height(10.dp))
-            ClickRow(
-                title = "语音识别（百度）",
-                desc = if (runtime.hasCustomBaiduAsr()) {
-                    "已使用你填的 Key，长按灵感球可直接说话"
-                } else {
-                    "已内置可用，长按灵感球直接说话；也可以填自己的 Key"
-                },
-                iconRes = R.drawable.ic_mic,
-            ) { showAsrKey = true }
+            // 语音识别只服务于零记的灵感球；零记关掉之后这一项只剩个空配置页
+            if (journalOn) {
+                Spacer(Modifier.height(10.dp))
+                ClickRow(
+                    title = "语音识别（百度）",
+                    desc = if (runtime.hasCustomBaiduAsr()) {
+                        "已使用你填的 Key，长按灵感球可直接说话"
+                    } else {
+                        "已内置可用，长按灵感球直接说话；也可以填自己的 Key"
+                    },
+                    iconRes = R.drawable.ic_mic,
+                ) { showAsrKey = true }
+            }
             Spacer(Modifier.height(10.dp))
             ClickRow(
                 title = "刷新车模图片",
@@ -237,6 +242,39 @@ fun SettingsScreen(
                     onCheckedChange = { runtime.setCardQuickDotEnabled(it) },
                 )
             }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 零记：功能总开关 ----
+        // 单独成卡而不是塞进上面那张：关掉它会让底部导航少一格、首页少两张卡，
+        // 影响面比普通开关大得多，得有一段能说清楚的说明，不能混在控车项里。
+        SettingsCard("零记") {
+            SwitchRow(
+                label = "启用零记",
+                // 一行放得下：详细后果写在下面那段，这里只列功能名，别把开关右侧挤没
+                desc = "用车目标、记账、打卡、保养与保险提醒",
+                checked = journalOn,
+                onCheckedChange = {
+                    runtime.setJournalEnabled(it)
+                    message = if (it) "零记已重新开启" else "零记已关闭，数据仍保留在这台手机上"
+                },
+            )
+            Spacer(Modifier.height(10.dp))
+            // 手工断行：中文在 Compose 里可以直接断在「，」前面，自动折行会得到一行
+            // 以标点开头的文字，很难看。这里按语义断成两句，窄屏上各自再折也没关系。
+            Text(
+                if (journalOn) {
+                    "关掉后，底部「零记」和首页的保险、保养卡都会收起。\n" +
+                        "想用时回到这里打开即可，记过的内容不会丢。"
+                } else {
+                    "已关闭。底部只剩「零控」和「我的」。\n" +
+                        "账单、打卡和目标都还在本机，打开开关就能继续。"
+                },
+                color = C.textSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
         }
 
         Spacer(Modifier.height(14.dp))

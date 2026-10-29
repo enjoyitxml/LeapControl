@@ -20,6 +20,8 @@ fun HomeCardArea(
     onCardsChange: (List<HomeCardId>) -> Unit,
     scrollState: ScrollState,
     modifier: Modifier = Modifier,
+    /** 零记功能是否开启：关掉时「添加卡片」里不再出现保险 / 保养这两张零记卡。 */
+    journalEnabled: Boolean = true,
     cardContent: @Composable (HomeCardId) -> Unit,
 ) {
     ReorderableCardArea(
@@ -28,7 +30,7 @@ fun HomeCardArea(
         onEditingChange = onEditingChange,
         onCardsChange = onCardsChange,
         scrollState = scrollState,
-        hidden = HomeCardLayout.hidden(cards),
+        hidden = HomeCardLayout.hidden(cards, journalEnabled),
         titleOf = { it.title },
         modifier = modifier,
         cardContent = cardContent,

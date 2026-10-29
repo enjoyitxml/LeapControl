@@ -134,6 +134,17 @@ fun MainScreen(
     onLogout: () -> Unit,
 ) {
     var tab by remember { mutableIntStateOf(0) }
+    // 零记总开关（设置 → 零记）。关掉后底部只剩「零控 / 我的」两格。
+    val journalEnabled by runtime.journalEnabled
+    // 选中项用「目标 tab 编号」存（0 零控 / 1 零记 / 2 我的），DockBar 要下标时再换算：
+    // 直接把下标当状态的话，零记一关，下标 1 就从「零记」变成「我的」，页面会突然自己切走。
+    val tabIds = remember(journalEnabled) {
+        if (journalEnabled) listOf(0, 1, 2) else listOf(0, 2)
+    }
+    LaunchedEffect(journalEnabled) {
+        // 正停在零记那一格时把它关掉 —— 回到首页，别留在一个已经不存在的 tab 上
+        if (!journalEnabled && tab == 1) tab = 0
+    }
     var settingsPage by remember { mutableStateOf<SettingsPage?>(null) }
     // 二级页返回栈：「关于 → 隐私条款 → 开源协议」这种链条要能逐级退回。
     // 之前没有栈，系统返回手势（或返回键）找不到可退的层级，会直接把 Activity 关掉。
@@ -416,14 +427,18 @@ fun MainScreen(
                     contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     bottomBar = {
                         DockBar(
-                            selectedIndex = tab,
-                            onSelect = { tab = it },
-                            items = listOf(
-                                NavItem("零控", iconRes = R.drawable.ic_nav_car),
-                                // 「零记」：用车目标 / 用车成本 / 城市打卡，数据全部只存本机
-                                NavItem("零记", iconRes = R.drawable.ic_nav_map),
-                                NavItem("我的", iconRes = R.drawable.ic_nav_person),
-                            ),
+                            // 零记被关掉时 DockBar 只有两项，下标要跟着重算
+                            selectedIndex = tabIds.indexOf(tab).coerceAtLeast(0),
+                            onSelect = { tab = tabIds[it] },
+                            items = buildList {
+                                add(NavItem("零控", iconRes = R.drawable.ic_nav_car))
+                                // 「零记」：用车目标 / 用车成本 / 城市打卡，数据全部只存本机。
+                                // 设置里可以整个关掉，关掉后这一格不再出现。
+                                if (journalEnabled) {
+                                    add(NavItem("零记", iconRes = R.drawable.ic_nav_map))
+                                }
+                                add(NavItem("我的", iconRes = R.drawable.ic_nav_person))
+                            },
                         )
                     },
                 ) { padding ->

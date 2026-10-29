@@ -168,4 +168,84 @@ class HomeCardLayoutTest {
     fun `卡片全删但版本落后时补入新卡`() {
         assertEquals(listOf(HomeCardId.HEALTH), HomeCardLayout.parse("", savedVersion = 1))
     }
+
+    // ---- 零记总开关：保险 / 保养这两张卡的数据来自零记 ----
+
+    @Test
+    fun `零记关闭时首页不显示保险与保养卡`() {
+        val all = listOf(
+            HomeCardId.AC,
+            HomeCardId.INSURANCE,
+            HomeCardId.RANK,
+            HomeCardId.MAINTENANCE,
+            HomeCardId.OWNERSHIP,
+        )
+        assertEquals(
+            listOf(HomeCardId.AC, HomeCardId.RANK, HomeCardId.OWNERSHIP),
+            HomeCardLayout.visible(all, journalEnabled = false),
+        )
+        // 开着的时候一张都不许少
+        assertEquals(all, HomeCardLayout.visible(all, journalEnabled = true))
+    }
+
+    @Test
+    fun `零记关闭时添加卡片里不出现那两张卡`() {
+        val shown = listOf(HomeCardId.AC)
+        val off = HomeCardLayout.hidden(shown, journalEnabled = false)
+        assertTrue(HomeCardId.INSURANCE !in off)
+        assertTrue(HomeCardId.MAINTENANCE !in off)
+        // 其它卡照旧可以加
+        assertTrue(HomeCardId.RANK in off)
+
+        val on = HomeCardLayout.hidden(shown, journalEnabled = true)
+        assertTrue(HomeCardId.INSURANCE in on)
+    }
+
+    @Test
+    fun `零记关闭期间编辑首页，保存时把两张卡插回原序号`() {
+        val stored = listOf(
+            HomeCardId.AC,
+            HomeCardId.INSURANCE,
+            HomeCardId.RANK,
+            HomeCardId.MAINTENANCE,
+            HomeCardId.OWNERSHIP,
+        )
+        // 关着零记时用户把「近 6 周能耗」拖到了最前
+        val edited = listOf(
+            HomeCardId.RANK,
+            HomeCardId.AC,
+            HomeCardId.OWNERSHIP,
+        )
+        assertEquals(
+            listOf(
+                HomeCardId.RANK,
+                HomeCardId.INSURANCE,
+                HomeCardId.AC,
+                HomeCardId.MAINTENANCE,
+                HomeCardId.OWNERSHIP,
+            ),
+            HomeCardLayout.restore(edited, stored),
+        )
+        // 什么都没动时，插回来必须和原样一模一样
+        val untouched = listOf(HomeCardId.AC, HomeCardId.RANK, HomeCardId.OWNERSHIP)
+        assertEquals(stored, HomeCardLayout.restore(untouched, stored))
+    }
+
+    @Test
+    fun `关零记之前就删掉的卡不会因为重新开启而跑回来`() {
+        // 用户早先把保养卡删了，只留了保险卡
+        val stored = listOf(HomeCardId.AC, HomeCardId.INSURANCE)
+        val edited = listOf(HomeCardId.AC)
+        val restored = HomeCardLayout.restore(edited, stored)
+        assertEquals(listOf(HomeCardId.AC, HomeCardId.INSURANCE), restored)
+        assertTrue(HomeCardId.MAINTENANCE !in restored)
+    }
+
+    @Test
+    fun `零记卡全都不在原位时插到末尾，不吞掉用户的其它卡`() {
+        val stored = listOf(HomeCardId.INSURANCE, HomeCardId.AC)
+        // 用户把 AC 也删了，只剩 RANK
+        val restored = HomeCardLayout.restore(listOf(HomeCardId.RANK), stored)
+        assertEquals(listOf(HomeCardId.INSURANCE, HomeCardId.RANK), restored)
+    }
 }

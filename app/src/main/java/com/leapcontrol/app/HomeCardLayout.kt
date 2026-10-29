@@ -83,6 +83,49 @@ object HomeCardLayout {
         HomeCardId.entries.filter { it !in cards }
 
     /**
+     * 这张卡的数据来自「零记」吗？
+     *
+     * 保险 / 保养的金额、日期、里程全存在零记的 JSON 里，零记关掉之后它们只剩一张
+     * 「去设置」的空壳，点开还得进零记的设置弹层 —— 所以跟着一起收起。
+     */
+    fun usesJournal(card: HomeCardId): Boolean =
+        card == HomeCardId.INSURANCE || card == HomeCardId.MAINTENANCE
+
+    /**
+     * 零记关闭时要隐藏的卡片。
+     *
+     * 只影响「显示」，不动用户存下的顺序：重新打开零记，卡片会回到原来的位置。
+     */
+    fun visible(cards: List<HomeCardId>, journalEnabled: Boolean): List<HomeCardId> =
+        if (journalEnabled) cards else cards.filterNot { usesJournal(it) }
+
+    /** 编辑态「添加卡片」里可选的项（零记关闭时不提供那两张卡）。 */
+    fun hidden(cards: List<HomeCardId>, journalEnabled: Boolean): List<HomeCardId> =
+        hidden(cards).filter { journalEnabled || !usesJournal(it) }
+
+    /**
+     * 保存编辑结果时把「暂时隐藏」的零记卡插回去。
+     *
+     * 零记关着的时候卡片区只渲染 [visible] 的结果，拖动 / 删除提交上来的列表里
+     * 天然没有那两张卡；直接落盘等于把用户排好的位置抹掉了。
+     *
+     * 插回规则：**留在它原来的序号上**（列表比原来短就贴到末尾）。选序号而不是
+     * 「跟着某张邻居卡走」，是因为用户可能同时挪了别的卡 —— 跟着邻居会把它一路带到
+     * 屏幕最上面，序号则最多偏一格，看起来还是原来那个位置。
+     *
+     * 只处理 [stored] 里确实存在的卡：用户在关零记之前就删掉的，不能凭空变回来。
+     */
+    fun restore(visible: List<HomeCardId>, stored: List<HomeCardId>): List<HomeCardId> {
+        var out = visible
+        stored.forEachIndexed { index, card ->
+            if (!usesJournal(card) || card in out) return@forEachIndexed
+            val at = index.coerceIn(0, out.size)
+            out = out.toMutableList().apply { add(at, card) }
+        }
+        return out
+    }
+
+    /**
      * 把 [from] 位置的卡片移动到 [to]（编辑态拖拽松手时调用）。
      * 下标越界时原样返回，绝不吞卡片。
      */

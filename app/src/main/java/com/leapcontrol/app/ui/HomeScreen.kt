@@ -120,6 +120,7 @@ import com.leapcontrol.app.ChargePlanCyclesHelper
 import com.leapcontrol.app.ChargeSchedule
 import com.leapcontrol.app.EnergyFormat
 import com.leapcontrol.app.HomeCardId
+import com.leapcontrol.app.HomeCardLayout
 import com.leapcontrol.app.QuickSwitchPrefs
 import com.leapcontrol.app.QuickTarget
 import com.leapcontrol.app.R
@@ -199,6 +200,8 @@ fun HomeScreen(
         var showPlaybook by remember { mutableStateOf(false) }
         // 保养 / 保险卡（可加到首页）：数据与设置弹层都复用零记那一套
         val journalData by runtime.journal.data
+        // 零记总开关：关掉后首页不再出现保险 / 保养这两张零记卡（顺序仍保留在原地）
+        val journalOn by runtime.journalEnabled
         var showInsuranceSheet by remember { mutableStateOf(false) }
         var showMaintenanceSheet by remember { mutableStateOf(false) }
         // 行驶里程 / 能耗（独立接口，拿不到就静默保持上一次结果）
@@ -323,12 +326,13 @@ fun HomeScreen(
         }
         val acTargetTemp = AcTempDraft.shown(acOnNow, remoteAcTemp, pendingAcTempDraft)
 
-        LaunchedEffect(Unit) {
+        LaunchedEffect(journalOn) {
             vehicles = runCatching { runtime.vehicles() }.getOrDefault(emptyList())
             // 首页可能挂着保养 / 保险卡：零记的数据是按需加载的，这里主动读一次，
             // 否则没进过零记就等于「没有计划」，卡片会一直显示「去设置」。
             // 一个 VIN 只读一次盘（JournalRuntime 内部按 VIN 缓存），代价可以忽略。
-            runCatching { runtime.journal.ensureLoaded() }
+            // 零记关掉时不读：那两张卡根本不会渲染，白解析一遍 JSON 没有意义。
+            if (journalOn) runCatching { runtime.journal.ensureLoaded() }
         }
 
         // 二级页（充电中心 / 座椅 / 空调 / 体检 / OTA…）不属于「首页」，
@@ -1006,7 +1010,7 @@ fun HomeScreen(
         } else if (showBleKey && bleHost != null) {
             BluetoothKeyScreen(host = bleHost, onBack = { showBleKey = false })
         } else if (showPlaybook) {
-            PlaybookScreen(onBack = { showPlaybook = false })
+            PlaybookScreen(onBack = { showPlaybook = false }, journalEnabled = journalOn)
         } else {
             // 外层 Box：承载悬浮反馈条（指令结果必须让用户看到，放在滚动列表底部等于看不见）
             Box(modifier = Modifier.fillMaxSize()) {
@@ -1366,12 +1370,20 @@ fun HomeScreen(
             // 空调概览条 / 胎压·行程 / 周能耗分布 / 近 6 周能耗 / 相伴卡。
             // 卡片本身都不发「设置类」指令（空调条上的开关除外），顺序变化不影响到数据来源。
             Spacer(Modifier.height(14.dp))
+            // 零记关着时先把零记卡滤掉；编辑提交上来的列表里没有它们，
+            // 落盘前再按原位置插回去，重新打开零记时卡片还在老地方。
+            val shownCards = HomeCardLayout.visible(homeCards, journalOn)
             HomeCardArea(
-                cards = homeCards,
+                cards = shownCards,
                 editing = cardEditing,
                 onEditingChange = { cardEditing = it },
-                onCardsChange = { runtime.setHomeCards(it) },
+                onCardsChange = { next ->
+                    runtime.setHomeCards(
+                        if (journalOn) next else HomeCardLayout.restore(next, homeCards),
+                    )
+                },
                 scrollState = homeScrollState,
+                journalEnabled = journalOn,
             ) { cardId ->
                 when (cardId) {
                     // 空调概览条：车内温度 / ◀ 设定温度 ▶ / 风扇开关；

@@ -203,6 +203,16 @@ fun JournalScreen(runtime: AppRuntime) {
                 color = C.textSecondary,
                 fontSize = 11.sp,
             )
+            // 页脚留一句「可以关掉」：零记是加出来的功能，不想要的人得知道有出口，
+            // 而不是只能忍着多出来的那一格导航。开关在「设置 → 零记」。
+            // 断成两行是为了不让自动折行把「，」甩到下一行开头（Compose 不做避头尾）。
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "如果不喜欢零记功能，只想纯净的控车体验，\n可以在设置里面关闭功能，控车本该如此自由",
+                color = C.textSecondary.copy(alpha = 0.78f),
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+            )
             Spacer(Modifier.height(OrbReservedHeight))
         }
 

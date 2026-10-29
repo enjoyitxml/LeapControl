@@ -281,6 +281,23 @@ class AppRuntime(context: Context) {
     val quickSwitch: State<QuickSwitchPrefs> get() = _quickSwitch
 
     /**
+     * 「零记」功能总开关（设置 → 零记）。
+     *
+     * 关掉 ≠ 删数据：底部 Dock 的「零记」入口、首页那两张零记卡（保险 / 保养）、
+     * 玩法说明里的零记一节、以及只服务于灵感球的语音 Key 入口全部收起，
+     * 磁盘上的账单 / 打卡 / 目标一律保留 —— 想回来时打开开关就还在。
+     *
+     * 默认开启（老用户升级后行为不变）。存在 namingPrefs：跟着本机走、登出不丢。
+     */
+    private val _journalEnabled = mutableStateOf(namingPrefs.getBoolean("journal_enabled", true))
+    val journalEnabled: State<Boolean> get() = _journalEnabled
+
+    fun setJournalEnabled(enabled: Boolean) {
+        _journalEnabled.value = enabled
+        namingPrefs.edit().putBoolean("journal_enabled", enabled).apply()
+    }
+
+    /**
      * 首页顶部「蓝牙钥匙」图标是否显示（个性化 → 首页）。
      *
      * 默认显示：这是车主的常用入口，藏起来反而要翻两层设置才能打开。

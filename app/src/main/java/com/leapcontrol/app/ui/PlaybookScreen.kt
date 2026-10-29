@@ -33,9 +33,15 @@ import androidx.compose.ui.unit.sp
  *
  * 图标可以在「个性化 → 首页图标」里关掉，但页面本身保留：
  * 关了入口不代表内容该消失，设置里仍可从这里之外的地方被再次打开。
+ *
+ * 第五节「零记」跟着零记总开关走：功能关掉之后这一页不该再教一个不存在的功能。
  */
 @Composable
-fun PlaybookScreen(onBack: () -> Unit) {
+fun PlaybookScreen(
+    onBack: () -> Unit,
+    /** 零记功能是否开启；关掉时最后一节「零记」不再显示。 */
+    journalEnabled: Boolean = true,
+) {
     val C = LocalAppColors.current
 
     Column(
@@ -99,16 +105,20 @@ fun PlaybookScreen(onBack: () -> Unit) {
                 "后续可能会上架更多小卡片。",
         )
 
-        Spacer(Modifier.height(12.dp))
+        // 第 5 节只在零记开着的时候出现：功能关掉后还教人怎么用，只会点了个寂寞
+        if (journalEnabled) {
+            Spacer(Modifier.height(12.dp))
 
-        PlaybookSection(
-            no = 5,
-            title = "零记",
-            body = "零记是我在原作者版本的基础上加进来的记录功能：" +
-                "可以设定用车目标、记录日常用车成本、打卡去过的城市，也会提醒保养与保险到期。\n\n" +
-                "功能还在进一步完善中，欢迎体验。如果你有更好玩、更有趣的想法，" +
-                "可以在「我的 → 支持开发者」里找到我，或者到车友群里说一声。",
-        )
+            PlaybookSection(
+                no = 5,
+                title = "零记",
+                body = "零记是我在原作者版本的基础上加进来的记录功能：" +
+                    "可以设定用车目标、记录日常用车成本、打卡去过的城市，也会提醒保养与保险到期。\n\n" +
+                    "不想用的话可以在「设置 → 零记」里整个关掉，底部那一格和首页的零记卡都会收起。" +
+                    "如果你有更好玩、更有趣的想法，" +
+                    "可以在「我的 → 支持开发者」里找到我，或者到车友群里说一声。",
+            )
+        }
 
         Spacer(Modifier.height(20.dp))
         Text(
