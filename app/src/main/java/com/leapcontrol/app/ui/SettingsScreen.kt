@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.QuickSwitchMode
+import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.R
 import com.leapcontrol.app.tiles.QuickTiles
 import com.leapcontrol.app.journal.BaiduAsr
@@ -86,6 +87,7 @@ fun SettingsScreen(
     var showPin by remember { mutableStateOf(false) }
     var showAmapKey by remember { mutableStateOf(false) }
     var showAsrKey by remember { mutableStateOf(false) }
+    var showPowerType by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmGate by remember { mutableStateOf(runtime.biometricConfirmEnabled()) }
     // 蓝牙钥匙详情页（从本页进入时以整页覆盖的形式出现，返回即回到设置）
@@ -101,6 +103,8 @@ fun SettingsScreen(
     val quick by runtime.quickSwitch
     // 零记总开关：关掉后语音 Key 这一项就没有服务对象了（语音只服务于灵感球），一起收起
     val journalOn by runtime.journalEnabled
+    // 动力类型：null = 自动推断（按车型名 + 燃油信号），否则为用户手动指定
+    val powerOverride by runtime.powerTypeOverride
 
     Column(
         modifier = Modifier
@@ -123,6 +127,22 @@ fun SettingsScreen(
                 },
                 iconRes = R.drawable.ic_edit,
             ) { showRename = true }
+            Spacer(Modifier.height(10.dp))
+            // 动力类型：车端续航信号不全时（纯电 C01 只下发 2188、fuelSoc 恒为 0），
+            // 自动推断可能失手，这里给个能自己拍板的开关。按 VIN 保存。
+            ClickRow(
+                title = "动力类型",
+                desc = when (powerOverride) {
+                    SessionStore.VehiclePowerType.PURE_ELECTRIC -> "已手动设为纯电（只显示电量）"
+                    SessionStore.VehiclePowerType.RANGE_EXTENDER -> "已手动设为增程（电量 + 燃油）"
+                    null -> "自动识别：" + when (runtime.statusFlow.value?.isRangeExtender) {
+                        true -> "增程"
+                        false -> "纯电"
+                        null -> "待读取车况"
+                    }
+                },
+                iconRes = R.drawable.ic_nav_car,
+            ) { showPowerType = true }
             Spacer(Modifier.height(10.dp))
             ClickRow(
                 title = "控车密码",
@@ -506,6 +526,59 @@ fun SettingsScreen(
         )
     }
 
+    // ---- 动力类型（增程 / 纯电） ----
+    // 只在「自动」和两种手动之间切换，不做别的花样：
+    // 纯电车若被认成增程，首屏会多出一行「油 0%」，主续航还会去取综合续航 → 显示「--」。
+    if (showPowerType) {
+        AlertDialog(
+            onDismissRequest = { showPowerType = false },
+            containerColor = C.panelBg,
+            title = { Text("动力类型", color = C.textPrimary) },
+            text = {
+                Column {
+                    Text(
+                        "决定首屏显示「电量」还是「电量 + 燃油」两行，" +
+                            "车端信号不全时自动判断可能失手，判断错了在这里手动指定。",
+                        color = C.textSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    PowerTypeOption(
+                        label = "自动识别",
+                        desc = "有燃油信号才算增程，其余按纯电",
+                        selected = powerOverride == null,
+                    ) {
+                        runtime.setPowerTypeOverride(null)
+                        showPowerType = false
+                        message = "已改回自动识别动力类型"
+                    }
+                    PowerTypeOption(
+                        label = "纯电",
+                        desc = "只显示电量一行，续航取纯电",
+                        selected = powerOverride == SessionStore.VehiclePowerType.PURE_ELECTRIC,
+                    ) {
+                        runtime.setPowerTypeOverride(SessionStore.VehiclePowerType.PURE_ELECTRIC)
+                        showPowerType = false
+                        message = "已设为纯电"
+                    }
+                    PowerTypeOption(
+                        label = "增程",
+                        desc = "显示电量与燃油两行，取综合续航",
+                        selected = powerOverride == SessionStore.VehiclePowerType.RANGE_EXTENDER,
+                    ) {
+                        runtime.setPowerTypeOverride(SessionStore.VehiclePowerType.RANGE_EXTENDER)
+                        showPowerType = false
+                        message = "已设为增程"
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPowerType = false }) { Text("关闭", color = C.textSecondary) }
+            },
+        )
+    }
+
     // ---- 语音识别（百度短语音） ----
     if (showAsrKey) {
         val current = runtime.baiduAsrKeys()
@@ -767,6 +840,46 @@ private fun QuickSwitchCards(
 
 /** 当前模式的触发方式说明：点之前就讲清楚，别让人试了才知道点哪儿。 */
 private fun quickSwitchHint(mode: QuickSwitchMode): String = mode.desc
+
+/** 动力类型弹层里的单选项：选中项铺一层 chip 底色 + 右侧对勾。 */
+@Composable
+private fun PowerTypeOption(
+    label: String,
+    desc: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val C = LocalAppColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) C.chipBg else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                label,
+                color = if (selected) C.accent else C.textPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(desc, color = C.textSecondary, fontSize = 11.sp, lineHeight = 15.sp)
+        }
+        Spacer(Modifier.width(8.dp))
+        if (selected) {
+            Icon(
+                Icons.Filled.CheckCircle,
+                contentDescription = null,
+                tint = C.accent,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
 
 /** 可点击的设置行：左图标（可选）+ 标题 + 说明，右箭头；[showDot] 为真时标题右侧显示红点。 */
 @Composable

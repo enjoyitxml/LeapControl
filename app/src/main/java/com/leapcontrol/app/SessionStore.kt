@@ -452,6 +452,16 @@ class SessionStore(context: Context) {
         return appPrefs.getBoolean(prefix + "power_type_confirmed", false)
     }
 
+    /** 撤销手动指定的动力类型，回到「自动推断」。 */
+    fun clearVehiclePowerType(vin: String) {
+        if (vin.isBlank()) return
+        val prefix = VehicleConfigStorageKeys.prefix(vin) ?: return
+        appPrefs.edit()
+            .remove(prefix + "power_type")
+            .remove(prefix + "power_type_confirmed")
+            .apply()
+    }
+
     fun isVehicleConfigConfirmed(vin: String): Boolean {
         val key = VehicleConfigConfirmationPolicy.confirmationPreferenceKey(vin) ?: return false
         val storedSchemaVersion = appPrefs.getInt(key, 0)

@@ -17,29 +17,40 @@ object VehicleStatusMapper {
      * Selects the confirmed remaining-range field for the reported range mode:
      * standard mode 0 uses 3257 and dynamic mode 1 uses 3260. Unknown modes do
      * not cross-fallback.
+     *
+     * 工况模式缺失（不少车型压根不下发 3262）时退到 [electricRange]：它会挑报文里
+     * 实际存在的那一路，而不是直接给「--」。
      */
     fun remainingRange(status: JSONObject): String? =
-        remainingRange(status.opt("rangeMode")) { key -> status.opt(key) }
+        remainingRange(status.opt("rangeMode")) { key -> status.opt(key) } ?: electricRange(status)
 
-    /** Legacy T03 and pure-electric C11 payloads expose legacy range fields. */
-    fun remainingRange(status: JSONObject, carType: String?): String? =
-        if (carType?.contains("T03", ignoreCase = true) == true) {
+    /**
+     * 纯电 / 增程未定或车型未登记时的主续航。
+     *
+     * 老平台（如纯电 C01、老 C11）只下发 2188「仪表盘当前主显示续航」，3257/3260
+     * 一概没有；以前这里只给 C11 开了这条路，其它车型直接落到空字符串上，
+     * 界面就是「-- km」。现在按 T03 → C11 → 其它依次回落，最后都能拿到 2188。
+     */
+    fun remainingRange(status: JSONObject, carType: String?): String? = when {
+        carType?.contains("T03", ignoreCase = true) == true ->
             displayRangeValue(status.opt("expectedMileage"))
-        } else if (carType?.contains("C11", ignoreCase = true) == true && !hasModernRangeSignals(status)) {
+                ?: remainingRange(status)
+                ?: liveRemainingRange(status)
+
+        carType?.contains("C11", ignoreCase = true) == true && !hasModernRangeSignals(status) ->
             displayRangeValue(status.opt("liveRemainingRange"))
-        } else {
-            remainingRange(status)
-        }
+                ?: remainingRange(status)
+
+        else -> remainingRange(status) ?: liveRemainingRange(status)
+    }
 
     /** Explicit user-selected power type takes precedence over signal heuristics. */
     fun remainingRange(status: JSONObject, carType: String?, powerType: PowerType?): String? =
         when (powerType) {
-            PowerType.PURE_ELECTRIC -> electricRange(status)
-                ?: displayRangeValue(status.opt("liveRemainingRange"))
-                ?: remainingRange(status, carType)
+            PowerType.PURE_ELECTRIC -> electricRange(status) ?: remainingRange(status, carType)
             PowerType.RANGE_EXTENDER -> combinedRange(status) ?: remainingRange(status, carType)
             null -> if (!carType.isPureElectricModel() &&
-                fuelSocPercent(status) != null &&
+                (fuelSocPercent(status) ?: 0) > 0 &&
                 combinedRange(status) != null
             ) {
                 combinedRange(status)
@@ -87,8 +98,12 @@ object VehicleStatusMapper {
         // Some payloads omit the fuel component while still returning the
         // confirmed combined and electric values. Derive only that missing
         // component; never extrapolate when the values are invalid.
+        //
+        // 这里必须用 strictElectricRange：electricRange 现在会用 2188 兜底，
+        // 而增程车的 2188 往往就是「综合续航」，拿它去减 combined 会得到 0，
+        // 燃油里程凭空消失。
         val combined = combinedRange(status)?.toBigDecimalOrNull()
-        val electric = electricRange(status)?.toBigDecimalOrNull()
+        val electric = strictElectricRange(status)?.toBigDecimalOrNull()
         val fuelSoc = fuelSocPercent(status)
         if (fuelSoc != null && fuelSoc <= 0) return null
         return if (combined != null && electric != null && combined >= electric) {
@@ -98,11 +113,25 @@ object VehicleStatusMapper {
         }
     }
 
-    fun electricRange(status: JSONObject): String? = rangeGroupValue(
+    fun electricRange(status: JSONObject): String? =
+        strictElectricRange(status) ?: liveRemainingRange(status)
+
+    /** 只认「按工况算出来的」纯电续航，**不含** 2188 兜底（燃油推导必须用这个）。 */
+    private fun strictElectricRange(status: JSONObject): String? = rangeGroupValue(
         status,
         standardKeys = listOf("electricRangeStandard", "maxRange", "3257"),
         dynamicKeys = listOf("expectedMileage", "3260")
     )
+
+    /**
+     * 车机仪表盘当前主显示的剩余续航（2188）。
+     *
+     * 3257 / 3260 是「按工况算出来的剩余续航」，只有一部分车型与网关下发；老平台
+     * （纯电 C01 等）只给这一路。它是车机自己选定的口径，拿来兜底最不容易出错，
+     * 而且在两种工况之间也不会自相矛盾。
+     */
+    fun liveRemainingRange(status: JSONObject): String? =
+        displayRangeValue(status.opt("liveRemainingRange") ?: status.opt("2188"))
 
     fun combinedRange(status: JSONObject): String? = rangeGroupValue(
         status,

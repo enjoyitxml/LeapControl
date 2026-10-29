@@ -55,6 +55,8 @@ import com.leapcontrol.app.VehicleCapabilityDetector
 import com.leapcontrol.app.VehicleCapabilities
 import com.leapcontrol.app.VehicleHomeStatus
 import com.leapcontrol.app.VehicleStatusMapper
+import com.leapcontrol.app.VehiclePowerTypeResolver
+import com.leapcontrol.app.toStatusPowerType
 import com.leapcontrol.app.VehicleSignals
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
@@ -295,6 +297,36 @@ class AppRuntime(context: Context) {
     fun setJournalEnabled(enabled: Boolean) {
         _journalEnabled.value = enabled
         namingPrefs.edit().putBoolean("journal_enabled", enabled).apply()
+    }
+
+    /**
+     * 动力类型的**手动指定**（设置 → 动力类型），按 VIN 保存，null = 自动推断。
+     *
+     * 为什么需要它：车端报文靠不住。纯电 C01 会下发 3235 fuelSoc = 0、续航只给 2188，
+     * 只按信号推断就可能把纯电车认成增程车，界面显示「电 + 油」两行还不显示续航。
+     * 自动推断已经按「有油才算增程」修过一轮，这里再给用户一个能自己拍板的兜底。
+     */
+    private val _powerTypeOverride = mutableStateOf(loadManualPowerType(session.selectedVin))
+    val powerTypeOverride: State<SessionStore.VehiclePowerType?> get() = _powerTypeOverride
+
+    /** 读用户手动确认过的动力类型；没确认过（含仅由车型接口推断出来的）一律返回 null。 */
+    private fun loadManualPowerType(vin: String): SessionStore.VehiclePowerType? {
+        if (vin.isBlank() || !sessionStore.isVehiclePowerTypeConfirmed(vin)) return null
+        return sessionStore.loadVehicleConfig(vin).powerType
+    }
+
+    fun setPowerTypeOverride(type: SessionStore.VehiclePowerType?) {
+        _powerTypeOverride.value = type
+        val vin = session.selectedVin
+        if (vin.isNotBlank()) {
+            if (type == null) sessionStore.clearVehiclePowerType(vin)
+            else sessionStore.saveVehiclePowerType(vin, type)
+        }
+        // 立刻用磁盘里那份原始报文重建一次：不必等下一轮联网刷新，改完回首页就能看到。
+        // 没缓存（刚换车 / 刚装）时**不要**调 loadCachedStatus —— 它会把 _status 清成 null，
+        // 首页整块续航会变成「--」，比不改还糟；这种情况交给下一轮刷新。
+        val cached = runCatching { statusPrefs.getString(statusCacheKey(vin), null) }.getOrNull()
+        if (!cached.isNullOrBlank()) loadCachedStatus()
     }
 
     /**
@@ -629,6 +661,8 @@ class AppRuntime(context: Context) {
         session.selectedVin = vehicle.vin
         session.selectedCarType = vehicle.carType
         session.selectedNickname = vehicle.nickname.ifEmpty { vehicle.officialNickname }
+        // 动力类型的「手动指定」是按 VIN 存的，换车必须跟着换，否则会沿用上一辆车的口径
+        _powerTypeOverride.value = loadManualPowerType(vehicle.vin)
         withContext(Dispatchers.IO) { sessionStore.save(session) }
         // 换车后能力要重新按 VIN 加载，不能直接沿用上一辆的结果
         syncCapabilities()
@@ -985,13 +1019,20 @@ class AppRuntime(context: Context) {
     private fun buildStatus(st: JSONObject, observeCaps: Boolean = true): CarStatus {
         val electric = VehicleStatusMapper.electricRange(st)
         val fuel = VehicleStatusMapper.fuelRange(st)
-        // 增程车：存在燃油信号即判定，主续航取综合续航（纯电+燃油）
-        val isRev = fuel != null || VehicleStatusMapper.fuelSocPercent(st) != null
+        // 增程车：**有油**才算（燃油续航信号，或 fuelSoc > 0），再加上车型名与用户手动指定。
+        // 早先的判据是「fuelSoc 字段存在即增程」—— 纯电车也会下发 3235 = 0，于是纯电 C01
+        // 被认成增程：主续航去取综合续航（纯电没有这一路）→ 「--」，界面还多出一行「油 0%」。
+        val configured = _powerTypeOverride.value
+        val isRev = VehiclePowerTypeResolver.isRangeExtender(
+            status = st,
+            configuredPowerType = configured,
+            carType = session.selectedCarType,
+        )
         val range = if (isRev) {
             VehicleStatusMapper.combinedRange(st)
-                ?: VehicleStatusMapper.remainingRange(st, session.selectedCarType)
+                ?: VehicleStatusMapper.remainingRange(st, session.selectedCarType, configured.toStatusPowerType())
         } else {
-            VehicleStatusMapper.remainingRange(st, session.selectedCarType)
+            VehicleStatusMapper.remainingRange(st, session.selectedCarType, configured.toStatusPowerType())
         }
         // acSetting 是一个 JSON 串，解析一次给下面几个字段共用（以前每个字段各解析一次）
         val acSetting = parseAcSetting(st)

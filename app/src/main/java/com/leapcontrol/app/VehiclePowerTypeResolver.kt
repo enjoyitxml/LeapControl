@@ -36,9 +36,32 @@ object VehiclePowerTypeResolver {
     ): SessionStore.VehiclePowerType? = resolve(
         configuredPowerType = configuredPowerType,
         carType = carType,
-        hasFuelTelemetry = VehicleStatusMapper.fuelSocPercent(status) != null ||
-            (VehicleStatusMapper.fuelRange(status) != null && VehicleStatusMapper.combinedRange(status) != null)
+        hasFuelTelemetry = hasFuelTelemetry(status)
     )
+
+    /**
+     * 是不是增程车 —— 首页要按这个决定显示「电 + 油」两行还是只显示电量一行。
+     *
+     * 优先级：用户手动指定 > 车型名里的「增程 / REEV」> 报文里真的有油。
+     * **不能拿「fuelSoc 字段存在」当判据**：纯电车（纯电 C01 已确认）也会下发
+     * 3235 = 0，按「存在即增程」判会把纯电车显示成增程，主续航还会去取综合
+     * 续航（纯电没有这一路）→ 界面上续航直接变成「--」。
+     */
+    fun isRangeExtender(
+        status: JSONObject,
+        configuredPowerType: SessionStore.VehiclePowerType?,
+        carType: String?,
+    ): Boolean = when (configuredPowerType) {
+        SessionStore.VehiclePowerType.RANGE_EXTENDER -> true
+        SessionStore.VehiclePowerType.PURE_ELECTRIC -> false
+        null -> fromCarType(carType) == SessionStore.VehiclePowerType.RANGE_EXTENDER ||
+            hasFuelTelemetry(status)
+    }
+
+    /** 报文里确实有油：有燃油续航信号，或燃油比例大于 0。 */
+    fun hasFuelTelemetry(status: JSONObject): Boolean =
+        VehicleStatusMapper.fuelRange(status) != null ||
+            (VehicleStatusMapper.fuelSocPercent(status) ?: 0) > 0
 
     fun fromCarType(carType: String?): SessionStore.VehiclePowerType? = when {
         // REEV also contains EV, so the range-extender marker must be checked first.
