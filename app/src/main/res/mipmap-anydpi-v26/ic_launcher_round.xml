@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 默认图标的 round 版本（内容与 ic_launcher.xml 一致，系统按圆形遮罩裁切）。 -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <foreground android:drawable="@drawable/ic_launcher_fg_steering" />
+    <monochrome android:drawable="@drawable/ic_launcher_fg_steering" />
 </adaptive-icon>

@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
+import com.leapcontrol.app.LauncherIcon
 import com.leapcontrol.app.R
 
 /**
@@ -81,6 +82,9 @@ fun LoginScreen(
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
 
+    // 桌面图标当前是哪一套，登录页的 LOGO 跟着它走
+    val launcherStyle by runtime.launcherIcon
+
     LaunchedEffect(countdown) {
         if (countdown > 0) {
             kotlinx.coroutines.delay(1000)
@@ -102,10 +106,15 @@ fun LoginScreen(
         ) {
             Spacer(Modifier.weight(0.55f))
 
-            // ---- 零跑 LOGO：横向约占屏幕四分之一 ----
+            // ---- LOGO：跟桌面图标走 ----
+            // 默认是方向盘（新标），只有把图标切成「官方 Logo」时才显示零跑标志，
+            // 两处保持一致，避免桌面是一个标、进去看到另一个标。
+            val officialIcon = launcherStyle == LauncherIcon.STYLE_OFFICIAL
             Image(
-                painter = painterResource(R.drawable.login_logo),
-                contentDescription = "零跑汽车",
+                painter = painterResource(
+                    if (officialIcon) R.drawable.login_logo else R.drawable.login_logo_steering,
+                ),
+                contentDescription = if (officialIcon) "零跑汽车" else "方向盘",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxWidth(LOGO_WIDTH_FRACTION)
@@ -259,13 +268,24 @@ fun LoginScreen(
             Spacer(Modifier.weight(1f))
 
             // ---- 底部说明 ----
-            // 对外发布：不出现真名，统一以「开发者」指称
+            // 对外发布：不出现真名，统一以「开发者」指称；
+            // 并明确「仅限车友自用交流」，避免被当成可公开传播、可随意分发的软件
             Text(
                 "非官方客户端，由开发者个人开发\n登录与控车均直连零跑官方服务",
                 color = Color.White.copy(alpha = 0.45f),
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,
                 lineHeight = 17.sp,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "仅限车友自用交流，请勿外传或二次分发",
+                color = Color.White.copy(alpha = 0.72f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
+                lineHeight = 17.sp,
+                modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(14.dp))
             Spacer(Modifier.navigationBarsPadding())

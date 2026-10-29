@@ -1,5 +1,9 @@
 package com.leapcontrol.app.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -10,10 +14,11 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,9 +39,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +59,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -62,9 +70,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.core.content.ContextCompat
+import com.leapcontrol.app.journal.AsrReply
+import com.leapcontrol.app.journal.BaiduAsr
 import com.leapcontrol.app.journal.CostStats
 import com.leapcontrol.app.journal.QuickLog
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** 球的直径。比之前小一圈，压在页面底部正中时不会挡内容。 */
 private val OrbSize = 60.dp
@@ -92,18 +105,38 @@ private const val OrbSpinToClose = 135f
  *  - 输入条弹出时球要**浮在弹层遮罩之上**（`zIndex`），否则会被 56% 的黑遮罩压成
  *    一团灰，那个「×」就既看不见也点不着了。
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
 
     var showInput by remember { mutableStateOf(false) }
-    var showVoice by remember { mutableStateOf(false) }
     var prefill by remember { mutableStateOf("") }
     /** 刚记完的回执：非空时顶替轮播提示，3.6 秒后自己消失。 */
     var flash by remember { mutableStateOf<String?>(null) }
     var hintIndex by remember { mutableIntStateOf(0) }
+
+    /** 语音阶段：空闲 / 按住说话 / 正在识别。 */
+    var voicePhase by remember { mutableIntStateOf(OrbVoice.IDLE) }
+    /** 实时音量 0~1，驱动球体放大与外围波纹。 */
+    var level by remember { mutableFloatStateOf(0f) }
+
+    // 没有麦克风权限时长按先去要，授权后提示再按一次
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        flash = if (granted) "权限已给，按住球再说一次" else "没有麦克风权限，先用打字吧"
+    }
+
+    // 录满上限时兜底收尾：构造函数里拿不到 stopVoice，用一个可变槽位接上
+    val stopVoiceRef = remember { mutableStateOf<(() -> Unit)?>(null) }
+    val recorder = remember {
+        VoiceRecorder(
+            onLevel = { level = it },
+            onLimitReached = { stopVoiceRef.value?.invoke() },
+        )
+    }
 
     // 把一句话落的账、插的旗真正写进去；返回是否认出了内容
     fun commit(raw: String): Boolean {
@@ -121,6 +154,67 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
         flash = "已记：${parts.joinToString(" · ")}"
         return true
     }
+
+    // ---- 语音：全程在球上完成，不弹任何浮层 ----
+    // 按住 → 球体随音量放大、外围扩散波纹、提示条写「松手就识别」；
+    // 松手 → 停止录音、立刻送识别，识别结果直接落账，认不出才回填到输入框。
+
+    fun startVoice() {
+        if (showInput || voicePhase != OrbVoice.IDLE) return
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        if (!recorder.start()) {
+            flash = "麦克风被占用，稍后再试"
+            return
+        }
+        level = 0f
+        voicePhase = OrbVoice.LISTENING
+    }
+
+    fun stopVoice() {
+        if (voicePhase != OrbVoice.LISTENING) return
+        voicePhase = OrbVoice.RECOGNIZING
+        val pcm = recorder.stop()
+        level = 0f
+        // 不到 0.15 秒基本是误触，别浪费一次请求，也别打断用户
+        if (pcm.size < recorder.sampleRate * 2 * 15 / 100) {
+            voicePhase = OrbVoice.IDLE
+            flash = "按住球说话，松手就识别"
+            return
+        }
+        scope.launch {
+            val keys = runtime.baiduAsrKeys()
+            val reply = if (keys == null) {
+                AsrReply(error = "没有可用的识别凭据")
+            } else {
+                BaiduAsr.recognize(pcm, keys.first, keys.second)
+            }
+            voicePhase = OrbVoice.IDLE
+            val text = reply.text?.trim().orEmpty()
+            when {
+                text.isEmpty() -> {
+                    val why = reply.error?.takeIf { it.isNotBlank() }
+                    flash = if (why == null) "没听清，再说一次" else "没听清：$why"
+                }
+                // 认出来了就直接记；认不出内容（比如只说了句闲话）才回填输入框让用户改
+                commit(text) -> Unit
+                else -> {
+                    prefill = text
+                    showInput = true
+                    toast(context, "没太听懂，补两个字就行")
+                }
+            }
+        }
+    }
+
+    // 录满 55 秒时由 recorder 回调这里收尾
+    stopVoiceRef.value = { stopVoice() }
 
     LaunchedEffect(flash) {
         if (flash != null) {
@@ -153,8 +247,24 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
         animationSpec = tween(260, easing = FastOutSlowInEasing),
         label = "orbSpin",
     )
+    // 录音时向外扩散的波纹相位
+    val wave by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1500, easing = androidx.compose.animation.core.LinearEasing)),
+        label = "orbWave",
+    )
 
-    val hint = flash ?: QuickLog.HINTS[hintIndex % QuickLog.HINTS.size]
+    val listening = voicePhase == OrbVoice.LISTENING
+    val recognizing = voicePhase == OrbVoice.RECOGNIZING
+
+    // 提示条：语音优先于回执，回执优先于轮播
+    val hint = when {
+        listening -> "在听…松手就识别"
+        recognizing -> "正在识别…"
+        flash != null -> flash!!
+        else -> QuickLog.HINTS[hintIndex % QuickLog.HINTS.size]
+    }
 
     Column(
         // 球浮在输入条与遮罩之上：不然那个「×」会被 56% 的黑压成灰点
@@ -166,7 +276,7 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
     ) {
         // 输入条展开时收起提示条：这时候提示没用了，还会顶在卡片边上碍事
         if (!showInput) {
-            OrbHint(text = hint, emphasized = flash != null)
+            OrbHint(text = hint, emphasized = flash != null || listening || recognizing)
             Spacer(Modifier.height(10.dp))
         }
 
@@ -174,31 +284,51 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
             modifier = Modifier
                 .size(OrbBoxSize)
                 .graphicsLayer {
-                    scaleX = breath
-                    scaleY = breath
+                    // 说话时球随音量涨起来（最多 18%），比单纯呼吸更跟手
+                    val extra = if (listening) 1f + level * 0.18f else 1f
+                    scaleX = breath * extra
+                    scaleY = breath * extra
                 }
-                .combinedClickable(
-                    onLongClick = {
-                        // 输入条展开时长按不再进语音：这时候手指多半是想点那个叉
-                        if (!showInput) {
+                .pointerInput(Unit) {
+                    // 按住 320ms 判定为「长按说话」；在此之前松手算单击（展开/收起输入条）。
+                    // key 必须是 Unit：绑上 voicePhase 会让每次状态变化重启手势，
+                    // 一开录就被取消，等于按下即松手。
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        var up: androidx.compose.ui.input.pointer.PointerInputChange? = null
+                        val timedOut = withTimeoutOrNull(OrbLongPressMs) {
+                            up = waitForUpOrCancellation()
+                            true
+                        } == null
+                        if (timedOut) {
+                            // 长按成立：开始录音，等松手再收尾
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            showVoice = true
+                            startVoice()
+                            waitForUpOrCancellation()
+                            stopVoice()
+                        } else if (up != null) {
+                            // 短按：切输入条
+                            if (showInput) showInput = false else { prefill = ""; showInput = true }
                         }
-                    },
-                    onClick = {
-                        if (showInput) {
-                            // 叉：再点一下就收起输入
-                            showInput = false
-                        } else {
-                            prefill = ""
-                            showInput = true
-                        }
-                    },
-                ),
+                    }
+                },
             contentAlignment = Alignment.Center,
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 val outer = size.minDimension / 2f
+                // 录音时的扩散波纹：三圈错开相位、压得很淡，只是「它在听」的提示，
+                // 不能盖过球体本身的四色渐变。
+                if (listening) {
+                    for (i in 0..2) {
+                        val p = (wave + i * 0.33f) % 1f
+                        drawCircle(
+                            color = OrbGlow.copy(alpha = (1f - p) * 0.28f),
+                            radius = outer * (0.74f + p * 0.26f),
+                            center = center,
+                            style = Stroke(width = 1.4.dp.toPx()),
+                        )
+                    }
+                }
                 // 外层光晕：跟呼吸同相，球「涨」的时候光也涨
                 drawCircle(
                     brush = Brush.radialGradient(
@@ -289,36 +419,9 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
             modifier = Modifier.zIndex(1f),
             initial = prefill,
             onDismiss = { showInput = false },
-            onVoice = {
-                showInput = false
-                showVoice = true
-            },
             onSubmit = { text ->
                 if (commit(text)) showInput = false
                 else toast(context, "没听懂：说个金额，或者说出城市名")
-            },
-        )
-    }
-
-    if (showVoice) {
-        JournalVoiceSheet(
-            onlineKeys = runtime.baiduAsrKeys(),
-            onSaveKeys = { api, secret -> runtime.setBaiduAsrKeys(api, secret) },
-            onCancel = { showVoice = false },
-            onTypeInstead = { reason ->
-                showVoice = false
-                prefill = ""
-                if (reason.isNotBlank()) toast(context, reason)
-                showInput = true
-            },
-            onResult = { text ->
-                showVoice = false
-                // 认不出来就把听到的原话填进输入框，让用户改两个字就行
-                if (!commit(text)) {
-                    prefill = text
-                    showInput = true
-                    toast(context, "没太听懂，补两个字就行")
-                }
             },
         )
     }
@@ -332,6 +435,16 @@ private val OrbMint = Color(0xFF2FD9C5)
 
 /** 光晕颜色单独一个，太饱和会像霓虹灯。 */
 private val OrbGlow = Color(0xFFB46BFF)
+
+/** 按住多久算「长按说话」。短于这个时间松手就是单击（收/放输入条）。 */
+private const val OrbLongPressMs = 320L
+
+/** 语音的三个阶段：球上直接完成，不弹任何浮层。 */
+private object OrbVoice {
+    const val IDLE = 0
+    const val LISTENING = 1
+    const val RECOGNIZING = 2
+}
 
 /** 球上方那句提示：轮播时是灰字，刚记完的回执换成主题色。 */
 @Composable
@@ -363,12 +476,16 @@ private fun OrbHint(text: String, emphasized: Boolean) {
     }
 }
 
-/** 记录输入弹层：打字 + 实时预览 + 一键记录。 */
+/**
+ * 记录输入弹层：打字 + 实时预览 + 一键记录。
+ *
+ * 语音不在这里 —— 长按灵感球直接在球上说话（松手即识别），
+ * 所以这一层只负责「打字」这一件事，右侧不再放语音按钮。
+ */
 @Composable
 private fun QuickLogSheet(
     initial: String,
     onDismiss: () -> Unit,
-    onVoice: () -> Unit,
     onSubmit: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -390,7 +507,8 @@ private fun QuickLogSheet(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = DIALOG_SCRIM))
+            // 不铺黑色遮罩：一块半透明方幕压在季节背景上很显脏，
+            // 弹层自己就是实心卡片，靠它和页面区分就够了。clickable 留着，点空白处仍能收起。
             .clickable(onClick = onDismiss),
         contentAlignment = Alignment.BottomCenter,
     ) {
@@ -424,32 +542,16 @@ private fun QuickLogSheet(
             Spacer(Modifier.height(14.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) {
-                    JournalInput(
-                        value = input,
-                        onValueChange = { input = it },
-                        placeholder = "今天充电花了 50 / 今天点亮了杭州",
-                        modifier = Modifier.focusRequester(focusRequester),
-                        imeAction = ImeAction.Done,
-                        onDone = { if (input.isNotBlank()) onSubmit(input) },
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Box(
+                JournalInput(
+                    value = input,
+                    onValueChange = { input = it },
+                    placeholder = "今天充电花了 50 / 今天点亮了杭州",
                     modifier = Modifier
-                        .size(52.dp)
-                        .clip(CircleShape)
-                        .background(C.accent.copy(alpha = 0.15f))
-                        .border(1.dp, C.accent.copy(alpha = 0.5f), CircleShape)
-                        .clickable {
-                            keyboard?.hide()
-                            focusManager.clearFocus()
-                            onVoice()
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("语音", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                }
+                        .weight(1f)
+                        .focusRequester(focusRequester),
+                    imeAction = ImeAction.Done,
+                    onDone = { if (input.isNotBlank()) onSubmit(input) },
+                )
             }
 
             Spacer(Modifier.height(12.dp))

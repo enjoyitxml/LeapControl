@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,18 +41,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.AppearanceMode
+import com.leapcontrol.app.LauncherIcon
 import com.leapcontrol.app.R
-
-/** 本项目开源仓库地址（关于页可直接点击跳转）。 */
-private const val PROJECT_GITHUB_URL = "https://github.com/enjoyitxml/LeapControl"
 
 /**
  * 主题中心的两个分类，对应页面上横向的两个 tab。
@@ -215,8 +216,136 @@ fun PersonalizationScreen(
             }
         }
 
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 应用图标 ----
+        // 只有「设置 → 隐藏设置」里解锁了才出现：官方 logo 那套带商标风险，
+        // 默认就用方向盘，不把它摆在明面上。切换靠 activity-alias 换组件，重启后生效。
+        if (runtime.iconSwitcherVisible.value) {
+            SettingsSection(title = "应用图标", desc = "切换后重启生效") {
+                SettingsCard {
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        LauncherIcon.allStyles().forEachIndexed { index, style ->
+                            if (index > 0) Spacer(Modifier.width(10.dp))
+                            AppIconOption(
+                                style = style,
+                                selected = runtime.launcherIcon.value == style,
+                                modifier = Modifier.weight(1f),
+                                onClick = {
+                                    if (runtime.launcherIcon.value != style) {
+                                        val ok = runtime.setLauncherIcon(style)
+                                        Toast.makeText(
+                                            context,
+                                            if (ok) {
+                                                "已切换为「${LauncherIcon.displayName(style)}」，重启 App 后生效"
+                                            } else {
+                                                "切换失败，系统不允许修改组件状态"
+                                            },
+                                            Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "桌面图标由系统缓存，切换后要重新打开 App 才会刷新；" +
+                            "个别桌面要再等几秒，或者滑动一下桌面才会变。",
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+        }
+
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.navigationBarsPadding())
+    }
+}
+
+/**
+ * 一张图标选项卡：深色预览 + 名称 + 一句说明。
+ *
+ * 预览底固定用深色 —— 两套图标本身就是「深色底 + 白色图形」，这样看到的就是桌面上
+ * 真实的样子，也不会因为浅色主题下换了底色而误判效果。
+ */
+@Composable
+private fun AppIconOption(
+    style: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val C = LocalAppColors.current
+    val shape = RoundedCornerShape(16.dp)
+    val official = style == LauncherIcon.STYLE_OFFICIAL
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(if (selected) C.chipBgActive else C.chipBg)
+            .border(1.5.dp, if (selected) C.accent else Color.Transparent, shape)
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(58.dp)
+                .clip(RoundedCornerShape(17.dp))
+                .background(Color(0xFF1B1B1D)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                painter = painterResource(
+                    if (official) {
+                        R.drawable.ic_launcher_foreground
+                    } else {
+                        R.drawable.ic_launcher_fg_steering
+                    },
+                ),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    // 官方 vector 的图形只占 viewport 的 ~41%，这里放大到与方向盘同样的观感；
+                    // 多出来的部分是透明区域，被外层 clip 裁掉不会切到图形本体。
+                    .then(
+                        if (official) {
+                            Modifier.graphicsLayer(scaleX = 1.64f, scaleY = 1.64f)
+                        } else {
+                            Modifier
+                        },
+                    ),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            LauncherIcon.displayName(style),
+            color = C.textPrimary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            LauncherIcon.desc(style),
+            color = C.textSecondary,
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 6.dp),
+        )
+        if (selected) {
+            Spacer(Modifier.height(5.dp))
+            Text(
+                "当前使用",
+                color = C.accent,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
     }
 }
 
@@ -381,8 +510,10 @@ private fun ThemeSlotSummary(
 }
 
 /**
- * 「关于」页：版本信息 + 开源仓库地址 + 内嵌「免责声明」「隐私条款」两个子入口。
+ * 「关于」页：版本信息 + 内嵌「免责声明」「隐私条款」两个子入口。
  *
+ * 本项目**不开源**：只基于开源项目二次开发，因此这里不提供任何源码仓库地址，
+ * 只说明软件性质与使用范围（仅供车友自用体验，请勿外传）。
  * 「检查更新」入口平时在「我的」页（由 SHOW_UPDATE_CHECK 控制，当前隐藏），这里只留版本号。
  */
 @Composable
@@ -418,16 +549,18 @@ fun AboutScreen(
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
+            Spacer(Modifier.height(10.dp))
+            // 使用范围：放在关于页最显眼的位置，去掉「项目地址」之后这里就是唯一的定性说明
+            androidx.compose.material3.Text(
+                "本软件仅供车友自用体验，请勿外传、请勿二次分发。"
+                    + "本项目不开源、不提供源码，仅基于开源项目二次开发而来。",
+                color = C.textSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                fontWeight = FontWeight.Medium,
+            )
         }
 
-        Spacer(Modifier.height(12.dp))
-        // 本项目开源仓库：点击直接用浏览器打开
-        ClickRow(
-            title = "项目开源地址",
-            desc = PROJECT_GITHUB_URL,
-            iconRes = com.leapcontrol.app.R.drawable.ic_github,
-            onClick = { runtime.openExternal(PROJECT_GITHUB_URL) },
-        )
         Spacer(Modifier.height(12.dp))
         ClickRow(
             title = "免责声明",

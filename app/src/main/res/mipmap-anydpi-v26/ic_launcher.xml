@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  默认图标：方向盘（新标，避免与零跑官方 logo 产生商标纠纷）。
+
+  前景是 drawable-nodpi/ic_launcher_fg_steering.png —— 由 FangXiangPan4.png
+  （200×200 透明底黑图形）处理而来：裁到图形边界、放大到 432px（108dp @ xxxhdpi）、
+  白色填充、图形占画布 68%，落在 adaptive icon 的安全区内，圆形遮罩也不会切边。
+  背景沿用 ic_launcher_background（深色竖向渐变 + 底部光晕），只换前景。
+
+  另一套「官方 logo」见 mipmap-anydpi-v26/ic_launcher_official.xml，
+  由设置里的隐藏开关解锁、在「个性化 → 应用图标」里切换。
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <foreground android:drawable="@drawable/ic_launcher_fg_steering" />
+    <monochrome android:drawable="@drawable/ic_launcher_fg_steering" />
 </adaptive-icon>

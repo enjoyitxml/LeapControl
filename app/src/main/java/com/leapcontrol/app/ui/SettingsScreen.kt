@@ -242,12 +242,27 @@ fun SettingsScreen(
         // ---- 显示：实时帧率浮层 ----
         // 排查「滑动卡不卡」用的：能区分「掉帧」和「屏幕本来就只有 60Hz」两件事。
         val frameStatsOn by runtime.frameStatsVisible
+        val iconSwitcherOn by runtime.iconSwitcherVisible
         SettingsCard("显示") {
             SwitchRow(
                 label = "显示实时帧率",
                 desc = "右上角小药丸显示当前帧率与屏幕刷新率，用来确认是否跑满屏幕的高刷",
                 checked = frameStatsOn,
                 onCheckedChange = { runtime.setFrameStatsVisible(it) },
+            )
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 隐藏设置 ----
+        // 官方 logo 那套图标带商标风险，不能摆在明面上，默认关着；
+        // 打开之后「个性化」才会多出「应用图标」一项，可在两套之间切换。
+        SettingsCard("隐藏设置") {
+            SwitchRow(
+                label = "解锁应用图标切换",
+                desc = "开启后「个性化」会出现「应用图标」，可在方向盘与官方 Logo 之间切换（切换后需重启 App）",
+                checked = iconSwitcherOn,
+                onCheckedChange = { runtime.setIconSwitcherVisible(it) },
             )
         }
 

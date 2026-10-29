@@ -512,6 +512,26 @@ class SessionStore(context: Context) {
         appPrefs.edit().putBoolean(BLUETOOTH_KEY_FEATURE_ENABLED, enabled).apply()
     }
 
+    // ---- 桌面图标切换 ----
+    // 真正的开关状态在 PackageManager 里（alias 的 enabled 状态），这里只做一份冗余记录，
+    // 用于「设置」里开关的回显，以及 UI 判断当前选中哪一套。
+
+    fun loadLauncherIconStyle(): String =
+        appPrefs.getString(LAUNCHER_ICON_STYLE, null)?.takeIf { it.isNotBlank() }
+            ?: LauncherIcon.STYLE_STEERING
+
+    fun saveLauncherIconStyle(style: String) {
+        appPrefs.edit().putString(LAUNCHER_ICON_STYLE, style).apply()
+    }
+
+    /** 「隐藏设置」里的总开关：关闭时个性化页不出现「应用图标」入口。 */
+    fun loadIconSwitcherVisible(): Boolean =
+        appPrefs.getBoolean(ICON_SWITCHER_VISIBLE, false)
+
+    fun saveIconSwitcherVisible(visible: Boolean) {
+        appPrefs.edit().putBoolean(ICON_SWITCHER_VISIBLE, visible).apply()
+    }
+
     fun loadPowerPagerAutoPlayEnabled(): Boolean =
         appPrefs.getBoolean(POWER_PAGER_AUTO_PLAY_ENABLED, false)
 
@@ -612,6 +632,8 @@ class SessionStore(context: Context) {
         const val CUSTOM_AMAP_WEB_KEY = "custom_amap_web_key"
         const val BAIDU_ASR_API_KEY = "baidu_asr_api_key"
         const val BAIDU_ASR_SECRET_KEY = "baidu_asr_secret_key"
+        const val LAUNCHER_ICON_STYLE = "launcher_icon_style"
+        const val ICON_SWITCHER_VISIBLE = "icon_switcher_visible"
         const val BLUETOOTH_KEY_FEATURE_ENABLED = "bluetooth_key_feature_enabled"
         const val LAST_CHARGE_STATE = "last_charge_state"
         const val POWER_PAGER_AUTO_PLAY_ENABLED = "power_pager_auto_play_enabled"

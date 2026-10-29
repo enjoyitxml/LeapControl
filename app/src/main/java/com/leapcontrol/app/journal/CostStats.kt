@@ -240,14 +240,23 @@ object CostStats {
         else -> "${date.monthValue}/${date.dayOfMonth}"
     }
 
-    /** 金额文案：`1,280` / `86.5`，超过一万折成「1.2 万」（卡片放不下五位数）。 */
+    /**
+     * 金额文案：最多两位小数，整数不拖 `.00`。
+     *
+     * 记账讲究分位，四舍五入到整数会让 86.53 显示成 87，多笔累加后对不上账；
+     * 但整数金额拖两个零（¥50.00）在列表里又太吵，所以只在真有小数时才显示两位。
+     * 过万仍折成「万」，同样保留两位小数（1.23万）。
+     */
     fun money(value: Double): String {
         val safe = if (value.isFinite() && value > 0) value else 0.0
-        return when {
-            safe >= 10_000.0 -> String.format(Locale.CHINA, "%.1f万", safe / 10_000.0)
-            safe >= 100.0 -> String.format(Locale.CHINA, "%,d", Math.round(safe))
-            else -> String.format(Locale.CHINA, "%.1f", safe).removeSuffix(".0")
+        if (safe >= 10_000.0) {
+            val wan = String.format(Locale.CHINA, "%.2f", safe / 10_000.0)
+                .trimEnd('0')
+                .trimEnd('.')
+            return "${wan}万"
         }
+        val text = String.format(Locale.CHINA, "%,.2f", safe)
+        return if (text.endsWith(".00")) text.dropLast(3) else text
     }
 
     /** 日均这类小数字保留两位：一天 8.6 元比「8.6 元/天」更精确的需求不大，但差额明显。 */

@@ -13,8 +13,8 @@ android {
         applicationId = "com.leapcontrol.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 244
-        versionName = "0.2.44"
+        versionCode = 245
+        versionName = "0.2.45"
         resourceConfigurations += setOf("zh", "zh-rCN")
         buildConfigField("String", "AMAP_WEB_KEY_ENCRYPTED", "\"\"")
         buildConfigField("String", "PGYER_API_KEY_ENCRYPTED", "\"\"")
@@ -25,13 +25,33 @@ android {
         }
     }
 
+    signingConfigs {
+        // 发布包沿用本机 debug keystore 签名。
+        //
+        // 目的不是图省事，而是**保证老用户能直接覆盖安装**：0.2.44 及以前发出去的都是
+        // debug 签名的包，如果 release 换一套 keystore，已装用户的签名不一致，
+        // 系统会拒绝升级、必须先卸载（车友多半不会做这一步）。
+        // 代价是这个 keystore 是公开可推断的，签名不具备防篡改性 —— 对自用分发可以接受；
+        // 将来若要上架应用市场，再换成正式 keystore（届时也必须让用户卸载重装）。
+        create("release") {
+            storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
+            // 不混淆：代码里有大量反射式 JSON 解析与 Kotlin 序列化，开 R8 风险大于收益
             isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
+            // release 变体下 chucker 走 library-no-op，调试面板不会被打进包里
         }
     }
 

@@ -45,16 +45,49 @@
         android:theme="@style/Theme.LeapBuddy"
         android:usesCleartextTraffic="true">
 
+        <!--
+          主界面自身不再声明 LAUNCHER：桌面图标由下面两个 activity-alias 承载，
+          靠 PackageManager.setComponentEnabledSetting 二选一启用，实现「换图标」。
+
+          为什么这么做：adaptive icon 的图是编译期资源，运行时改不了；
+          只能预置两套 alias，切换时启用其一、禁用另一个，桌面图标随之变化。
+          （用户选的样式存在 SessionStore，切换后提示用户重启 App 生效。）
+        -->
         <activity
             android:name=".MainActivity"
-            android:exported="true"
+            android:exported="false"
             android:screenOrientation="portrait"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- 默认：方向盘图标（新标，规避商标风险） -->
+        <activity-alias
+            android:name=".LauncherSteering"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+
+        <!-- 备用：零跑官方 logo（默认禁用，需在设置里解锁后在个性化里切换） -->
+        <activity-alias
+            android:name=".LauncherOfficial"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_official"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_official_round"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name=".CrashActivity"

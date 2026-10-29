@@ -18,6 +18,7 @@ import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.GitHubUpdate
 import com.leapcontrol.app.HomeCardId
 import com.leapcontrol.app.HomeCardLayout
+import com.leapcontrol.app.LauncherIcon
 import com.leapcontrol.app.AmapWebApi
 import com.leapcontrol.app.ApiException
 import com.leapcontrol.app.ChargePlanCyclesHelper
@@ -291,6 +292,38 @@ class AppRuntime(context: Context) {
     fun setBleIconVisible(visible: Boolean) {
         _bleIconVisible.value = visible
         namingPrefs.edit().putBoolean("ble_key_icon_visible", visible).apply()
+    }
+
+    /**
+     * 当前桌面图标样式（[LauncherIcon.STYLE_STEERING] / [LauncherIcon.STYLE_OFFICIAL]）。
+     *
+     * 真值存在 PackageManager 的组件状态里，这里只是给界面看的快照；
+     * 切换成功后要重启 App 才完全生效（见 [setLauncherIcon]）。
+     */
+    private val _launcherIcon = mutableStateOf(LauncherIcon.current(appContext))
+    val launcherIcon: State<String> get() = _launcherIcon
+
+    /** 切换桌面图标。返回是否写成功；成功后需要用户重启 App。 */
+    fun setLauncherIcon(style: String): Boolean {
+        val ok = LauncherIcon.apply(appContext, style)
+        if (ok) {
+            sessionStore.saveLauncherIconStyle(style)
+            _launcherIcon.value = style
+        }
+        return ok
+    }
+
+    /**
+     * 「设置 → 隐藏设置」里的总开关：开启后「个性化」才会出现「应用图标」入口。
+     *
+     * 默认关闭 —— 官方 logo 那套图标只给自己人用，平时不摆在明面上。
+     */
+    private val _iconSwitcherVisible = mutableStateOf(sessionStore.loadIconSwitcherVisible())
+    val iconSwitcherVisible: State<Boolean> get() = _iconSwitcherVisible
+
+    fun setIconSwitcherVisible(visible: Boolean) {
+        _iconSwitcherVisible.value = visible
+        sessionStore.saveIconSwitcherVisible(visible)
     }
 
     /**

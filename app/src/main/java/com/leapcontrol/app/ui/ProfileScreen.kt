@@ -60,18 +60,16 @@ import com.leapcontrol.app.R
 import com.leapcontrol.app.UpdateCheckResult
 import kotlinx.coroutines.launch
 
-/** 意见反馈问卷地址（腾讯问卷）。 */
-private const val FEEDBACK_URL = "https://wj.qq.com/s2/28372168/dzhz/"
-
 /** QQ 交流群群号。 */
 private const val QQ_GROUP = "179731222"
 
 /**
- * 「我的」页面：入口列表 —— 设置 / 个性化 / 支持开发者 / 开源协议与致谢 / 意见反馈 / 关于，
- * 其中「意见反馈」直接跳外部问卷，「关于」内嵌「免责声明」「隐私条款」两个子入口，
+ * 「我的」页面：入口列表 —— 设置 / 个性化 / 支持开发者 / 开源协议与致谢 / 关于，
+ * 其中「关于」内嵌「免责声明」「隐私条款」两个子入口，
  * 其余项都下沉到各自的二级页；页面顶部是头像（可换内置卡通头像或相册照片），
  * 页面底部是 QQ 交流群页脚与退出登录。
  *
+ * 「意见反馈」入口已按需求删除（问卷地址一并不再保留）。
  * 「检查更新」入口由 [SHOW_UPDATE_CHECK] 控制，当前隐藏（改为按发布页手动下载）。
  */
 @Composable
@@ -221,7 +219,7 @@ fun ProfileScreen(
                 "外观模式、四季主题与动态背景",
             ) { onOpenPage(SettingsPage.PERSONALIZATION) }
             Spacer(Modifier.height(12.dp))
-            // 支持开发者 / 开源协议与致谢 / 意见反馈：三个都是「面向外部」的模块，
+            // 支持开发者 / 开源协议与致谢：两个都是「面向外部」的模块，
             // 统一由 SHOW_DEV_ENTRIES 控制（对外发布版为 true）
             if (SHOW_DEV_ENTRIES) {
                 // 支持开发者：紧跟在「个性化」之后，两个都是"想帮开发者"的入口
@@ -236,18 +234,6 @@ fun ProfileScreen(
                     "开源协议与致谢",
                     "基于开源项目二次开发，感谢原作者",
                 ) { onOpenPage(SettingsPage.OPEN_SOURCE) }
-                Spacer(Modifier.height(12.dp))
-                // 意见反馈：腾讯问卷，用系统浏览器打开；设备上没浏览器时会明确提示，而不是点了没反应。
-                // 紧挨「关于」上方：都是"最后再看一眼"的位置，用户想吐槽时往下翻一眼就能找到。
-                ProfileItem(
-                    R.drawable.ic_feedback,
-                    "意见反馈",
-                    "填写问卷，反馈问题或提出功能建议",
-                ) {
-                    if (!runtime.openExternal(FEEDBACK_URL)) {
-                        Toast.makeText(context, "没有找到可用的浏览器", Toast.LENGTH_SHORT).show()
-                    }
-                }
                 Spacer(Modifier.height(12.dp))
             }
 
@@ -323,14 +309,23 @@ fun ProfileScreen(
                 )
             }
 
-            // 署名一行小字：不写真名，统一称「开发者」
+            // 署名一行小字：不写真名，统一称「开发者」；不说「开源」——本项目不开源，
+            // 只是基于开源项目二次开发，页面里只强调「自用体验、请勿外传」。
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "由开发者个人开发 · 完全免费 · 开源",
+                text = "由开发者个人开发 · 完全免费 · 仅供车友自用体验",
                 modifier = Modifier.fillMaxWidth(),
                 color = LocalAppColors.current.textSecondary.copy(alpha = 0.6f),
                 fontSize = 11.sp,
                 lineHeight = 17.sp,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = "请勿外传、请勿二次分发",
+                modifier = Modifier.fillMaxWidth(),
+                color = LocalAppColors.current.textSecondary.copy(alpha = 0.45f),
+                fontSize = 10.5.sp,
+                lineHeight = 16.sp,
                 textAlign = TextAlign.Center,
             )
 
