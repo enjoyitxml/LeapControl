@@ -372,7 +372,9 @@ fun WeeklyEnergyRankCard(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = EnergyFormat.weekLabel(point.weekStart),
+                        // 标签取这一周的周日（= 这根柱覆盖到哪一天），不是周一；
+                        // 否则 10/30 打开首页最后一根写着 10/19，看着像半个月没更新。
+                        text = EnergyFormat.weekTick(point.weekStart, point.weekEnd),
                         color = if (isLatest) C.accent else C.textSecondary,
                         fontSize = 9.sp,
                         fontWeight = if (isLatest) FontWeight.SemiBold else FontWeight.Normal,

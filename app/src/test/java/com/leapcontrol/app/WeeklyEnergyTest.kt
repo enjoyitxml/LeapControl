@@ -126,6 +126,25 @@ class WeeklyEnergyTest {
     }
 
     @Test
+    fun `周柱标签取这一周的周日`() {
+        // 服务端只给完整自然周：10-19（周一）~10-25（周日）这一周，标签必须写 10/25，
+        // 否则 10-30 打开首页，最后一根柱下面写着 10/19，看着像半个月没更新。
+        assertEquals("10/25", EnergyFormat.weekTick("2026-10-19", "2026-10-25"))
+        // weekEnd 缺失时按 weekStart + 6 天算
+        assertEquals("10/25", EnergyFormat.weekTick("2026-10-19", null))
+        // weekEnd 若是右开区间（给 10-26），仍然要落在 10/25
+        assertEquals("10/25", EnergyFormat.weekTick("2026-10-19", "2026-10-26"))
+        // 跨月
+        assertEquals("10/4", EnergyFormat.weekTick("2026-09-28", "2026-10-04"))
+        // 跨年
+        assertEquals("1/3", EnergyFormat.weekTick("2026-12-28", "2027-01-03"))
+        // weekStart 解析不出来时退回 weekEnd
+        assertEquals("10/25", EnergyFormat.weekTick("第一周", "2026-10-25"))
+        // 都给不出可用日期时保持原样，不崩
+        assertEquals("--", EnergyFormat.weekTick(null, null))
+    }
+
+    @Test
     fun `车型名去掉品牌前缀`() {
         assertEquals("C11", EnergyFormat.carModelName("零跑C11"))
         assertEquals("C11", EnergyFormat.carModelName("C11"))

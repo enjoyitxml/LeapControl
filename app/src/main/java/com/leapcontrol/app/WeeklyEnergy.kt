@@ -2,13 +2,14 @@ package com.leapcontrol.app
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
 import java.util.Locale
 
 /**
  * 近 N 周百公里能耗的一个点。
  *
  * [weekStart] / [weekEnd] 是服务端原样返回的 ISO 日期（`2026-10-19`），
- * 展示前统一走 [EnergyFormat.weekLabel] 转成 `10/19`。
+ * 展示前统一走 [EnergyFormat.weekTick] 取这一周的右端点（周日）转成 `10/25`。
  */
 data class WeeklyEnergyPoint(
     val weekStart: String,
@@ -282,6 +283,44 @@ object EnergyFormat {
         val month = match.groupValues[1].toIntOrNull() ?: return text
         val day = match.groupValues[2].toIntOrNull() ?: return text
         return "$month/$day"
+    }
+
+    /**
+     * 柱下的周标签：**这一周的最后一天**（周日），不是周一。
+     *
+     * 服务端的 `weeklyEC` 只下发「完整的自然周」，最后一项是上一个完整周（周一 → 周日）。
+     * 早先用 `weekStart` 当标签，于是 10/30 打开首页，最后一根柱下面写着 `10/19`，
+     * 看上去像「半个月没更新」—— 其实那一周是 10/19 ~ 10/25，数据本来就到 10/25 为止。
+     * 取右端点之后，最右的标签就是「数据统计到哪一天」。
+     *
+     * 服务端的 `weekEnd` 是闭区间还是右开区间不确定（有的接口给 10-25、有的给 10-26），
+     * 所以**优先用 weekStart + 6 天**算右端点，只有 weekStart 解析不出来时才退回 weekEnd。
+     */
+    fun weekTick(weekStart: String?, weekEnd: String?): String {
+        val start = parseWeekDate(weekStart)
+        val last = start?.plusDays(6) ?: parseWeekDate(weekEnd)
+        if (last != null) return "${last.monthValue}/${last.dayOfMonth}"
+        return weekLabel(weekStart ?: weekEnd)
+    }
+
+    /** `2026-10-19` / `2026/10/19` / `10-19`（补当前年份）→ [LocalDate]；解析不了返回 null。 */
+    private fun parseWeekDate(raw: String?): LocalDate? {
+        val text = raw?.trim().orEmpty()
+        if (text.isEmpty()) return null
+        val full = Regex("^(\\d{4})[-/](\\d{1,2})[-/](\\d{1,2})").find(text)
+        if (full != null) {
+            return runCatching {
+                LocalDate.of(
+                    full.groupValues[1].toInt(),
+                    full.groupValues[2].toInt(),
+                    full.groupValues[3].toInt(),
+                )
+            }.getOrNull()
+        }
+        val short = Regex("^(\\d{1,2})[-/](\\d{1,2})$").find(text) ?: return null
+        return runCatching {
+            LocalDate.of(LocalDate.now().year, short.groupValues[1].toInt(), short.groupValues[2].toInt())
+        }.getOrNull()
     }
 
     /**
