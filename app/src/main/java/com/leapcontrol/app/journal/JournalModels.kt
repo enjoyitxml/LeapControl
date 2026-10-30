@@ -256,6 +256,24 @@ data class MaintenancePlan(
         return target - current
     }
 
+    /**
+     * 时间维度的「剩余比例」：1 = 刚保养完，0 = 到期，负数 = 已超。
+     *
+     * 为什么要比例：天数和公里单位不同，不能直接比大小（还有 200 天 vs 还剩 300 公里，
+     * 谁更紧急看不出来）。折成「剩余 / 周期」之后两者可比，卡片据此决定主数字报哪个。
+     */
+    fun remainingDaysFraction(): Double? {
+        val days = remainingDays() ?: return null
+        val total = months * AVG_DAYS_PER_MONTH
+        return if (total > 0.0) days / total else null
+    }
+
+    /** 里程维度的「剩余比例」，口径同 [remainingDaysFraction]。 */
+    fun remainingKmFraction(currentKm: Double?): Double? {
+        val left = remainingKm(currentKm) ?: return null
+        return if (km > 0.0) left / km else null
+    }
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("mode", mode.id)
         put("lastDate", lastDate)
@@ -265,6 +283,9 @@ data class MaintenancePlan(
     }
 
     companion object {
+        /** 一个月的平均天数，只用于把「几个月」折成比例做比较。 */
+        private const val AVG_DAYS_PER_MONTH = 30.4375
+
         fun fromJson(raw: JSONObject?): MaintenancePlan? {
             if (raw == null) return null
             val lastDate = raw.opt("lastDate")?.toString()?.toLongOrNull() ?: return null

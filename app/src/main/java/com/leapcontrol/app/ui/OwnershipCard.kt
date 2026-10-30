@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -65,13 +66,21 @@ fun OwnershipCard(
     quickTarget: QuickTarget = QuickTarget.NONE,
     /** 触发时的动作：随机换一张与本张不同的背景（不改主题） */
     onRandomBackdrop: () -> Unit = {},
+    /**
+     * 用户自定义的相伴卡背景（搭配 [backdropId] = `OwnershipBackdrops.CUSTOM_ID`）。
+     *
+     * 传 null 时回落到内置的雪山那张 —— 图被删掉 / 读不出来也不会留一块空白。
+     */
+    customBackdrop: ImageBitmap? = null,
     modifier: Modifier = Modifier,
 ) {
     // 图片内容不可控（换图/裁切位置都会变），所以文字统一带一层柔和投影兜底
     val shadow = Shadow(color = Color.Black.copy(alpha = 0.40f), offset = Offset(0f, 1f), blurRadius = 6f)
     val days = OwnershipStats.days(energy?.ownershipDays)
-    val kmText = OwnershipStats.formatKm(energy?.totalMileageKm)
-        ?: OwnershipStats.formatKm(OwnershipStats.kmFromText(status?.totalMileage))
+    // 口径与保养提醒卡统一：表显里程优先、里程接口兜底（见 OwnershipStats.currentKm）
+    val kmText = OwnershipStats.formatKm(
+        OwnershipStats.currentKm(status?.totalMileage, energy?.totalMileageKm),
+    )
     val backdrop = OwnershipBackdrops.byId(backdropId)
     // 提到外面：避免在 if 分支里 remember（模式切换时那个分支的槽位会被丢弃重建）
     val interaction = remember { MutableInteractionSource() }
@@ -95,13 +104,23 @@ fun OwnershipCard(
                 },
             ),
     ) {
-        // 竖构图原图 Crop 到 3:1 后正好取到「天空 + 山脊」这一段，不裁峰尖
-        Image(
-            painter = painterResource(backdrop.res),
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop,
-        )
+        // 竖构图原图 Crop 到 3:1 后正好取到「天空 + 山脊」这一段，不裁峰尖。
+        // 自定义图走另一条路：用户已经按 3:1 裁好存盘，这里直接铺满即可
+        if (customBackdrop != null && backdrop.id == OwnershipBackdrops.CUSTOM_ID) {
+            Image(
+                bitmap = customBackdrop,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Image(
+                painter = painterResource(backdrop.res),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        }
 
         // 左侧压暗：文字全部靠左，强度按背景图有多亮单独给（见 OwnershipBackdrops.scrim），
         // 半屏以外（0.55 之后）就不再压，右侧留出图本身的通透感

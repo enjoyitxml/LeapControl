@@ -91,4 +91,57 @@ data class QuickSwitchPrefs(
         QuickSwitchMode.TAP -> QuickTarget.TAP
         QuickSwitchMode.OFF -> QuickTarget.NONE
     }
+
+    /**
+     * 实际生效的呈现方式 —— 在用户偏好之上再叠一层「这块正在用用户自己的图」的临时锁定。
+     *
+     * **为什么要有这一层**：自定义壁纸 / 自定义背景是用户从相册里翻出来、又亲手拖过缩放框的图，
+     * 而首页那两颗小白点（或整块可点）就在图上，一次误触就会被随机换成内置主题，
+     * 而且换掉的图**找不回来**（只能重新去相册里挑）。
+     * 所以只要这一块正在显示用户自己的图，[QuickTarget.NONE] 一律压掉，不给入口。
+     *
+     * **只改生效结果，不动 [QuickSwitchPrefs]**：用户没关过这个功能，
+     * 等他切回内置壁纸 / 内置背景，入口应该自己回来，不需要再去设置里重新打开一次。
+     *
+     * @param customLocked 这一块此刻是否正在显示用户自己的图
+     */
+    fun effectiveTarget(part: QuickPart, customLocked: Boolean): QuickTarget =
+        if (customLocked) {
+            QuickTarget.NONE
+        } else {
+            when (part) {
+                QuickPart.CAR -> carTarget
+                QuickPart.CARD -> cardTarget
+            }
+        }
+}
+
+/** 首页两块可以快捷换图的部件，[CAR] 换主题壁纸，[CARD] 换相伴卡背景。 */
+enum class QuickPart { CAR, CARD }
+
+/**
+ * 自定义图生效时给用户看的几句话。
+ *
+ * 集中放一处：个性化页（选图的地方）和设置页（发现小白点不见了的地方）说的是同一件事，
+ * 两处各写一份迟早会写成两种说法。
+ */
+object QuickSwitchLock {
+    /** 个性化页 · 相伴卡：自定义背景正在使用时 */
+    const val BACKDROP = "为避免误触换掉这张图，相伴卡的随机换背景入口已自动收起。"
+
+    /** 个性化页 · 主题：自定义壁纸正在使用时 */
+    const val WALLPAPER = "为避免误触换掉这张图，首页的随机换壁纸入口（小白点 / 点车模）已自动收起。"
+
+    /** 个性化页 · 主题：选图建议（只要传过图就显示，和有没有选中无关） */
+    const val PICK_ADVICE =
+        "挑图建议：把画面主体放在上半屏、下半屏尽量留空。" +
+            "首页的车模和卡片都压在下半屏，主体放低了会被挡住。"
+
+    /** 设置页：小白点开关明明开着，首页却没有点，得有个解释（并指明是哪几块被收起） */
+    fun settings(parts: List<String>): String =
+        "已自动收起${parts.joinToString("、")}的随机切换，避免误触把图换掉；要换图请到「个性化」里选。"
+
+    /** [settings] 里用的部件名 */
+    const val PART_CAR = "车模（自定义壁纸）"
+    const val PART_CARD = "相伴卡（自定义背景）"
 }

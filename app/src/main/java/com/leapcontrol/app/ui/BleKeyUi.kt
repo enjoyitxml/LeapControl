@@ -103,6 +103,11 @@ class BleKeyHost internal constructor(
     val bound: Boolean get() = key != null
     val enabled: Boolean get() = key?.desired?.enabled == true
     val pending: Boolean get() = key?.pending == true
+
+    /** 车端链路此刻是否已经打通（已认证待命 / 正在下发设置）。文案要按它区分「等确认」和「等连上」。 */
+    val linked: Boolean
+        get() = connection.phase == BleConnectionPhase.READY ||
+            connection.phase == BleConnectionPhase.CONFIGURING
     val phase: BleConnectionPhase get() = connection.phase
     val hasPermissions: Boolean get() = permissionsGranted
     val certificateReady: Boolean
@@ -206,7 +211,7 @@ class BleKeyHost internal constructor(
         if (!hasPermissions) {
             refreshEnvironment()
             if (!hasPermissions) {
-                notice = "请先授予附近设备权限"
+                fallback("请先授予附近设备权限")
                 return
             }
         }
@@ -216,7 +221,7 @@ class BleKeyHost internal constructor(
             return
         }
         if (backgroundRunning || enabled) {
-            notice = "蓝牙钥匙已开启，先关闭后台钥匙再重新配对"
+            fallback("蓝牙钥匙已开启，先关闭后台钥匙再重新配对")
             return
         }
         if (!BleAccessPolicy.canScan(phase, syncing)) return
@@ -234,14 +239,14 @@ class BleKeyHost internal constructor(
     fun connect(device: BleNearbyDevice) {
         val cert = certificate
         if (cert == null || !certificateReady) {
-            notice = "钥匙材料未就绪，请先同步钥匙"
+            fallback("钥匙材料未就绪，请先同步钥匙")
             syncCertificate()
             return
         }
         if (!BleAccessPolicy.canConnect(phase, syncing, true)) return
         notice = null
         runCatching { ble.connectManually(device, cert, runtime.session) }
-            .onFailure { notice = "无法连接：先关闭后台钥匙或重新扫描" }
+            .onFailure { fallback("无法连接：先关闭后台钥匙或重新扫描") }
         scope.launch {
             val settled = ble.connection.first {
                 it.phase == BleConnectionPhase.READY || it.phase == BleConnectionPhase.FAILED
@@ -264,29 +269,37 @@ class BleKeyHost internal constructor(
      */
     fun applyConfiguration(next: BlePassiveConfiguration) {
         val boundKey = key ?: run {
-            notice = "请先配对车辆"
+            fallback("请先配对车辆")
             return
         }
         if (runtime.sessionStore.loadOpPassword().isNullOrBlank()) {
-            notice = "请先在「设置 → 控车密码」里设置 4 位密码"
+            fallback("请先在「设置 → 控车密码」里设置 4 位密码")
             return
         }
         if (!hasPermissions) {
-            notice = "请先授予附近设备权限"
+            fallback("请先授予附近设备权限")
             return
         }
         if (!BleAccessPolicy.canApplyConfiguration(connection, boundKey, certificate, next)) {
-            notice = "当前状态无法写入钥匙设置（请确认已认证且设备支持）"
+            fallback(
+                if (connection.isWritingConfiguration) "正在同步上一次修改，请稍候"
+                else "当前状态无法写入钥匙设置（请确认已认证且设备支持）",
+            )
             return
         }
         runCatching {
             ble.applyConfiguration(next)
+            // 文案要跟真实状态对齐：没连上车时谈不上「等待车辆确认」，
+            // 这时候设置只是存在本地，等连上后自动补发（onConnection(READY) 里那一段）。
+            val linked = connection.phase == BleConnectionPhase.READY ||
+                connection.phase == BleConnectionPhase.CONFIGURING
             notice = when {
-                !next.enabled -> "已关闭，等待车辆确认"
-                boundKey.pending -> "设置待车辆确认"
+                !next.enabled -> if (linked) "已关闭，等待车辆确认" else "已关闭，连上车辆后同步"
+                ble.managedKey.value?.pending == true ->
+                    if (linked) "设置已下发，等待车辆确认" else "设置已保存，连上车辆后自动同步"
                 else -> "设置已下发"
             }
-        }.onFailure { notice = it.message ?: "设置下发失败" }
+        }.onFailure { fallback(it.message ?: "设置下发失败") }
 
         // 车端确认之后必须把后台服务拉起来，否则一进后台连接就被断开 ——
         // 表现就是「配对时好好的，锁屏走到车边没反应」。
@@ -339,6 +352,17 @@ class BleKeyHost internal constructor(
         connection = ble.connection.value
         key = ble.managedKey.value
         backgroundRunning = ble.backgroundRunning.value
+    }
+
+    /**
+     * 「这个动作被拦下了」的统一回执：页面顶部那条提示 + 一条 toast。
+     *
+     * 光靠顶部的提示不够 —— 用户手指正按在页面中下部的开关上，那里什么都不会变，
+     * 看上去就是「按钮点不动」。toast 至少能让人知道「是它不让我改，而不是坏了」。
+     */
+    private fun fallback(message: String) {
+        notice = message
+        runCatching { toast(context, message) }
     }
 }
 

@@ -923,17 +923,22 @@ class AppRuntime(context: Context) {
             }
             if (!isNetworkAvailable()) return@withContext cached
             val api = LeapmotorApi(session)
+            // 注意方向：**新拉到的值必须覆盖缓存**（refreshedBy），缓存只补新响应里缺的字段。
+            // 早先写成 `summary?.merge(parsed)`，而 merge 是「本对象优先、other 补空」，
+            // 于是总里程 / 综合能耗 / 提车天数从第一次拉取之后就永远不再更新（用户反馈
+            // 「剩余保养里程不动」的根因就在这里）。磁盘缓存会在启动时预填，所以这条路径
+            // 几乎每次都会走到。
             var summary = cached
             runCatching { withNetworkRetry { api.getMileageEnergy() } }
                 .onSuccess { resp ->
                     MileageEnergyParser.parseLifetime(resp)?.let { parsed ->
-                        summary = summary?.merge(parsed) ?: parsed
+                        summary = summary?.refreshedBy(parsed) ?: parsed
                     }
                 }
             runCatching { withNetworkRetry { api.getRecentMileageEnergy() } }
                 .onSuccess { resp ->
                     MileageEnergyParser.parseRecent(resp)?.let { parsed ->
-                        summary = summary?.merge(parsed) ?: parsed
+                        summary = summary?.refreshedBy(parsed) ?: parsed
                     }
                 }
             val result = summary
@@ -1454,6 +1459,143 @@ class AppRuntime(context: Context) {
         val safe = ThemeResolver.safeDark(id)
         namingPrefs.edit().putString("dark_theme", safe.id).apply()
     }
+
+    // ---------------- 自定义背景（用户上传的壁纸 / 相伴卡图） ----------------
+    //
+    // 三张图（日间壁纸 / 夜间壁纸 / 相伴卡背景）走 [CustomBackdropStore]，这里管三件事：
+    //  1. 内存热缓存：MainScreen 用 `when(tab)` 切页，切回来整棵子树重建，
+    //     只靠页面里的 remember 会重新解码一张 10MB 的壁纸（肉眼可见地卡一下）；
+    //  2. 版本号：换图后要让 UI 重新解码，而「文件时间戳」是最省事的变化信号；
+    //  3. 主色：壁纸生效时主题色由它代替内置主题色，跟着图走。
+
+    /**
+     * 三张图的版本号 + 两个壁纸主色，打包成一个 State，换图时一次刷新。
+     *
+     * [day] / [night] / [ownership] 是文件最后修改时间（0 = 没有图）；
+     * [revision] 是内存里的自增号 —— 文件时间戳只精确到秒（个别文件系统 2 秒），
+     * 连续两次换图可能撞在同一秒，界面就不会重新解码，所以额外带一个只增不减的号。
+     */
+    data class CustomBackdropState(
+        val day: Long = 0L,
+        val night: Long = 0L,
+        val ownership: Long = 0L,
+        /** 日间壁纸提取出的主题色（0 = 没取到 / 没设图） */
+        val lightAccent: Int = 0,
+        /** 夜间壁纸提取出的主题色 */
+        val darkAccent: Int = 0,
+        /** 每次保存 / 删除自增，保证 UI 一定能感知到变化 */
+        val revision: Long = 0L,
+    ) {
+        fun versionOf(kind: CustomBackdropKind): Long = when (kind) {
+            CustomBackdropKind.WALLPAPER_DAY -> day
+            CustomBackdropKind.WALLPAPER_NIGHT -> night
+            CustomBackdropKind.OWNERSHIP -> ownership
+        }
+
+        fun accent(dark: Boolean): Int = if (dark) darkAccent else lightAccent
+    }
+
+    private val _customBackdrop = mutableStateOf(readCustomBackdropState())
+    val customBackdrop: State<CustomBackdropState> get() = _customBackdrop
+
+    /**
+     * 解码后的图缓存，LRU 留最近两张。
+     *
+     * 上限压到 2 而不是 3：一张壁纸 1080 宽解码进内存约 10MB，三张同时留着
+     * 在低端机上有被系统回收的风险；而实际同时用得上的最多两张
+     * （当前这一侧壁纸 + 相伴卡）。
+     *
+     * 淘汰时**不 recycle** —— 界面上可能刚好还挂着一个 ImageBitmap 在画它，
+     * recycle 之后立刻绘制会抛 "trying to use a recycled bitmap"。Bitmap 交给 GC 就好。
+     */
+    private val customBackdropCache =
+        object : LinkedHashMap<CustomBackdropKind, Bitmap>(4, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<CustomBackdropKind, Bitmap>,
+            ): Boolean = size > 2
+        }
+
+    private fun readCustomBackdropState(): CustomBackdropState = CustomBackdropState(
+        day = CustomBackdropStore.version(appContext, CustomBackdropKind.WALLPAPER_DAY),
+        night = CustomBackdropStore.version(appContext, CustomBackdropKind.WALLPAPER_NIGHT),
+        ownership = CustomBackdropStore.version(appContext, CustomBackdropKind.OWNERSHIP),
+        lightAccent = namingPrefs.getInt("custom_accent_light", 0),
+        darkAccent = namingPrefs.getInt("custom_accent_dark", 0),
+    )
+
+    fun hasCustomBackdrop(kind: CustomBackdropKind): Boolean =
+        CustomBackdropStore.exists(appContext, kind)
+
+    /** 同步拿缓存（切页回来第一帧就能用）；没加载过返回 null，由调用方去 [customBackdrop] 取。 */
+    fun cachedCustomBackdrop(kind: CustomBackdropKind): Bitmap? =
+        customBackdropCache[kind]?.takeIf { !it.isRecycled }
+
+    /** 读图：命中缓存直接返回，否则从磁盘解码（IO 线程）。 */
+    suspend fun customBackdrop(kind: CustomBackdropKind): Bitmap? = withContext(Dispatchers.IO) {
+        cachedCustomBackdrop(kind) ?: CustomBackdropStore.load(appContext, kind)?.also {
+            customBackdropCache[kind] = it
+        }
+    }
+
+    /**
+     * 保存用户选好并裁切过的背景，成功返回 true。
+     *
+     * 壁纸顺手提取主色：日间图写浅色槽、夜间图写深色槽。
+     * 提取只在保存这一下跑一次（缩到 64×64 再算），不是每次进首页都算。
+     */
+    suspend fun saveCustomBackdrop(kind: CustomBackdropKind, bitmap: Bitmap): Boolean {
+        if (!CustomBackdropStore.save(appContext, kind, bitmap)) return false
+        customBackdropCache.remove(kind)
+
+        if (kind.isWallpaper) {
+            val small = withContext(Dispatchers.Default) {
+                // 缩到 64×64 再取像素：1080 宽的图 getPixels 要 19MB 的临时数组，
+                // 而主色只看「大面积色块」，64×64 完全够
+                runCatching { Bitmap.createScaledBitmap(bitmap, 64, 64, true) }.getOrNull()
+            }
+            if (small != null) {
+                val pixels = IntArray(small.width * small.height)
+                small.getPixels(pixels, 0, small.width, 0, 0, small.width, small.height)
+                val dark = kind == CustomBackdropKind.WALLPAPER_NIGHT
+                val accent = WallpaperPalette.accentFrom(
+                    pixels = pixels,
+                    width = small.width,
+                    height = small.height,
+                    dark = dark,
+                )
+                if (small !== bitmap) small.recycle()
+                if (accent != null) {
+                    namingPrefs.edit()
+                        .putInt(if (dark) "custom_accent_dark" else "custom_accent_light", accent)
+                        .apply()
+                }
+            }
+        }
+
+        _customBackdrop.value = readCustomBackdropState()
+            .copy(revision = _customBackdrop.value.revision + 1)
+        return true
+    }
+
+    /** 删掉某张自定义背景，界面回落到内置主题 / 默认相伴卡图。 */
+    fun clearCustomBackdrop(kind: CustomBackdropKind) {
+        CustomBackdropStore.clear(appContext, kind)
+        // 只从缓存里摘掉，**不要 recycle**：界面上可能还挂着一个 ImageBitmap 在画这一帧，
+        // recycle 之后立刻绘制会直接抛 "Canvas: trying to use a recycled bitmap"
+        customBackdropCache.remove(kind)
+        val accentKey = when (kind) {
+            CustomBackdropKind.WALLPAPER_DAY -> "custom_accent_light"
+            CustomBackdropKind.WALLPAPER_NIGHT -> "custom_accent_dark"
+            CustomBackdropKind.OWNERSHIP -> null
+        }
+        if (accentKey != null) namingPrefs.edit().remove(accentKey).apply()
+        _customBackdrop.value = readCustomBackdropState()
+            .copy(revision = _customBackdrop.value.revision + 1)
+    }
+
+    /** 自定义壁纸的主色；没设图或没提取到就返回 null，界面继续用内置主题色。 */
+    fun customWallpaperAccent(dark: Boolean): Int? =
+        _customBackdrop.value.accent(dark).takeIf { it != 0 }
 
     // ---------------- 「我的」页头像 ----------------
 

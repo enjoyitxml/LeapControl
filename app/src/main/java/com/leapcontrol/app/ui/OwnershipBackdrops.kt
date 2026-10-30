@@ -24,6 +24,15 @@ object OwnershipBackdrops {
 
     const val DEFAULT_ID = "mountain"
 
+    /**
+     * 「自定义」背景的 id。
+     *
+     * 它不在 [ALL] 里：那 6 张是内置 drawable，随机换背景、byId 兜底都只认内置；
+     * 自定义是一张用户上传的位图（见 `CustomBackdropStore`），单独一条路。
+     * 真要用到 [byId] 时返回下面的 [CUSTOM_PLACEHOLDER]，图片缺失也不会崩。
+     */
+    const val CUSTOM_ID = "custom"
+
     val ALL: List<OwnershipBackdrop> = listOf(
         OwnershipBackdrop("mountain", "雪山", R.drawable.bg_ownership_mountain, 0.30f),
         OwnershipBackdrop("grassland", "草原", R.drawable.bg_ownership_grassland, 0.58f),
@@ -33,9 +42,20 @@ object OwnershipBackdrops {
         OwnershipBackdrop("city", "夜色", R.drawable.bg_ownership_city, 0.22f),
     )
 
+    /**
+     * 自定义背景的占位配置。
+     *
+     * 只在「id 是 custom 但图读不出来」时用到 —— 回落到雪山那张，卡片不至于空一块。
+     * 压暗强度按最坏情况给（用户拍的图可能很亮），保证白字站得住。
+     */
+    private val CUSTOM_PLACEHOLDER =
+        OwnershipBackdrop(CUSTOM_ID, "自定义", R.drawable.bg_ownership_mountain, 0.42f)
+
     /** 认不出的 id 一律退回默认那张，避免升级后旧配置导致空白卡。 */
-    fun byId(id: String?): OwnershipBackdrop =
-        ALL.firstOrNull { it.id == id } ?: ALL.first()
+    fun byId(id: String?): OwnershipBackdrop = when (id) {
+        CUSTOM_ID -> CUSTOM_PLACEHOLDER
+        else -> ALL.firstOrNull { it.id == id } ?: ALL.first()
+    }
 
     /**
      * 相伴卡右上角小白点：随机换一张与当前**不同**的背景。

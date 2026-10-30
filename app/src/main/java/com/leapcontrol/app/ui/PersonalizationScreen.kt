@@ -1,6 +1,10 @@
 package com.leapcontrol.app.ui
 
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,11 +27,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,15 +42,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -52,7 +63,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.AppearanceMode
 import com.leapcontrol.app.LauncherIcon
+import com.leapcontrol.app.QuickSwitchLock
 import com.leapcontrol.app.R
+import kotlinx.coroutines.launch
 
 /**
  * 主题中心的两个分类，对应页面上横向的两个 tab。
@@ -99,6 +112,98 @@ fun PersonalizationScreen(
         if (!usable) tab = if (mode == AppearanceMode.DARK) ThemeTab.NIGHT else ThemeTab.DAY
     }
 
+    // ---- 自定义背景：上传 → 裁切 → 保存 ----
+    // 三张图共用同一套流程，只是「目的」不同（日间壁纸 / 夜间壁纸 / 相伴卡）。
+    // 先把目的记在 pendingKind 里，相册回调只拿到 uri，回来再配一次对。
+    val scope = rememberCoroutineScope()
+    var pendingKind by remember { mutableStateOf<CustomBackdropKind?>(null) }
+    var cropUri by remember { mutableStateOf<Uri?>(null) }
+    var cropKind by remember { mutableStateOf<CustomBackdropKind?>(null) }
+
+    val pickImage = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        val kind = pendingKind
+        pendingKind = null
+        if (uri != null && kind != null) {
+            cropKind = kind
+            cropUri = uri
+        }
+    }
+
+    fun startPick(kind: CustomBackdropKind) {
+        pendingKind = kind
+        pickImage.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+        )
+    }
+
+    // 读 State：换图 / 删图后缩略图要跟着换（版本号变了才会重新解码）
+    val backdropState = runtime.customBackdrop.value
+    var dayCustom by remember { mutableStateOf<ImageBitmap?>(null) }
+    var nightCustom by remember { mutableStateOf<ImageBitmap?>(null) }
+    var ownershipCustom by remember { mutableStateOf<ImageBitmap?>(null) }
+    // 只解码「当前 tab 需要的那一张」：壁纸是 1080 宽，一张解码进内存 10MB 起步，
+    // 为了看一眼日间主题却把夜间那张也读出来不值当。切 tab 时再把另一张补上。
+    LaunchedEffect(backdropState, tab) {
+        if (tab == ThemeTab.NIGHT) {
+            nightCustom = if (backdropState.night == 0L) {
+                null
+            } else {
+                runtime.customBackdrop(CustomBackdropKind.WALLPAPER_NIGHT)?.asImageBitmap()
+            }
+        } else {
+            dayCustom = if (backdropState.day == 0L) {
+                null
+            } else {
+                runtime.customBackdrop(CustomBackdropKind.WALLPAPER_DAY)?.asImageBitmap()
+            }
+        }
+        ownershipCustom = if (backdropState.ownership == 0L) {
+            null
+        } else {
+            runtime.customBackdrop(CustomBackdropKind.OWNERSHIP)?.asImageBitmap()
+        }
+    }
+
+    // 裁切框比例：壁纸跟着屏幕走（铺满整页才不会被拉伸），相伴卡固定 3:1（与卡片一致）
+    val configuration = LocalConfiguration.current
+    val screenAspect =
+        configuration.screenWidthDp.toFloat() / configuration.screenHeightDp.toFloat()
+
+    /** 壁纸存下来之后顺手把它选上 —— 用户刚传完图，下一步当然是想看到它生效。 */
+    fun applyCustom(kind: CustomBackdropKind) {
+        if (kind == CustomBackdropKind.OWNERSHIP) {
+            runtime.setOwnershipBackdropId(OwnershipBackdrops.CUSTOM_ID)
+            Toast.makeText(
+                context,
+                "已设为相伴卡背景，相伴卡的随机换背景入口已自动关闭",
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+        val theme = if (kind == CustomBackdropKind.WALLPAPER_NIGHT) {
+            SeasonThemes.CUSTOM_NIGHT
+        } else {
+            SeasonThemes.CUSTOM_DAY
+        }
+        val result = ThemeResolver.pick(
+            mode = mode,
+            systemDark = systemDark,
+            theme = theme,
+            lightThemeId = lightThemeId,
+            darkThemeId = darkThemeId,
+        )
+        if (result.hint != ThemeResolver.PickHint.BLOCKED) onApplyPick(result)
+        // 选的是「另一侧」时首页没有任何变化，也就没有入口被收起，别乱报
+        val otherSide = pickHintText(result.hint, theme)
+        Toast.makeText(
+            context,
+            otherSide ?: "已使用自定义壁纸，首页的随机换壁纸入口已自动关闭",
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -129,7 +234,8 @@ fun PersonalizationScreen(
         // ---- 主题中心：日间 / 夜间 两个 tab ----
         SettingsSection(
             title = "主题中心",
-            desc = "${SeasonThemes.ALL.size} 套 · 日间夜间各 ${SeasonThemes.DAY.size}",
+            desc = "${SeasonThemes.BUILTIN_COUNT} 套 · 日间夜间各 " +
+                "${SeasonThemes.DAY.count { !it.custom }}，末尾可传自己的壁纸",
         ) {
             SettingsCard {
                 ThemeTabBar(selected = tab, onSelect = { tab = it })
@@ -151,6 +257,17 @@ fun PersonalizationScreen(
                     darkThemeId = darkThemeId,
                     activeThemeId = activeThemeId,
                     mode = mode,
+                    // 自定义格子的缩略图：日间 tab 看日间那张，夜间 tab 看夜间那张
+                    customBitmap = if (tab == ThemeTab.NIGHT) nightCustom else dayCustom,
+                    onCustomUpload = {
+                        startPick(
+                            if (tab == ThemeTab.NIGHT) {
+                                CustomBackdropKind.WALLPAPER_NIGHT
+                            } else {
+                                CustomBackdropKind.WALLPAPER_DAY
+                            },
+                        )
+                    },
                     onPick = { theme ->
                         val result = ThemeResolver.pick(
                             mode = mode,
@@ -166,6 +283,46 @@ fun PersonalizationScreen(
                     },
                 )
                 Spacer(Modifier.height(12.dp))
+                // 自定义壁纸已设置时，给一条「移除」的退路：
+                // 网格里点一下只会选中，没法表达「我不想要这张图了」
+                val currentCustom = if (tab == ThemeTab.NIGHT) nightCustom else dayCustom
+                val customActive =
+                    activeThemeId == SeasonThemes.customFor(tab == ThemeTab.NIGHT).id
+                if (currentCustom != null) {
+                    CustomBackdropActions(
+                        active = customActive,
+                        // 选中了就说明首页的入口已经收起，得在「换图的地方」讲清楚为什么
+                        note = if (customActive) QuickSwitchLock.WALLPAPER else null,
+                        onReplace = {
+                            startPick(
+                                if (tab == ThemeTab.NIGHT) {
+                                    CustomBackdropKind.WALLPAPER_NIGHT
+                                } else {
+                                    CustomBackdropKind.WALLPAPER_DAY
+                                },
+                            )
+                        },
+                        onRemove = {
+                            runtime.clearCustomBackdrop(
+                                if (tab == ThemeTab.NIGHT) {
+                                    CustomBackdropKind.WALLPAPER_NIGHT
+                                } else {
+                                    CustomBackdropKind.WALLPAPER_DAY
+                                },
+                            )
+                            Toast.makeText(context, "已移除自定义壁纸", Toast.LENGTH_SHORT).show()
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    // 挑图建议常驻：只在裁切页说一次，用户下次换图时早忘了
+                    Text(
+                        QuickSwitchLock.PICK_ADVICE,
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
                 ThemeSlotSummary(
                     mode = mode,
                     activeThemeId = activeThemeId,
@@ -180,7 +337,12 @@ fun PersonalizationScreen(
         // ---- 相伴卡背景 ----
         SettingsSection(title = "相伴卡背景", desc = "首页「我与我的爱车走过」") {
             SettingsCard {
-                OwnershipBackdropGrid(runtime = runtime, selectedId = runtime.ownershipBackdrop.value)
+                OwnershipBackdropGrid(
+                    runtime = runtime,
+                    selectedId = runtime.ownershipBackdrop.value,
+                    customBitmap = ownershipCustom,
+                    onUploadCustom = { startPick(CustomBackdropKind.OWNERSHIP) },
+                )
             }
         }
 
@@ -270,6 +432,46 @@ fun PersonalizationScreen(
 
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.navigationBarsPadding())
+    }
+
+    // ---- 裁切页：独立的全屏 Dialog，盖在个性化页上面 ----
+    // 放在 Column 外面而不是里面：它是全屏弹窗，塞进可滚动 Column 里会被无界约束压扁
+    val croppingUri = cropUri
+    val croppingKind = cropKind
+    if (croppingUri != null && croppingKind != null) {
+        WallpaperCropDialog(
+            uri = croppingUri,
+            aspectRatio = if (croppingKind.isWallpaper) screenAspect else OWNERSHIP_BACKDROP_ASPECT,
+            title = when (croppingKind) {
+                CustomBackdropKind.WALLPAPER_DAY -> "日间壁纸"
+                CustomBackdropKind.WALLPAPER_NIGHT -> "夜间壁纸"
+                CustomBackdropKind.OWNERSHIP -> "相伴卡背景"
+            },
+            outputWidth = 1080,
+            // 相伴卡是 3:1 横条，主体要往右放（左侧 55% 会压暗放文字），
+            // 跟整页壁纸的「主体偏上」正好相反，别用同一句话
+            hint = if (croppingKind.isWallpaper) {
+                DEFAULT_HINT
+            } else {
+                "这张图会整张铺在「我与我的爱车走过」卡片上，左侧会压暗放文字：主体尽量放右半边"
+            },
+            onDone = { bitmap ->
+                cropUri = null
+                cropKind = null
+                scope.launch {
+                    val ok = runtime.saveCustomBackdrop(croppingKind, bitmap)
+                    if (ok) {
+                        applyCustom(croppingKind)
+                    } else {
+                        Toast.makeText(context, "保存失败，换张图再试试", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            onCancel = {
+                cropUri = null
+                cropKind = null
+            },
+        )
     }
 }
 
@@ -439,9 +641,9 @@ private fun appearanceHint(mode: AppearanceMode): String = when (mode) {
         "明暗跟着手机的深色模式走：白天用浅色那一套、夜里用深色那一套，" +
             "两套各自选一次就好，之后随手机自动切换。"
     AppearanceMode.LIGHT ->
-        "界面固定浅色，只能选日间主题（${SeasonThemes.DAY.size} 套）。"
+        "界面固定浅色，只能选日间主题（${SeasonThemes.DAY.count { !it.custom }} 套）。"
     AppearanceMode.DARK ->
-        "界面固定深色，只能选夜间主题（${SeasonThemes.NIGHT_ALL.size} 套）。"
+        "界面固定深色，只能选夜间主题（${SeasonThemes.NIGHT_ALL.count { !it.custom }} 套）。"
 }
 
 /** 主题中心顶部的三分类 tab（胶囊分段，选中白底浮起）。 */
@@ -515,6 +717,9 @@ private fun ThemeSlotSummary(
         Text(detail, color = C.textSecondary, fontSize = 11.sp, lineHeight = 15.sp)
     }
 }
+
+/** 相伴卡背景的裁切比例（卡片约 349×116dp），按 3:1 出的图铺上去不变形。 */
+private const val OWNERSHIP_BACKDROP_ASPECT = 3f
 
 /** 本项目在 GitHub 上的公开仓库地址（关于页可直接点击跳转）。 */
 private const val PROJECT_GITHUB_URL = "https://github.com/enjoyitxml/LeapControl"
@@ -600,12 +805,22 @@ fun AboutScreen(
 }
 
 /**
- * 相伴卡背景选择网格：3 列 × 2 行，缩略图按 3:1 裁切（和实际卡片一致）。
+ * 相伴卡背景选择网格：3 列 × 2 行内置图 + 下面一行「自定义背景」。
  *
  * 缩略图直接用原图 Crop，所见即所得；选中的那张加主题色描边 + 半透明蒙层 + 勾。
+ *
+ * 自定义单独占一行而不是也塞进 3 列网格：内置是 6 张（正好两行），
+ * 再塞一格会剩两格空位、看着像没加载完；单独一行还能多放一句「按 3:1 裁切」的说明。
  */
 @Composable
-fun OwnershipBackdropGrid(runtime: AppRuntime, selectedId: String) {
+fun OwnershipBackdropGrid(
+    runtime: AppRuntime,
+    selectedId: String,
+    /** 用户上传的相伴卡图；null 表示还没传过。 */
+    customBitmap: ImageBitmap? = null,
+    /** 去相册选图（选完会走裁切）。 */
+    onUploadCustom: () -> Unit = {},
+) {
     val C = LocalAppColors.current
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         OwnershipBackdrops.ALL.chunked(3).forEach { row ->
@@ -666,6 +881,131 @@ fun OwnershipBackdropGrid(runtime: AppRuntime, selectedId: String) {
                 repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
+
+        // ---- 自定义背景 ----
+        val customSelected = selectedId == OwnershipBackdrops.CUSTOM_ID
+        val shape = RoundedCornerShape(10.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(if (customSelected) C.accent.copy(alpha = 0.10f) else C.chipBg, shape)
+                .border(
+                    if (customSelected) 1.5.dp else 0.dp,
+                    if (customSelected) C.accent else Color.Transparent,
+                    shape,
+                )
+                // 没传过图时点整行 = 去上传；传过了点整行 = 选它
+                .clickable {
+                    if (customBitmap == null) {
+                        onUploadCustom()
+                    } else {
+                        runtime.setOwnershipBackdropId(OwnershipBackdrops.CUSTOM_ID)
+                    }
+                }
+                .padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 预览按 3:1 裁，和卡片上看到的一致
+            Box(
+                modifier = Modifier
+                    .width(56.dp)
+                    .height(19.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(C.iconBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (customBitmap != null) {
+                    Image(
+                        bitmap = customBitmap,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = null,
+                        tint = C.accent,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "自定义背景",
+                        color = C.textPrimary,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                    )
+                    if (customSelected) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "使用中",
+                            color = C.accent,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = if (customBitmap == null) {
+                        "从相册选一张自己的照片，按卡片比例裁切"
+                    } else {
+                        "点一下换用这张，右侧可以重新选图"
+                    },
+                    color = C.textSecondary,
+                    fontSize = 10.5.sp,
+                    maxLines = 1,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = if (customBitmap == null) "上传" else "换图",
+                color = C.accent,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onUploadCustom)
+                    .padding(horizontal = 9.dp, vertical = 5.dp),
+            )
+        }
+        if (customBitmap != null) {
+            // 正在用这张图 → 相伴卡上的快捷换背景入口已经收起，说清楚，别让用户以为坏了
+            if (customSelected) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    QuickSwitchLock.BACKDROP,
+                    color = C.accent.copy(alpha = 0.90f),
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                Text(
+                    "移除自定义图",
+                    color = C.textSecondary,
+                    fontSize = 10.5.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            runtime.clearCustomBackdrop(CustomBackdropKind.OWNERSHIP)
+                            if (customSelected) {
+                                runtime.setOwnershipBackdropId(OwnershipBackdrops.DEFAULT_ID)
+                            }
+                        }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
     }
 }
 
@@ -685,6 +1025,10 @@ fun ThemePickGrid(
     activeThemeId: String,
     mode: AppearanceMode,
     onPick: (SeasonTheme) -> Unit,
+    /** 自定义壁纸缩略图：null 表示还没上传过（最后一格显示「上传壁纸」）。 */
+    customBitmap: ImageBitmap? = null,
+    /** 点未设置的自定义格子：去相册选图。 */
+    onCustomUpload: () -> Unit = {},
 ) {
     val C = LocalAppColors.current
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -702,53 +1046,67 @@ fun ThemePickGrid(
                         modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(58.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .border(
-                                    if (slotted) 2.dp else 0.dp,
-                                    if (slotted) C.accent else Color.Transparent,
-                                    RoundedCornerShape(8.dp),
-                                )
-                                .alpha(if (enabled) 1f else 0.35f)
-                                // 不可选也让点击进来，好弹一句「为什么不能选」
-                                .clickable { onPick(theme) },
-                        ) {
-                            ThemeSwatch(
-                                theme = theme,
-                                dark = C.isDark,
-                                modifier = Modifier.fillMaxSize(),
+                        if (theme.custom) {
+                            // 自定义格子：没图时点一下去上传，有图时和其它主题一样「点选」
+                            CustomThemeCell(
+                                bitmap = customBitmap,
+                                slotted = slotted,
+                                active = active,
+                                enabled = enabled,
+                                onClick = {
+                                    if (customBitmap == null) onCustomUpload() else onPick(theme)
+                                },
+                                onReplace = onCustomUpload,
                             )
-                            if (theme.animated) {
-                                ThemeCornerBadge("动态", Modifier.align(Alignment.TopEnd))
-                            }
-                            if (active) {
-                                Box(
-                                    Modifier
-                                        .fillMaxSize()
-                                        .background(C.accent.copy(alpha = 0.20f)),
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(58.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .border(
+                                        if (slotted) 2.dp else 0.dp,
+                                        if (slotted) C.accent else Color.Transparent,
+                                        RoundedCornerShape(8.dp),
+                                    )
+                                    .alpha(if (enabled) 1f else 0.35f)
+                                    // 不可选也让点击进来，好弹一句「为什么不能选」
+                                    .clickable { onPick(theme) },
+                            ) {
+                                ThemeSwatch(
+                                    theme = theme,
+                                    dark = C.isDark,
+                                    modifier = Modifier.fillMaxSize(),
                                 )
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier
-                                        .align(Alignment.Center)
-                                        .size(18.dp),
-                                )
-                            }
-                            // 另一侧槽位已选中的那套：右下角点一个小圆点，表示「切过去就是它」
-                            if (slotted && !active) {
-                                Box(
-                                    Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .padding(5.dp)
-                                        .size(7.dp)
-                                        .clip(CircleShape)
-                                        .background(C.accent),
-                                )
+                                if (theme.animated) {
+                                    ThemeCornerBadge("动态", Modifier.align(Alignment.TopEnd))
+                                }
+                                if (active) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxSize()
+                                            .background(C.accent.copy(alpha = 0.20f)),
+                                    )
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier
+                                            .align(Alignment.Center)
+                                            .size(18.dp),
+                                    )
+                                }
+                                // 另一侧槽位已选中的那套：右下角点一个小圆点，表示「切过去就是它」
+                                if (slotted && !active) {
+                                    Box(
+                                        Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(5.dp)
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(C.accent),
+                                    )
+                                }
                             }
                         }
                         Spacer(Modifier.height(5.dp))
@@ -768,6 +1126,177 @@ fun ThemePickGrid(
                 }
                 repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
+        }
+    }
+}
+
+/**
+ * 主题网格里的「我的壁纸」格子。
+ *
+ * 两种形态刻意区分得很硬：
+ *  · 没传过图 → 淡底 + 加号 +「上传壁纸」，点一下就是去相册，不会有人误以为它是一套主题；
+ *  · 传过了 → 直接显示用户那张图的缩略（Crop），和其它主题一样「点一下选中」，
+ *    右下角另给一个刷新小圆钮专门用来换图（不然点一下只能选中，没法换）。
+ */
+@Composable
+private fun CustomThemeCell(
+    bitmap: ImageBitmap?,
+    slotted: Boolean,
+    active: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    onReplace: () -> Unit,
+) {
+    val C = LocalAppColors.current
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(58.dp)
+            .clip(shape)
+            .border(
+                if (slotted) 2.dp else 0.dp,
+                if (slotted) C.accent else Color.Transparent,
+                shape,
+            )
+            .alpha(if (enabled) 1f else 0.35f)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Box(Modifier.fillMaxSize().background(C.chipBg))
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(C.accent.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = null,
+                        tint = C.accent,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "上传壁纸",
+                    color = C.textSecondary,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                )
+            }
+        }
+
+        if (active) {
+            Box(Modifier.fillMaxSize().background(C.accent.copy(alpha = 0.20f)))
+            Icon(
+                Icons.Filled.Check,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.align(Alignment.Center).size(18.dp),
+            )
+        } else if (slotted) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(5.dp)
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(C.accent),
+            )
+        }
+
+        // 换一张：只在已经有图时出现，压在图右下角
+        if (bitmap != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+                    .size(19.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.46f))
+                    .clickable(onClick = onReplace),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = "更换壁纸",
+                    tint = Color.White,
+                    modifier = Modifier.size(12.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 自定义壁纸的两个小操作：更换 / 移除。
+ *
+ * 「移除」必须单独给：网格里点一下只会把它选上，而用户「我不想要这张图了」
+ * 这个意图在网格里没有别的表达方式。
+ *
+ * @param note 这张图正在使用时那句「随机切换已收起」的说明（null = 不显示）。
+ *   放在这一行下面而不是弹一个 toast：说明的是「以后都不再有的入口」，得留得住。
+ */
+@Composable
+private fun CustomBackdropActions(
+    active: Boolean,
+    note: String? = null,
+    onReplace: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val C = LocalAppColors.current
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (active) "正在使用自定义壁纸" else "已上传自定义壁纸",
+                color = if (active) C.accent else C.textSecondary,
+                fontSize = 11.sp,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "更换",
+                color = C.accent,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onReplace)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+            Spacer(Modifier.width(2.dp))
+            Text(
+                "移除",
+                color = C.textSecondary,
+                fontSize = 11.5.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onRemove)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+        if (note != null) {
+            Spacer(Modifier.height(6.dp))
+            // 用主题色而不是灰色：这是一条「行为被改变了」的通知，不是免责声明
+            Text(
+                note,
+                color = C.accent.copy(alpha = 0.90f),
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
         }
     }
 }

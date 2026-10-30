@@ -5,6 +5,7 @@ import com.leapcontrol.app.bluetooth.BleConnectionPhase
 import com.leapcontrol.app.bluetooth.BleConnectionState
 import com.leapcontrol.app.bluetooth.BleKeyBootPolicy
 import com.leapcontrol.app.bluetooth.BleLockAction
+import com.leapcontrol.app.bluetooth.BleManagedKey
 import com.leapcontrol.app.bluetooth.BleNearbyDevice
 import com.leapcontrol.app.bluetooth.BlePassiveConfiguration
 import com.leapcontrol.app.bluetooth.BleReconnectPolicy
@@ -107,6 +108,73 @@ class BleKeyPolicyTest {
         )
     }
 
+    // ---- 「点不动」的回归线 ----
+
+    @Test
+    fun `只有正在写配置与等回执才算写配置`() {
+        // 这两种状态在往车上写帧，串行是必须的
+        assertTrue(BleConnectionState(phase = BleConnectionPhase.CONFIGURING).isWritingConfiguration)
+        assertTrue(BleConnectionState(phase = BleConnectionPhase.SENDING).isWritingConfiguration)
+
+        // 连接链路上的其它阶段都不能锁——后台钥匙会以 2~30 秒的间隔不停重连，
+        // 用 isBusy 判断会让用户站在车边时整页几乎全程不可点（用户报的「按钮点不动」）。
+        listOf(
+            BleConnectionPhase.IDLE,
+            BleConnectionPhase.SCANNING,
+            BleConnectionPhase.CONNECTING,
+            BleConnectionPhase.DISCOVERING,
+            BleConnectionPhase.SUBSCRIBING,
+            BleConnectionPhase.AUTHENTICATING,
+            BleConnectionPhase.READY,
+            BleConnectionPhase.FAILED,
+        ).forEach { phase ->
+            assertFalse("$phase 不应锁住设置项", BleConnectionState(phase = phase).isWritingConfiguration)
+        }
+    }
+
+    @Test
+    fun `连接中允许先存设置，写配置时拦截`() {
+        val configuration = BlePassiveConfiguration(enabled = false)
+        val binding = BleManagedKey(
+            accountId = "acc",
+            vin = VIN,
+            device = BleNearbyDevice("AA:BB:CC:DD:EE:FF", "LEAP C11", -62, protocolMinor = 9),
+            certificateFingerprint = "0".repeat(64),
+        )
+        // 总开关关闭时不需要证书，正好用来隔离「相位」这一个变量
+        listOf(
+            BleConnectionPhase.CONNECTING,
+            BleConnectionPhase.DISCOVERING,
+            BleConnectionPhase.SUBSCRIBING,
+            BleConnectionPhase.AUTHENTICATING,
+        ).forEach { phase ->
+            assertTrue(
+                "$phase 时应放行（先落本地、连上补发）",
+                BleAccessPolicy.canApplyConfiguration(
+                    BleConnectionState(phase = phase),
+                    binding = binding,
+                    certificate = null,
+                    configuration = configuration,
+                ),
+            )
+        }
+        listOf(
+            BleConnectionPhase.CONFIGURING,
+            BleConnectionPhase.SENDING,
+            BleConnectionPhase.SCANNING,
+        ).forEach { phase ->
+            assertFalse(
+                "$phase 时应拦截",
+                BleAccessPolicy.canApplyConfiguration(
+                    BleConnectionState(phase = phase),
+                    binding = binding,
+                    certificate = null,
+                    configuration = configuration,
+                ),
+            )
+        }
+    }
+
     // ---- 重连节奏 ----
 
     @Test
@@ -173,5 +241,10 @@ class BleKeyPolicyTest {
         // 指令编号一旦改动，车端会直接拒收，必须锁死
         assertEquals(1, BleLockAction.UNLOCK.commandId)
         assertEquals(2, BleLockAction.LOCK.commandId)
+    }
+
+    private companion object {
+        /** 17 位大写字母数字的 VIN（BleManagedKey 的校验要求）。 */
+        const val VIN = "L1234567890123456"
     }
 }

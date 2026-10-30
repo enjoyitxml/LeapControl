@@ -57,6 +57,19 @@ data class BleConnectionState(
         BleConnectionPhase.CONFIGURING,
         BleConnectionPhase.SENDING
     )
+
+    /**
+     * 是否正在「往车上写东西」（配置帧 / 锁车指令）。
+     *
+     * 只有这两种状态必须把钥匙设置项锁住 —— 其余（连接中、发现服务、认证中）都可以先改
+     * 本地期望值，等连上后由 [BleKeyRuntime] 自动补发。
+     *
+     * 早先界面用 [isBusy] 判断，而后台钥匙会以 2~30 秒的间隔不停重连，每次连接最长占 15 秒，
+     * 于是用户站在车边打开这一页时，绝大多数时间三个开关和感应距离都是死的 ——
+     * 表现就是「点了没反应」（提示还写在页面顶部的状态卡里，手指那一片什么都看不到）。
+     */
+    val isWritingConfiguration: Boolean
+        get() = phase == BleConnectionPhase.CONFIGURING || phase == BleConnectionPhase.SENDING
 }
 
 data class BleSessionIdentity(val accountId: String, val vin: String, val generation: Long, val deviceId: String) {

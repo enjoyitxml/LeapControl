@@ -200,6 +200,9 @@ fun MainScreen(
     var darkThemeId by remember { mutableStateOf(runtime.darkThemeId()) }
     // 快捷切换配置（小白点 / 点击切换 / 关闭）：读 State 才能「设置里一改、退回首页立刻生效」
     val quickSwitch by runtime.quickSwitch
+    // 自定义背景的版本号（0 = 那张图不存在）。用来判断「车模这一块是不是正显示用户自己的壁纸」，
+    // 攒在 MainScreen 里算一次，别让 HomeScreen 里那几个分支各算一遍。
+    val customBackdropState by runtime.customBackdrop
     // 实时帧率浮层（设置 → 显示 → 显示帧率）
     val frameStatsVisible by runtime.frameStatsVisible
     // App 是否在前台：进后台就暂停解码，别在看不见的时候继续耗电
@@ -221,6 +224,11 @@ fun MainScreen(
     // 生效主题：按明暗取对应槽位，槽里类型不对时自动回落到该类型默认主题
     val season = ThemeResolver.activeTheme(appearance, dark, lightThemeId, darkThemeId)
     val activeSeasonId = season.id
+    // 用户自己的壁纸正在生效 → 车模侧的快捷换壁纸入口收起（原因见 QuickSwitchLock）。
+    // 两个条件都必需：主题槽位选的是「我的壁纸」**且**当前明暗那一侧确实有图；
+    // 图被移除后槽位还指着 custom，这时铺出来的是纯渐变，再锁住入口就没法换了。
+    val themeCustomLocked = season.custom &&
+        (if (dark) customBackdropState.night else customBackdropState.day) > 0L
     // ---- 快捷换壁纸（车模右上角的呼吸小白点）----
     // 在当前壁纸所属的池子里随机换一套：浅色只在日间池、深色只在夜间池、
     // 只在当前明暗那一侧的主题池里换，规则见 ThemeResolver.randomSwitch。
@@ -237,8 +245,15 @@ fun MainScreen(
             darkThemeId = pick.darkThemeId
         }
     }
-    // 主题色跟着季节走：卡片描边、柱状图、强调元素都用它
-    val themeAccent = season.accent(dark)
+    // 主题色跟着季节走：卡片描边、柱状图、强调元素都用它。
+    // 自定义壁纸（season.custom）例外：颜色从壁纸里提取，取不到再退回主题自带的那一档 ——
+    // 否则一张蓝色海景壁纸配默认的灰绿强调色，整页会显得脏。
+    val wallpaperAccent = if (season.custom) {
+        runtime.customWallpaperAccent(dark)?.let { Color(it) }
+    } else {
+        null
+    }
+    val themeAccent = wallpaperAccent ?: season.accent(dark)
     val colors = remember(dark, themeAccent) { appColors(dark, themeAccent) }
     // 页面底色渐变与 Material 配色只在「主题 / 明暗」变化时重建。
     // 每次重组都 new 一个 Brush 会让下层所有 draw 缓存失效，等于白做优化。
@@ -397,6 +412,15 @@ fun MainScreen(
                     .fillMaxSize()
                     .background(pageGradient),
             ) {
+                // ---- 自定义壁纸：铺满整页（只有选中「我的壁纸」时才画）----
+                // 画在最底层、渐变之上：图的四周由自带的一层薄纱压暗，
+                // 保证车名与卡片在任意壁纸上都能读清。
+                CustomWallpaperLayer(
+                    runtime = runtime,
+                    dark = dark,
+                    enabled = season.custom,
+                )
+
                 // ---- 主题场景：只画在页面上半部分，往下淡出到看不见 ----
                 // 场景覆盖「屏幕顶端 → 空调控件上沿」，车模与快捷控车压在已经淡化的画面上；
                 // 不在首页主界面 / 进后台 / 正在滑动时都改用固定相位，完全静止、省电、也省帧。
@@ -464,6 +488,7 @@ fun MainScreen(
                                 onRandomTheme = randomizeTheme,
                                 onRandomBackdrop = { runtime.randomizeOwnershipBackdrop() },
                                 quickSwitch = quickSwitch,
+                                themeCustomLocked = themeCustomLocked,
                                 onMainPageChange = { homeOnMainPage = it },
                                 onCarModelGoneChange = { carModelGone.value = it },
                                 onScrollingChange = { homeScrolling.value = it },

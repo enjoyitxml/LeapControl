@@ -72,6 +72,14 @@ private fun reminderColor(expired: Boolean, soon: Boolean): Color {
     }
 }
 
+/** 「还剩 12 天」/「已超 3 天」。 */
+private fun remainingDaysText(days: Int): String =
+    if (days >= 0) "还剩 $days 天" else "已超 ${-days} 天"
+
+/** 「还剩 4,231 km」/「已超 320 km」。 */
+private fun remainingKmText(km: Double): String =
+    if (km >= 0) "还剩 ${formatKm(km)} km" else "已超 ${formatKm(kotlin.math.abs(km))} km"
+
 /** 右上角的胶囊小标（已过期 / 即将到期 / 正常）。 */
 @Composable
 private fun ReminderChip(text: String, color: Color) {
@@ -88,8 +96,12 @@ private fun ReminderChip(text: String, color: Color) {
 /**
  * 保养提醒卡。
  *
- * 主数字只报一个维度：**时间优先**（天数比公里数更容易感知），
- * 只有「按里程」模式才报公里；另一个维度写在标题下面那行小字里。
+ * 主数字只报一个维度 —— **哪个先到报哪个**（按「剩余 / 周期」的比例比，
+ * 单位不同不能直接比大小）；另一个维度写在标题下面那行小字里。
+ * 早先固定按「时间优先」，结果是里程快到了也看不见，用户以为剩余里程没在算。
+ *
+ * 剩余里程 = 上次保养里程 + 周期 − **当前表显里程**，随车况刷新实时变化
+ * （当前里程的取值口径见 `OwnershipStats.currentKm`）。
  */
 @Composable
 fun MaintenanceCard(
@@ -122,9 +134,23 @@ fun MaintenanceCard(
         else -> "正常"
     }
 
+    // 主数字报哪个维度：按「剩余 / 周期」的比例比，比例小的先到。早先固定报天数，
+    // 于是「还剩 300 公里」被「还有 200 天」盖住，用户只能看到天数不动，误以为
+    // 剩余里程没在算。里程更紧时把公里提到主位，天数退到副信息。
+    val kmLeads = when {
+        km == null -> false
+        days == null -> true
+        else -> (plan.remainingKmFraction(currentKm) ?: Double.MAX_VALUE) <
+            (plan.remainingDaysFraction() ?: Double.MAX_VALUE)
+    }
+
     val value: String
     val unit: String
     when {
+        kmLeads && km != null -> {
+            value = formatKm(kotlin.math.abs(km))
+            unit = if (km >= 0) "km" else "km 已超"
+        }
         days != null -> {
             value = if (days >= 0) "$days" else "${-days}"
             unit = if (days >= 0) "天" else "天前已到期"
@@ -143,11 +169,13 @@ fun MaintenanceCard(
         expired -> "已超期"
         else -> "距下次保养"
     }
-    // 副信息：主数字报的是天数，这里补「还剩多少公里」—— 保养最该被看见的两个维度；
-    // 没设里程时就退回「设定周期」或「上次保养」。都控制在一行内，超了走省略号。
+    // 副信息：补**另一个**维度 —— 保养最该被看见的就是「时间 + 里程」两条，
+    // 主数字只放得下一个。只剩一个维度时就退回「设定周期」或「上次保养」。
     val subtitle = when {
-        km != null -> if (km >= 0) "还剩 ${formatKm(km)} km" else "已超 ${formatKm(kotlin.math.abs(km))} km"
-        plan.nextDate() != null -> "每 ${plan.months} 个月一次"
+        km != null && days != null ->
+            if (kmLeads) remainingDaysText(days) else remainingKmText(km)
+        km != null -> "每 ${formatKm(plan.km)} km 一次"
+        days != null -> "每 ${plan.months} 个月一次"
         plan.nextKm() != null -> "每 ${formatKm(plan.km)} km 一次"
         else -> "上次 ${JournalDates.shortLabel(plan.lastDate)} · ${formatKm(plan.lastKm)} km"
     }
@@ -386,6 +414,19 @@ fun MaintenanceSheet(
                 )
             }
         }
+        Spacer(Modifier.height(8.dp))
+        // 把「算剩余里程用的那个当前里程」直接写出来：用户填了上次里程、
+        // 卡上数字却不动时，第一反应是「数据没同步」，这里能让他自己核对。
+        Text(
+            if (currentKm != null && currentKm > 0) {
+                "当前表显 ${formatKm(currentKm)} km，剩余里程按「上次里程 + 周期 − 表显」实时算。"
+            } else {
+                "暂时读不到当前表显里程，剩余里程会在车况同步后显示。"
+            },
+            color = C.textSecondary,
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+        )
 
         Spacer(Modifier.height(14.dp))
         Text("保养周期", color = C.textSecondary, fontSize = 11.sp)
@@ -447,7 +488,10 @@ fun MaintenanceSheet(
                                 toast(context, "间隔月数填 1~120")
                             mode != MaintenancePlan.Mode.TIME && (km == null || km <= 0.0) ->
                                 toast(context, "间隔公里数填一个大于 0 的数")
-                            mode != MaintenancePlan.Mode.KM && (lastKm == null || lastKm < 0.0) ->
+                            // 「上次里程」是里程口径的**基数**，按里程 / 都提醒两种模式都必须有：
+                            // 缺了它 nextKm() 会退化成 0 + 周期，剩余里程直接算成一大串负数。
+                            // 按时间的模式不看里程，就不拦。
+                            mode != MaintenancePlan.Mode.TIME && (lastKm == null || lastKm <= 0.0) ->
                                 toast(context, "填一下上次保养时的表显里程")
                             else -> onSave(
                                 MaintenancePlan(

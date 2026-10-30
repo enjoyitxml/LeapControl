@@ -219,11 +219,16 @@ fun <T : Any> ReorderableCardArea(
         modifier = modifier
             .fillMaxWidth()
             .onGloballyPositioned { areaTop.value = it.positionInWindow().y },
+        // 卡间距必须交给 Column 统一管，**不能**每张卡前面塞一个 Spacer。
+        // 之前就是那么写的（`key(id) { if (index > 0) Spacer(gap) ... }`），
+        // 结果 Spacer 落在 key 组里、跟着卡片一起被移动：拖动排序提交新顺序后，
+        // 有一张卡的那份 Spacer 会丢，两张卡直接贴在一起（用户反馈的「黏在一起」）。
+        // spacedBy 不产生任何子项，重排再多次也不会少一格。
+        verticalArrangement = Arrangement.spacedBy(gap),
     ) {
         val dragIndex = if (dragging != null) cards.indexOf(dragging) else -1
         cards.forEachIndexed { index, id ->
             key(id) {
-                if (index > 0) Spacer(Modifier.height(gap))
                 val isDragging = dragging == id
                 // 让位方向：被拖卡片往下走，中间的卡上移一格；往上走则下移一格
                 val shiftTarget = when {
@@ -325,8 +330,8 @@ fun <T : Any> ReorderableCardArea(
             }
         }
 
-        Spacer(Modifier.height(gap))
-
+        // 尾部不再补 Spacer：spacedBy 已经把「最后一张卡 → 编辑按钮」的间距算进去了，
+        // 再补一个会把这段撑成两倍 gap。
         if (!editing) {
             EditCardsButton(onClick = { onEditingChange(true) })
         } else {

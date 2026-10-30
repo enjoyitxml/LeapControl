@@ -33,8 +33,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -64,6 +66,7 @@ fun BluetoothKeyScreen(
     onBack: () -> Unit,
 ) {
     val C = LocalAppColors.current
+    val context = LocalContext.current
     val connection = host.connection
     val key = host.key
 
@@ -109,12 +112,20 @@ fun BluetoothKeyScreen(
         Spacer(Modifier.height(14.dp))
 
         // ---- 无感解锁设置 ----
+        //
+        // 这里的开关**不能**按「连接是否繁忙」来锁：后台钥匙会不停重连（每次最长 15 秒），
+        // 用 connection.isBusy 判断的话，用户站在车边这一页基本全程不可点，表现就是「按钮点不动」。
+        // 只有「正在写配置 / 正在等锁车回执」才真正需要串行；其余时候先改期望值，
+        // 连上车辆后由 runtime 自动补发（见 BleConnectionState.isWritingConfiguration）。
+        val writing = connection.isWritingConfiguration
         SettingsSection(title = "无感解锁", desc = "开启后靠蓝牙感应，走到车边自动解锁") {
             SettingsCard {
                 SwitchRow(
                     label = "蓝牙钥匙",
                     desc = when {
                         !host.bound -> "还没有配对车辆，先在下面完成配对"
+                        key?.pending == true && !host.linked ->
+                            "设置已保存，连上车辆后自动同步"
                         key?.pending == true -> "设置已下发，等待车辆确认"
                         key?.desired?.enabled == true -> "已开启，后台保持连接中"
                         else -> "已关闭，仅保留配对记录"
@@ -123,6 +134,7 @@ fun BluetoothKeyScreen(
                     onCheckedChange = { on ->
                         if (!host.bound) {
                             host.notice = "请先配对车辆"
+                            toast(context, "请先配对车辆")
                         } else {
                             withPermission { host.toggleEnabled(on) }
                         }
@@ -131,18 +143,24 @@ fun BluetoothKeyScreen(
 
                 if (host.bound) {
                     val desired = key?.desired ?: BlePassiveConfiguration()
-                    val interactive = desired.enabled && !connection.isBusy
+                    // 备注：这里原先还有一层 `&& !connection.isBusy`，已删 —— 理由见上面那段说明。
+                    val interactive = desired.enabled && !writing
+                    fun blocked() {
+                        val message = when {
+                            writing -> "正在同步上一次修改，请稍候"
+                            else -> "先打开蓝牙钥匙总开关"
+                        }
+                        host.notice = message
+                        toast(context, message)
+                    }
                     Spacer(Modifier.height(16.dp))
                     SwitchRow(
                         label = "靠近自动解锁",
                         desc = "带着手机走到车边，门把手自动弹出",
                         checked = desired.autoUnlock,
                         onCheckedChange = { on ->
-                            if (!interactive) {
-                                host.notice = if (desired.enabled) "请等待当前操作完成" else "先打开蓝牙钥匙总开关"
-                            } else {
-                                host.applyConfiguration(desired.copy(autoUnlock = on))
-                            }
+                            if (!interactive) blocked()
+                            else host.applyConfiguration(desired.copy(autoUnlock = on))
                         },
                     )
                     Spacer(Modifier.height(16.dp))
@@ -151,11 +169,8 @@ fun BluetoothKeyScreen(
                         desc = "走远后自动上锁，不会忘了锁车",
                         checked = desired.autoLock,
                         onCheckedChange = { on ->
-                            if (!interactive) {
-                                host.notice = if (desired.enabled) "请等待当前操作完成" else "先打开蓝牙钥匙总开关"
-                            } else {
-                                host.applyConfiguration(desired.copy(autoLock = on))
-                            }
+                            if (!interactive) blocked()
+                            else host.applyConfiguration(desired.copy(autoLock = on))
                         },
                     )
                     if (supportsButton(key?.device?.protocolMinor, host.runtime.session.selectedCarType)) {
@@ -165,11 +180,8 @@ fun BluetoothKeyScreen(
                             desc = "靠近时按门把手按键即可解锁",
                             checked = desired.buttonEnabled,
                             onCheckedChange = { on ->
-                                if (!interactive) {
-                                    host.notice = if (desired.enabled) "请等待当前操作完成" else "先打开蓝牙钥匙总开关"
-                                } else {
-                                    host.applyConfiguration(desired.copy(buttonEnabled = on))
-                                }
+                                if (!interactive) blocked()
+                                else host.applyConfiguration(desired.copy(buttonEnabled = on))
                             },
                         )
                     }
@@ -181,11 +193,8 @@ fun BluetoothKeyScreen(
                             .let { it.contains("C16") || it.contains("C10") },
                         enabled = interactive,
                         onPick = { calibration ->
-                            if (!interactive) {
-                                host.notice = if (desired.enabled) "请等待当前操作完成" else "先打开蓝牙钥匙总开关"
-                            } else {
-                                host.applyConfiguration(desired.copy(calibration = calibration))
-                            }
+                            if (!interactive) blocked()
+                            else host.applyConfiguration(desired.copy(calibration = calibration))
                         },
                     )
                 }
@@ -456,7 +465,10 @@ private fun CalibrationPicker(
                         color = if (selected) C.accent else Color.Transparent,
                         shape = RoundedCornerShape(12.dp),
                     )
-                    .clickable(enabled = enabled) { onPick(value) },
+                    // 不可用时也要接住点击：整块 `clickable(enabled = false)` 是彻底的「点不动」，
+                    // 用户得不到任何解释。现在统一交给 onPick，由调用方 toast 出原因。
+                    .clickable { onPick(value) }
+                    .alpha(if (enabled) 1f else 0.55f),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {

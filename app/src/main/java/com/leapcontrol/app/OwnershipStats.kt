@@ -42,6 +42,19 @@ object OwnershipStats {
     }
 
     /**
+     * 「当前总里程」的唯一口径：**车况报文里的表显里程优先**，取不到才退回里程接口的累计值。
+     *
+     * 优先表显不是拍脑袋：里程接口（`drivingrecord/mileage/energy/detail`）的累计口径
+     * 由服务端按行驶记录汇总，实测滞后一天以上，还有 15 分钟本地缓存；而车况报文里的
+     * `totalMileage` 就是仪表上那个数，随每次车况刷新同步变化。剩余保养里程要是拿滞后的
+     * 那个算，用户开一个月都不会少一公里 —— 这就是「剩余保养里程不更新」的直接体感来源。
+     *
+     * 两个都取不到就是 null（UI 显示「--」），不拿 0 兜底。
+     */
+    fun currentKm(statusText: String?, energyKm: Double?): Double? =
+        kmFromText(statusText)?.takeIf { it > 0.0 } ?: energyKm?.takeIf { it > 0.0 }
+
+    /**
      * 卡片上显示的公里数：千分位、四舍五入到整数。
      * 卡片只有半屏宽，带小数会挤成两行，且总里程的小数位本来也没有参考价值。
      */

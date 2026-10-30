@@ -129,10 +129,14 @@ object ThemeResolver {
      * 判据是「现在生效的这套主题」而不是外观模式：用户眼睛看到的是哪一类壁纸，
      * 就只在这一类里换，所以永远不会出现「浅色界面上随机到一套深色主题」的黑底黑字。
      *
-     * 日间 20 套 / 夜间 20 套各成一个池子（静态与动态混在一起换，只按明暗分）。
+     * 日间 / 夜间各成一个池子（静态与动态混在一起换，只按明暗分）。
+     *
+     * **自定义壁纸不进池子**：那是用户自己上传的图，点一下「换壁纸」就把它换掉、
+     * 还换不回来（只能重新进个性化里点它），属于毁掉用户设置的行为。
      */
     fun poolOf(theme: SeasonTheme): List<SeasonTheme> =
-        if (theme.night) SeasonThemes.NIGHT_ALL else SeasonThemes.DAY
+        (if (theme.night) SeasonThemes.NIGHT_ALL else SeasonThemes.DAY)
+            .filter { !it.custom }
 
     /**
      * 快捷换壁纸：在当前池子里随机挑一套**不同**的主题，只改「正在显示的那一侧槽位」。

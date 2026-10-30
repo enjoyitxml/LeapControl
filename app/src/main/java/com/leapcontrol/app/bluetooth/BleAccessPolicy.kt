@@ -20,12 +20,19 @@ object BleAccessPolicy {
     fun canStartCloudLockControl(phase: BleConnectionPhase, cloudBusy: Boolean): Boolean =
         !cloudBusy && phase != BleConnectionPhase.SENDING
 
+    /**
+     * 能不能把一版新设置写下去。
+     *
+     * 只拦「正在写配置 / 正在等锁车回执」和「正在扫描」两种状态：这两种时候写会把帧序搞乱。
+     * 连接中 / 发现服务 / 认证中一律放行 —— 设置先落本地，连上后自动补发
+     * （见 BleConnectionState.isWritingConfiguration 的说明）。
+     */
     fun canApplyConfiguration(
         state: BleConnectionState,
         binding: BleManagedKey?,
         certificate: BleKeyCertificate?,
         configuration: BlePassiveConfiguration
-    ): Boolean = !state.isBusy && state.phase != BleConnectionPhase.SCANNING && binding != null &&
+    ): Boolean = !state.isWritingConfiguration && state.phase != BleConnectionPhase.SCANNING && binding != null &&
         (!configuration.enabled || (certificate != null && binding.matchesCertificate(certificate))) &&
         (!configuration.enabled || !configuration.buttonEnabled || (binding.device.protocolMinor ?: 0) >= 9)
 

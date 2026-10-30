@@ -1,42 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 同风格补画：六角雪花（制冷）。 -->
+<!--
+  空调（制冷）状态图标：六角雪花，每条辐条末端带一对 47° 的分叉枝杈。
+
+  形状按参考图重绘成矢量（不是塞一张位图），这样 16dp 下边缘仍然锐利，也能被
+  StatusItem 的 tint 染色（空调开启时是告警红）。
+  几何：R=9.4 / 枝杈根部 0.60R / 枝杈长 0.33R / 张角 47°；
+  线宽 1.05 —— 比同组 ic_qc_lock 等细一档：雪花笔画多，同宽在小尺寸下会糊成一团。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:pathData="M 12.000 5.469 V 18.531"
+        android:pathData="M 12.00 12.00 L 12.00 21.40 M 12.00 17.64 L 14.27 19.76 M 12.00 17.64 L 9.73 19.76 M 12.00 12.00 L 20.14 16.70 M 16.88 14.82 L 19.85 13.91 M 16.88 14.82 L 17.58 17.84 M 12.00 12.00 L 20.14 7.30 M 16.88 9.18 L 17.58 6.16 M 16.88 9.18 L 19.85 10.09 M 12.00 12.00 L 12.00 2.60 M 12.00 6.36 L 9.73 4.24 M 12.00 6.36 L 14.27 4.24 M 12.00 12.00 L 3.86 7.30 M 7.12 9.18 L 4.15 10.09 M 7.12 9.18 L 6.42 6.16 M 12.00 12.00 L 3.86 16.70 M 7.12 14.82 L 6.42 17.84 M 7.12 14.82 L 4.15 13.91"
         android:strokeColor="#FF000000"
-        android:strokeWidth="1.31"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:fillColor="#00000000" />
-    <path
-        android:pathData="M 6.547 8.604 L 17.453 15.396"
-        android:strokeColor="#FF000000"
-        android:strokeWidth="1.31"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:fillColor="#00000000" />
-    <path
-        android:pathData="M 6.547 15.396 L 17.453 8.604"
-        android:strokeColor="#FF000000"
-        android:strokeWidth="1.31"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:fillColor="#00000000" />
-    <path
-        android:pathData="M 12.000 5.469 L 10.531 7.265 M 12.000 5.469 L 13.469 7.265"
-        android:strokeColor="#FF000000"
-        android:strokeWidth="1.31"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:fillColor="#00000000" />
-    <path
-        android:pathData="M 12.000 18.531 L 10.531 16.735 M 12.000 18.531 L 13.469 16.735"
-        android:strokeColor="#FF000000"
-        android:strokeWidth="1.31"
+        android:strokeWidth="1.05"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:fillColor="#00000000" />

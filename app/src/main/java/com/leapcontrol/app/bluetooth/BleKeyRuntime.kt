@@ -112,7 +112,9 @@ class BleKeyRuntime private constructor(context: Context) {
 
     fun applyConfiguration(configuration: BlePassiveConfiguration) {
         check(foreground && validSession())
-        check(!connectionValue.value.isBusy) { "请等待当前蓝牙操作结束" }
+        // 只有「正在写配置 / 正在等指令回执」才必须串行；
+        // 连接中允许先把期望值存下来，连上后 onConnection(READY) 会自动补发。
+        check(!connectionValue.value.isWritingConfiguration) { "请等待当前蓝牙操作结束" }
         check(!sessions.loadOpPassword().isNullOrBlank())
         check(controller.hasPermissions()) { "请先开启附近设备权限" }
         val bound = requireNotNull(keyValue.value) { "请先连接并认证车辆" }

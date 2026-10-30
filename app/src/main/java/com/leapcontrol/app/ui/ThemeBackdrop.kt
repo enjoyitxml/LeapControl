@@ -1,10 +1,11 @@
 package com.leapcontrol.app.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,6 +14,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
@@ -112,6 +117,62 @@ fun ThemeBackdrop(
                 }
             },
     )
+}
+
+/**
+ * 自定义壁纸层：把用户上传的图铺满整页。
+ *
+ * 只有当前生效主题是「我的壁纸」时才画（[enabled]），其余 40 套仍然走
+ * [ThemeBackdrop] 那套实时绘制的场景 —— 两条路互不干扰。
+ *
+ * 上面必须叠一层薄纱（[wallpaperVeil]）：壁纸内容完全不可控，浅色壁纸配深色字还行，
+ * 一张夜景配深色字就全糊了。这层纱同时承担「把图压淡一点，别抢卡片内容」的作用。
+ *
+ * 解码走 AppRuntime 的缓存：切 Tab 回来是同一张 Bitmap，不会每次都重新解码 10MB。
+ */
+@Composable
+fun CustomWallpaperLayer(
+    runtime: AppRuntime,
+    dark: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (!enabled) return
+
+    val kind = if (dark) CustomBackdropKind.WALLPAPER_NIGHT else CustomBackdropKind.WALLPAPER_DAY
+    // 读版本号：换图 / 删图后版本变化，才会重新解码
+    val state = runtime.customBackdrop.value
+    val version = state.versionOf(kind)
+    // 首帧先吃缓存，避免「已经设过壁纸」的机器切页回来闪一帧渐变
+    var bitmap by remember(version, kind, state.revision) {
+        mutableStateOf(runtime.cachedCustomBackdrop(kind)?.asImageBitmap())
+    }
+    LaunchedEffect(version, kind, state.revision) {
+        bitmap = if (version == 0L) null else runtime.customBackdrop(kind)?.asImageBitmap()
+    }
+
+    val image = bitmap ?: return
+    Box(modifier = modifier.fillMaxSize()) {
+        Image(
+            bitmap = image,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        // 顶部轻一点，让壁纸「天空」那块透出来；往下越来越重，
+                        // 因为下半屏是卡片区，文字密度最高
+                        0.00f to (if (dark) Color.Black else Color.White).copy(alpha = if (dark) 0.42f else 0.30f),
+                        0.45f to (if (dark) Color.Black else Color.White).copy(alpha = if (dark) 0.54f else 0.44f),
+                        1.00f to (if (dark) Color.Black else Color.White).copy(alpha = if (dark) 0.66f else 0.60f),
+                    ),
+                ),
+        )
+    }
 }
 
 /**

@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.BuildConfig
+import com.leapcontrol.app.QuickSwitchLock
 import com.leapcontrol.app.QuickSwitchMode
 import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.R
@@ -103,6 +105,15 @@ fun SettingsScreen(
     // 快速切换壁纸/背景：三态模式 + 两块各自的小白点开关（都挂在 runtime 的 State 上，
     // 这里直接订阅，改完即时生效，不在页面里存第二份）
     val quick by runtime.quickSwitch
+    // 自定义图正在生效时，对应部件的快捷切换会被收起（见 QuickSwitchLock.effectiveTarget）。
+    // 在设置页要能自圆其说：开关明明开着、首页却没有白点，用户第一个来这儿找。
+    val customVersions by runtime.customBackdrop
+    val darkNow = ThemeResolver.isDark(runtime.appearanceMode(), isSystemInDarkTheme())
+    val themeLocked = (if (darkNow) runtime.darkThemeId() else runtime.lightThemeId()) ==
+        SeasonThemes.customFor(darkNow).id &&
+        (if (darkNow) customVersions.night else customVersions.day) > 0L
+    val cardLocked = runtime.ownershipBackdrop.value == OwnershipBackdrops.CUSTOM_ID &&
+        customVersions.ownership > 0L
     // 零记总开关：关掉后语音 Key 这一项就没有服务对象了（语音只服务于灵感球），一起收起
     val journalOn by runtime.journalEnabled
     // 动力类型：null = 自动推断（按车型名 + 燃油信号），否则为用户手动指定
@@ -263,6 +274,23 @@ fun SettingsScreen(
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
+
+            // 有自定义图在用 → 说明哪几块的入口被收起了。只在这里说一句，
+            // 首页不加任何提示：那是用户自己的图，不该为了解释功能而在图上压字。
+            if (themeLocked || cardLocked) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    QuickSwitchLock.settings(
+                        buildList {
+                            if (themeLocked) add(QuickSwitchLock.PART_CAR)
+                            if (cardLocked) add(QuickSwitchLock.PART_CARD)
+                        },
+                    ),
+                    color = C.accent.copy(alpha = 0.90f),
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            }
 
             // 「每个部件的小白点单独设置」只在小白点模式下出现：
             // 点击切换是整块可点、关闭是什么都没有，这两种模式里单个部件的开关没有意义

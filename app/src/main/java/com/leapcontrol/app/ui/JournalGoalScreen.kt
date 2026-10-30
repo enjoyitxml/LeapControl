@@ -79,8 +79,12 @@ fun JournalGoalScreen(runtime: AppRuntime, onBack: () -> Unit) {
     val goal = data.goal
 
     val energy by runtime.mileageEnergyFlow.collectAsState()
-    val vehicleKm = energy?.totalMileageKm
-        ?: com.leapcontrol.app.OwnershipStats.kmFromText(runtime.statusFlow.value?.totalMileage)
+    // 订阅车况，别读 statusFlow.value：那样拿的是组合期的一次快照，车况变了也不会重组
+    val status by runtime.statusFlow.collectAsState()
+    val vehicleKm = com.leapcontrol.app.OwnershipStats.currentKm(
+        status?.totalMileage,
+        energy?.totalMileageKm,
+    )
 
     var editing by remember { mutableStateOf(goal == null) }
 

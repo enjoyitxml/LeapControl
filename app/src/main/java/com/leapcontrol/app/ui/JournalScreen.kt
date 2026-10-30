@@ -73,9 +73,15 @@ fun JournalScreen(runtime: AppRuntime) {
     val order by journal.cardOrder
     // 里程勋章看的是**车辆总里程**，不是本地那几天的累计：
     // 本地 daily 表刚开始只有近 7 天，用它会让人均「千公里」勋章卡住不动。
+    //
+    // 这里必须 `collectAsState()` 订阅：车况是 StateFlow，直接读 `statusFlow.value`
+    // 组合期只取一次快照，Compose 不会因为它变化而重组 —— 车开着、人停在零记页，
+    // 剩余保养里程就一直不动。行程卡也一样。
     val energy by runtime.mileageEnergyFlow.collectAsState()
-    val vehicleKm = energy?.totalMileageKm
-        ?: OwnershipStats.kmFromText(runtime.statusFlow.value?.totalMileage)
+    val status by runtime.statusFlow.collectAsState()
+    // 表显优先、里程接口兜底（口径见 OwnershipStats.currentKm）：
+    // 里程接口的累计值服务端滞后一天以上，拿它算剩余保养里程会「一个月不掉一公里」。
+    val vehicleKm = OwnershipStats.currentKm(status?.totalMileage, energy?.totalMileageKm)
 
     var page by remember { mutableStateOf<JournalPage?>(null) }
     var loaded by remember { mutableStateOf(false) }
@@ -95,12 +101,23 @@ fun JournalScreen(runtime: AppRuntime) {
         // 顺手把「提车天数 + 近 7 日里程 + 总里程」同步进来：
         // 这些数据零记自己不产生，全靠控车链路已有的接口，调一次就够（15 分钟缓存）。
         runCatching {
+            // 剩余保养里程算的是「下次保养里程 − 当前表显里程」，所以进页面时先把车况
+            // 拉新：60 秒内刚刷过（从首页点进来基本都是）就不重复请求。
+            val latest = if (
+                System.currentTimeMillis() - runtime.lastUpdatedFlow.value > ODOMETER_FRESH_MS
+            ) {
+                runCatching { runtime.refreshStatus() }.getOrNull()
+            } else {
+                runtime.statusFlow.value
+            }
             val summary = runtime.refreshMileageEnergy()
             if (summary != null) {
                 journal.setOwnershipDays(summary.ownershipDays)
                 journal.mergeRecentDays(summary.recentDays)
             }
-            journal.recordOdometer(summary?.totalMileageKm ?: currentOdometer(runtime))
+            journal.recordOdometer(
+                OwnershipStats.currentKm(latest?.totalMileage, summary?.totalMileageKm),
+            )
         }
     }
 
@@ -258,9 +275,13 @@ fun JournalScreen(runtime: AppRuntime) {
 /** 给右下角悬浮的灵感球留白：球 104 高，少一点会把页脚压在球底下。 */
 private val OrbReservedHeight = 134.dp
 
-/** 车况里的总里程（拿不到就 null，不让 recordOdometer 收到 0 把基线拉低）。 */
-private fun currentOdometer(runtime: AppRuntime): Double? =
-    OwnershipStats.kmFromText(runtime.statusFlow.value?.totalMileage)
+/**
+ * 进零记时「车况算不算新鲜」的阈值。
+ *
+ * 剩余保养里程依赖表显里程，所以进页面会补一次车况；但这个页面多半是从首页点进来的，
+ * 首页刚刷过就没必要再来一发 —— 60 秒内视为新鲜，直接用手上这份。
+ */
+private const val ODOMETER_FRESH_MS = 60_000L
 
 /**
  * 按 id 渲染零记的一张卡。

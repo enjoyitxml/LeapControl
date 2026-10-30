@@ -88,4 +88,23 @@ class OwnershipStatsTest {
         )
         assertEquals(96, MileageEnergyParser.parseRecent(resp)?.ownershipDays)
     }
+
+    @Test
+    fun `当前总里程表显优先且都不认零值`() {
+        // 表显里程优先：里程接口的累计值在服务端按行驶记录汇总，实测滞后一天以上
+        assertEquals(
+            12345.6,
+            OwnershipStats.currentKm("12345.6km", 12000.0)!!,
+            0.001,
+        )
+        // 表显取不到才退回接口值
+        assertEquals(12000.0, OwnershipStats.currentKm(null, 12000.0)!!, 0.001)
+        assertEquals(12000.0, OwnershipStats.currentKm("暂无", 12000.0)!!, 0.001)
+        // 0 km 是「没上报」，不能当有效里程 —— 否则剩余保养里程会按 0 算，直接报成已超期
+        assertEquals(12000.0, OwnershipStats.currentKm("0 km", 12000.0)!!, 0.001)
+        // 两边都是 0 / 都取不到时给 null，让卡片走「暂无数据」而不是显示 0
+        assertNull(OwnershipStats.currentKm("0km", 0.0))
+        assertNull(OwnershipStats.currentKm("—", null))
+        assertNull(OwnershipStats.currentKm(null, null))
+    }
 }

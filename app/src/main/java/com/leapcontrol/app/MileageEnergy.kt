@@ -50,6 +50,15 @@ data class MileageEnergySummary(
         capturedAt = maxOf(capturedAt, other.capturedAt),
     )
 
+    /**
+     * 用刚拉到的新值 [fresh] 覆盖本对象，本对象只负责补齐 [fresh] 里缺的字段。
+     *
+     * [merge] 的方向是「本对象优先、other 补空」，拿它把新数据合进缓存时方向就反了：
+     * 缓存里已有的字段会把新值全部盖掉，总里程从此再也不动。
+     * 这里把方向摆正，调用处一律用本方法，别再手写 `cached.merge(parsed)`。
+     */
+    fun refreshedBy(fresh: MileageEnergySummary): MileageEnergySummary = fresh.merge(this)
+
     fun toJson(): JSONObject = JSONObject().apply {
         totalMileageKm?.let { put("totalMileageKm", it) }
         overallConsumption?.let { put("overallConsumption", it) }

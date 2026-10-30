@@ -48,6 +48,14 @@ data class SeasonTheme(
     val veilAlphaScale: Float = 0.16f,
     /** 底部渐隐（控件区）强度倍率。 */
     val scrimAlphaScale: Float = 1f,
+    /**
+     * 是不是「我的壁纸」（用户自己上传的背景）。
+     *
+     * 这类主题**不使用** [gradient] / [scene]：整页背景由 UI 层铺一张位图
+     * （见 MainScreen 的 `CustomWallpaperLayer`），这里的渐变只当「图还没设 / 读不出来」时的兜底色，
+     * 主题色则由壁纸主色覆盖（见 `WallpaperPalette`）。
+     */
+    val custom: Boolean = false,
 ) {
     fun gradient(dark: Boolean): List<Color> = if (dark) gradientDark else gradient
 
@@ -777,24 +785,73 @@ object SeasonThemes {
     )
 
     // ========================================================================
+    // 自定义壁纸（日间 / 夜间各一套）
+    // ========================================================================
 
-    /** 日间 20 套（10 静态 + 10 动态） */
+    /**
+     * 我的壁纸（日间）。
+     *
+     * 渲染时整页铺用户上传的图，这里的渐变只在「还没设图 / 图读不出来」时兜底，
+     * 所以刻意选了一组中性、不抢戏的浅灰绿：万一是兜底状态，界面看着也像「没设壁纸」，
+     * 而不是像某套具体主题被选错了。
+     *
+     * 主题色同理只是个初值，真正生效的是从壁纸里提取的主色。
+     */
+    val CUSTOM_DAY = SeasonTheme(
+        id = "custom_day",
+        label = "我的壁纸",
+        mood = "自定义 · 上传图片",
+        gradient = listOf(Color(0xFFE7ECE8), Color(0xFFF1F5F2), Color(0xFFFAFBFA)),
+        gradientDark = listOf(Color(0xFF171B18), Color(0xFF0F1211), Color(0xFF080909)),
+        accent = Color(0xFF3F7A5E),
+        accentDark = Color(0xFF6FB28C),
+        scene = SceneKind.NONE,
+        custom = true,
+    )
+
+    /** 我的壁纸（夜间）：同一张逻辑，只是走深色槽。 */
+    val CUSTOM_NIGHT = SeasonTheme(
+        id = "custom_night",
+        label = "我的壁纸",
+        mood = "自定义 · 上传图片",
+        gradient = listOf(Color(0xFF15191A), Color(0xFF0E1213), Color(0xFF070909)),
+        gradientDark = listOf(Color(0xFF101314), Color(0xFF0A0C0D), Color(0xFF050606)),
+        accent = Color(0xFF8FB6A4),
+        accentDark = Color(0xFFA8CFBC),
+        scene = SceneKind.NONE,
+        night = true,
+        custom = true,
+        veilAlphaScale = 0.20f,
+        scrimAlphaScale = 0.85f,
+    )
+
+    // ========================================================================
+
+    /** 日间 20 套（10 静态 + 10 动态）+ 自定义 = 21 格 */
     val DAY = listOf(
         MIST_HILLS, CLEAR_SKY, SAKURA, AUTUMN, WINTER, SEASIDE,
         WHEAT_FIELD, LAKE_MIRROR, BAMBOO, DESERT,
         CLOUD_DRIFT, PETAL_FALL, SUN_DUST, LIGHT_RAIN,
         RIPPLING_LAKE, BIRDS, DANDELION, MIST_FLOW, TREE_SHADOW, SUNRISE,
+        CUSTOM_DAY,
     )
 
-    /** 夜间 20 套（10 静态 + 10 动态） */
+    /** 夜间 20 套（10 静态 + 10 动态）+ 自定义 = 21 格 */
     val NIGHT_ALL = listOf(
         STARRY, CITY_NIGHT, MOON_VALLEY, NIGHT_SEA, MILKY_WAY, NIGHT_HILLS,
         PINE_NIGHT, SNOW_VILLAGE, LIGHTHOUSE, LAKE_STARS,
         AURORA, METEOR, FIREFLY, NIGHT_RAIN,
         STAR_TRAILS, MOON_RIPPLE, NIGHT_TRAFFIC, SNOW_FALL, CLOUD_MOON, NIGHT_WAVES,
+        CUSTOM_NIGHT,
     )
 
     val ALL = DAY + NIGHT_ALL
+
+    /** 内置主题数量（不含两个自定义格）：页面上「N 套」的计数要用它，别把自定义算进去。 */
+    val BUILTIN_COUNT = ALL.count { !it.custom }
+
+    /** 找自定义壁纸主题：界面明暗不同取不同的那套。 */
+    fun customFor(dark: Boolean): SeasonTheme = if (dark) CUSTOM_NIGHT else CUSTOM_DAY
 
     /**
      * 老版本存下来的主题 id。

@@ -101,6 +101,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -126,10 +128,13 @@ import com.leapcontrol.app.ChargeSchedule
 import com.leapcontrol.app.EnergyFormat
 import com.leapcontrol.app.HomeCardId
 import com.leapcontrol.app.HomeCardLayout
+import com.leapcontrol.app.OwnershipStats
+import com.leapcontrol.app.QuickPart
 import com.leapcontrol.app.QuickSwitchPrefs
 import com.leapcontrol.app.QuickTarget
 import com.leapcontrol.app.R
 import com.leapcontrol.app.VehicleCapabilities
+import com.leapcontrol.app.journal.JournalDates
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -170,6 +175,14 @@ fun HomeScreen(
     onRandomBackdrop: () -> Unit = {},
     /** 快捷切换的当前配置（设置页里选的小白点 / 点击切换 / 关闭） */
     quickSwitch: QuickSwitchPrefs = QuickSwitchPrefs(),
+    /**
+     * 当前生效主题是不是用户自己上传的壁纸（且那张图确实还在）。
+     *
+     * true 时车模这一侧的快捷换壁纸入口一律收起：那是用户从相册里挑、又亲手裁过的图，
+     * 点一下就被随机换成内置主题、还找不回来。判定在 MainScreen（season 在那边），
+     * 这里只负责按结果渲染。
+     */
+    themeCustomLocked: Boolean = false,
     /** 向上汇报「当前是否在零控首页主界面」—— 场景动画只在首页主界面跑 */
     onMainPageChange: (Boolean) -> Unit,
     /** 向上汇报「车模是否已滚出可视区」—— 滚出后场景层淡出，改为纯色背景，提高可读性 */
@@ -233,6 +246,17 @@ fun HomeScreen(
         var cardEditing by remember { mutableStateOf(false) }
         // 相伴卡背景：个性化里切换后要立刻生效，所以直接读 State
         val ownershipBackdropId = runtime.ownershipBackdrop.value
+        // 相伴卡的「自定义背景」图：只有当前选的是它才需要解码，
+        // 其余 6 套内置图是 drawable，不该为了一张用不到的用户图付出解码成本
+        val customBackdropState = runtime.customBackdrop.value
+        var ownershipCustomImage by remember { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(ownershipBackdropId, customBackdropState.ownership) {
+            ownershipCustomImage = if (ownershipBackdropId == OwnershipBackdrops.CUSTOM_ID) {
+                runtime.customBackdrop(CustomBackdropKind.OWNERSHIP)?.asImageBitmap()
+            } else {
+                null
+            }
+        }
         var refreshError by remember { mutableStateOf<String?>(null) }
         var actionMessage by remember { mutableStateOf<String?>(null) }
         var controlling by remember { mutableStateOf<String?>(null) }
@@ -421,12 +445,26 @@ fun HomeScreen(
             carBitmap = runCatching { runtime.displayCarBitmap() }.getOrNull()
         }
 
+        /**
+         * 拉取里程 / 能耗 / 周能耗 —— 也就是首页「近 7 天行程」「周能耗分布」「近 6 周能耗」
+         * 三张卡的数据。
+         *
+         * 这三张卡的接口和车况接口是分开的，早先**只在进入首页时拉一次**（15 分钟缓存），
+         * 于是下拉刷新、回到前台、网络恢复都只刷了车况，三张卡的数字纹丝不动 ——
+         * 用户反馈的「近 7 天 / 周能耗不更新」就是这个原因。
+         * 现在凡是「用户主动刷新」或「重新回到首页」都带上它们：
+         *  - 非强制（force=false）走 15 分钟缓存，回到前台、网络恢复这类自动触发不会刷接口；
+         *  - 强制（force=true）用于下拉刷新、跨天、切换车辆，用户要的就是当场拿新数。
+         */
+        fun refreshEnergy(force: Boolean = false) {
+            scope.launch { runCatching { runtime.refreshMileageEnergy(force) } }
+            scope.launch { runCatching { runtime.refreshWeeklyEnergy(force) } }
+        }
+
         // 进入首页（或切换车辆）时拉一次里程 / 能耗；15 分钟内不重复请求，
         // 失败也不打扰用户 —— 模块卡保持上一次结果或显示「--」。
         LaunchedEffect(vinKey) {
-            runCatching { runtime.refreshMileageEnergy() }
-            // 两张能耗卡（周分布 / 近 6 周）走另外两个接口，同样静默
-            runCatching { runtime.refreshWeeklyEnergy() }
+            refreshEnergy()
         }
 
         // 去重：2 秒内的重复请求忽略（避免冷启动时启动刷新与前台事件叠加）
@@ -435,7 +473,8 @@ fun HomeScreen(
          * 拉取车况。结果由 runtime.statusFlow 直接下发，UI 不做「先清空再填充」。
          *
          * @param silent true = 静默刷新（默认）：不显示转圈、不改右上角文案，车况到位自动替换数值；
-         *               false = 用户手动下拉刷新，才显示下拉指示器。
+         *               false = 用户手动下拉刷新，才显示下拉指示器，并且**连三张能耗卡一起刷**
+         *               （用户的心智是「下拉刷新 = 页面上所有数据都刷新」）。
          */
         fun refresh(force: Boolean = false, silent: Boolean = true) {
             val now = System.currentTimeMillis()
@@ -455,6 +494,11 @@ fun HomeScreen(
                 } catch (e: Exception) {
                     refreshError = friendlyError(e)
                 }
+                if (!silent) {
+                    // 下拉刷新：能耗 / 里程也强制拉一遍，转圈保持到它们回来
+                    runCatching { runtime.refreshMileageEnergy(force = true) }
+                    runCatching { runtime.refreshWeeklyEnergy(force = true) }
+                }
                 if (!silent) refreshing = false
             }
         }
@@ -463,14 +507,20 @@ fun HomeScreen(
         LaunchedEffect(Unit) {
             refresh(force = true)
         }
-        // 从后台切回前台时刷新
+        // 从后台切回前台时刷新：车况必刷，能耗走缓存（超过 15 分钟才会真的请求）
         LaunchedEffect(Unit) {
-            ForegroundSignal.events.collect { refresh() }
+            ForegroundSignal.events.collect {
+                refresh()
+                refreshEnergy()
+            }
         }
         // 网络恢复：仅当上一次刷新失败时补刷一次（避免频繁请求）
         LaunchedEffect(Unit) {
             ForegroundSignal.networkEvents.collect {
-                if (status == null || refreshError != null) refresh()
+                if (status == null || refreshError != null) {
+                    refresh()
+                    refreshEnergy()
+                }
             }
         }
         // 注册网络恢复监听
@@ -485,6 +535,22 @@ fun HomeScreen(
             while (drivingNow && onMainPage) {
                 delay(12_000)
                 refresh()
+            }
+        }
+        // 跨天：近 7 日窗口整体前移一天，周能耗也会换周。
+        // 只在主界面、一分钟看一次本地日期，不请求接口；真跨天了才强刷一次。
+        // （车机 / 常亮设备上 App 可能连着跑好几天，光靠「进页面才拉」会一直停在旧的一天。）
+        LaunchedEffect(onMainPage) {
+            if (!onMainPage) return@LaunchedEffect
+            var day = JournalDates.dayKey(JournalDates.todayStart())
+            while (true) {
+                delay(60_000)
+                val now = JournalDates.dayKey(JournalDates.todayStart())
+                if (now != day) {
+                    day = now
+                    refresh(force = true)
+                    refreshEnergy(force = true)
+                }
             }
         }
 
@@ -1311,8 +1377,10 @@ fun HomeScreen(
             // ---- 车模：显示官方接口图（默认常开，不再提供关闭开关）----
             if (carBitmap != null) {
                 Spacer(Modifier.height(4.dp))
-                // 快捷换壁纸的触发方式由设置决定：小白点 / 点车模本体 / 不提供
-                val carQuick = quickSwitch.carTarget
+                // 快捷换壁纸的触发方式由设置决定：小白点 / 点车模本体 / 不提供。
+                // 用户自己的壁纸正在生效时再压一层（themeCustomLocked）：一律不提供入口，
+                // 免得一次误触把挑好裁好的图换成内置主题。
+                val carQuick = quickSwitch.effectiveTarget(QuickPart.CAR, themeCustomLocked)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1496,13 +1564,22 @@ fun HomeScreen(
                         )
                     }
 
-                    // 相伴卡：提车天数 / 累计公里，背景图可在个性化里换
+                    // 相伴卡：提车天数 / 累计公里，背景图可在个性化里换。
+                    // 选的是用户自己的背景时同样把快捷切换压掉 —— 那张图按 3:1 裁过，
+                    // 被随机换成内置的 6 张之一后找不回来。
                     HomeCardId.OWNERSHIP -> OwnershipCard(
                         status = currentStatus,
                         energy = energySummary,
                         backdropId = ownershipBackdropId,
-                        quickTarget = quickSwitch.cardTarget,
+                        quickTarget = quickSwitch.effectiveTarget(
+                            QuickPart.CARD,
+                            // 用「文件存不存在」判断而不是等解码完成：
+                            // ownershipCustomImage 是异步解出来的，慢一帧就有一帧的可点窗口
+                            ownershipBackdropId == OwnershipBackdrops.CUSTOM_ID &&
+                                customBackdropState.ownership > 0L,
+                        ),
                         onRandomBackdrop = onRandomBackdrop,
+                        customBackdrop = ownershipCustomImage,
                     )
 
                     // 保险续费 / 保养提醒：与零记那两张卡同源（数据、弹层都复用）。
@@ -1514,7 +1591,11 @@ fun HomeScreen(
 
                     HomeCardId.MAINTENANCE -> MaintenanceCard(
                         plan = journalData.maintenance,
-                        currentKm = energySummary?.totalMileageKm?.takeIf { it > 0 },
+                        // 表显里程优先：里程接口的累计口径滞后，拿它算剩余里程会「不更新」
+                        currentKm = OwnershipStats.currentKm(
+                            currentStatus?.totalMileage,
+                            energySummary?.totalMileageKm,
+                        ),
                         onClick = { showMaintenanceSheet = true },
                     )
                 }
@@ -1681,7 +1762,10 @@ fun HomeScreen(
         if (showMaintenanceSheet) {
             MaintenanceSheet(
                 plan = journalData.maintenance,
-                currentKm = energySummary?.totalMileageKm?.takeIf { it > 0 },
+                currentKm = OwnershipStats.currentKm(
+                    status?.totalMileage,
+                    energySummary?.totalMileageKm,
+                ),
                 onDismiss = { showMaintenanceSheet = false },
                 onSave = { plan ->
                     runtime.journal.setMaintenance(plan)
