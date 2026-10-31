@@ -56,6 +56,12 @@ import com.leapcontrol.app.WeeklyEnergyParser
 import com.leapcontrol.app.VehicleLocationDiagnostics
 import com.leapcontrol.app.VehicleLocationDomain
 import com.leapcontrol.app.VehicleLocationStore
+import com.leapcontrol.app.LocationAnchor
+import com.leapcontrol.app.LocationAnchorRule
+import com.leapcontrol.app.VehicleLocationAnchorStore
+import com.leapcontrol.app.VehicleLocationRules
+import com.leapcontrol.app.ChinaCoordinate
+import com.leapcontrol.app.CoordinateShiftPrefs
 import com.leapcontrol.app.VehicleOtaInfo
 import com.leapcontrol.app.VehicleCapabilityDetector
 import com.leapcontrol.app.VehicleCapabilities
@@ -174,6 +180,17 @@ data class CarStatus(
      * 只在 debug 构建的找车页显示，用于用户拍照回报；正常有坐标时为 null。
      */
     val locationHint: String? = null,
+    /**
+     * **这条坐标是从什么时候起就是这个值**（毫秒）。
+     *
+     * 报文里的经纬度没有自己的时间戳，[lastUpdatedFlow] 又只是「我们拉取的时刻」，
+     * 拿它当「位置更新于 x 前」会永远说着「刚刚」。这个字段由
+     * [LocationAnchorRule] 按「坐标有没有变过」推出来：车在跑时它就是刚刚，
+     * 车停了半天不动时它会一直往回长 —— 后者才是该提醒用户的情况。
+     */
+    val locationSeenAt: Long = 0L,
+    /** 这次坐标取自哪一对信号（仅 debug 的找车页显示，用来排查取错键的情况）。 */
+    val locationSource: String? = null,
     val acTargetTemp: String? = null,
     val acWindLevel: String? = null,
     val acCircle: String? = null,
@@ -671,12 +688,23 @@ class AppRuntime(context: Context) {
     }
 
     suspend fun selectVehicle(vehicle: Vehicle) {
+        // 换车的判定要在改 selectedVin 之前：换了一辆就必须丢掉上一辆的停车位置，
+        // 否则新车还没报坐标的那几帧，首页会把**另一辆车**停的地方画出来并导航过去
+        val switched = vehicle.vin != session.selectedVin
         session.selectedVin = vehicle.vin
         session.selectedCarType = vehicle.carType
         session.selectedNickname = vehicle.nickname.ifEmpty { vehicle.officialNickname }
         // 动力类型的「手动指定」是按 VIN 存的，换车必须跟着换，否则会沿用上一辆车的口径
         _powerTypeOverride.value = loadManualPowerType(vehicle.vin)
         withContext(Dispatchers.IO) { sessionStore.save(session) }
+        if (switched) {
+            withContext(Dispatchers.IO) {
+                // 位置缓存 + 坐标锚点一起清。车位照片**不清**：那是用户自己拍的实物记录，
+                // 换车时删掉属于丢用户数据；照片卡本身写着「拍摄于 x 前」，看得出生效时间
+                VehicleLocationStore.clear(appContext)
+                resetLocationAnchor()
+            }
+        }
         // 换车后能力要重新按 VIN 加载，不能直接沿用上一辆的结果
         syncCapabilities()
     }
@@ -697,6 +725,7 @@ class AppRuntime(context: Context) {
         // 停车位置缓存必须一起清：那个目录里存着车停在哪、旁边是什么地址，
         // 换账号后还留着，等于把上一位车主的行踪给了下一个人
         VehicleLocationStore.clear(appContext)
+        resetLocationAnchor()
         // 停车位照片同理，而且它更直接：照片里常能看到车牌、车位号、甚至车库门牌
         ParkingPhotoStore.clear(appContext)
     }
@@ -1112,6 +1141,8 @@ class AppRuntime(context: Context) {
         // 充电中心三个读数永远是「--」。现在以命名信号为准，并保留别名字段兼容不同车型。
         val batteryVoltageRaw = pick(st, "batteryVoltage", "1177", "chargeVoltage", "bmsVoltage")
         val batteryCurrentRaw = pick(st, "batteryCurrent", "1178", "chargeCurrent", "bmsCurrent")
+        // 位置只解析一次：坐标、来源、稳定起点三者都从这一对值推出来
+        val location = resolveLocation(st)
         return CarStatus(
             soc = VehicleStatusMapper.soc(st),
             range = range,
@@ -1129,9 +1160,11 @@ class AppRuntime(context: Context) {
             locked = VehicleSignals.locked(st),
             acOn = parseAcOn(st),
             tires = parseTires(st),
-            latitude = parseLocation(st).first,
-            longitude = parseLocation(st).second,
-            locationHint = locationHint(st),
+            latitude = location.latitude,
+            longitude = location.longitude,
+            locationHint = location.hint,
+            locationSeenAt = location.seenAt,
+            locationSource = location.source,
             acTargetTemp = acSetting["temperature"],
             acWindLevel = acSetting["windlevel"],
             acCircle = acSetting["circle"]?.let {
@@ -1400,28 +1433,95 @@ class AppRuntime(context: Context) {
             ?.removeSuffix("%")
             ?.toDoubleOrNull()
 
-    /** 车辆经纬度（优先命名信号，其次 3724/3725，最后 2/3；见 [VehicleLocationDomain]）。 */
-    private fun parseLocation(st: JSONObject): Pair<Double?, Double?> {
+    /** 一帧车况里与「车停在哪」有关的全部结论。 */
+    private data class ResolvedLocation(
+        val latitude: Double?,
+        val longitude: Double?,
+        /** 取不到时的一句话原因（debug 用）。 */
+        val hint: String?,
+        /** 这条坐标从什么时候起没变过；坐标无效时为 0。 */
+        val seenAt: Long,
+        /** 实际用了哪一对信号键（debug 用）。 */
+        val source: String?,
+    )
+
+    /**
+     * 车辆经纬度（优先命名信号，其次 3724/3725，最后 2/3；见 [VehicleLocationDomain]）。
+     *
+     * 这里比 [VehicleLocationDomain.selectFromDecodedOrRaw] 多走一步：**跳过解不出坐标的那一对**。
+     * 报文里 `3724`/`3725` 与 `2`/`3` 同时存在、而前者是 0 或空串时（车机刚唤醒常见），
+     * 旧逻辑只看「键在不在」，于是把一对 0 认成坐标，真坐标反而被挡住。
+     */
+    private fun resolveLocation(st: JSONObject): ResolvedLocation {
         val values = HashMap<String, Any?>()
         val keys = st.keys()
         while (keys.hasNext()) {
             val k = keys.next()
             values[k] = st.opt(k)
         }
-        val pair = VehicleLocationDomain.selectFromDecodedOrRaw(values).pair
-        return (pair.latitude?.toString()?.toDoubleOrNull()) to
-            (pair.longitude?.toString()?.toDoubleOrNull())
+        val selected = VehicleLocationDomain.selectUsable(values)
+        val rawLatitude = selected.pair.latitude?.toString()?.toDoubleOrNull()
+        val rawLongitude = selected.pair.longitude?.toString()?.toDoubleOrNull()
+        val valid = VehicleLocationRules.isValid(rawLatitude, rawLongitude)
+        // 纠偏开关（默认关）：车端坐标到底是不是 GCJ-02 没有抓包证据，
+        // 万一它其实是 GPS 原始的 WGS-84，整张图会偏几百米 —— 这时打开开关，
+        // 后面地图、地址、导航目的地全都用换算后的坐标（见 [ChinaCoordinate]）
+        val shifted = if (valid && CoordinateShiftPrefs.isEnabled(appContext)) {
+            ChinaCoordinate.wgs84ToGcj02(rawLatitude!!, rawLongitude!!)
+        } else {
+            null
+        }
+        return ResolvedLocation(
+            latitude = shifted?.first ?: rawLatitude,
+            longitude = shifted?.second ?: rawLongitude,
+            hint = VehicleLocationDiagnostics.describe(values),
+            // 锚点用**原始**坐标推进：开关一开一关不该让「这条位置多久没变过」重新计时
+            seenAt = if (valid) {
+                trackLocationAnchor(rawLatitude!!, rawLongitude!!, System.currentTimeMillis())
+            } else {
+                0L
+            },
+            source = if (valid) VehicleLocationDiagnostics.describeSource(values) else null,
+        )
     }
 
-    /** 「位置取不到」的原因（仅供 debug 构建显示，正常有坐标时为 null）。 */
-    private fun locationHint(st: JSONObject): String? {
-        val values = HashMap<String, Any?>()
-        val keys = st.keys()
-        while (keys.hasNext()) {
-            val k = keys.next()
-            values[k] = st.opt(k)
+    /** 车端坐标是否按「WGS-84 当成 GCJ-02」来纠偏（见 [ChinaCoordinate]）。 */
+    fun coordinateShiftEnabled(): Boolean = CoordinateShiftPrefs.isEnabled(appContext)
+
+    fun setCoordinateShiftEnabled(enabled: Boolean) {
+        CoordinateShiftPrefs.setEnabled(appContext, enabled)
+        // 缓存里的地图是按旧坐标画的，留着会让人以为开关没生效：
+        // 位置缓存一清，下次进页面必然重拉
+        runCatching { VehicleLocationStore.clear(appContext) }
+    }
+
+    // ---- 位置的「稳定起点」----
+    // 坐标本身没有时间戳，只有「什么时候变过」是可观测的（见 [LocationAnchorRule]）。
+    // 内存里持有当前锚点，只在起点变化时落盘：车在跑时每次刷新都写一次 prefs 太吵，
+    // 而且写进去的值每次都一样。
+    private var locationAnchor: LocationAnchor? = null
+    private var locationAnchorLoaded = false
+
+    /** 推进锚点并返回「这条坐标从什么时候起没变过」。 */
+    private fun trackLocationAnchor(latitude: Double, longitude: Double, now: Long): Long {
+        if (!locationAnchorLoaded) {
+            locationAnchor = VehicleLocationAnchorStore.load(appContext)
+            locationAnchorLoaded = true
         }
-        return VehicleLocationDiagnostics.describe(values)
+        val previous = locationAnchor
+        val next = LocationAnchorRule.next(previous, latitude, longitude, now) ?: return 0L
+        if (previous == null || next.since != previous.since) {
+            VehicleLocationAnchorStore.save(appContext, next)
+        }
+        locationAnchor = next
+        return next.since
+    }
+
+    /** 换车 / 退出登录：锚点跟着一起清，否则新车的第一个位置会继承上一辆车的时间。 */
+    private fun resetLocationAnchor() {
+        locationAnchor = null
+        locationAnchorLoaded = true
+        VehicleLocationAnchorStore.save(appContext, null)
     }
 
     /**

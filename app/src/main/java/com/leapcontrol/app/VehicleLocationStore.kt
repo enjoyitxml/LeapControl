@@ -22,6 +22,13 @@ data class VehiclePlace(
     val longitude: Double,
     val reportedAt: Long,
     val address: String? = null,
+    /**
+     * 这条坐标**从什么时候起没变过**（[LocationAnchor] 的 since）。
+     *
+     * 和 [reportedAt]（我们拉取的时刻）分开存：断网重进首页时，显示的必须是
+     * 「这条位置本身有多旧」，而不是「我上次问云端是什么时候」。0 表示不知道。
+     */
+    val seenAt: Long = 0L,
     /** 磁盘上是否已经有这张图（只看文件在不在，不预先解码，避免组合期做 IO）。 */
     val hasThumb: Boolean = false,
     val hasFull: Boolean = false,
@@ -98,6 +105,116 @@ object VehicleLocationRules {
     /** 拿不到中文地址时的兜底：直接给坐标，至少能拿去别处搜。 */
     fun coordinateText(latitude: Double, longitude: Double): String =
         String.format(Locale.US, "%.5f, %.5f", latitude, longitude)
+}
+
+/**
+ * 「这条坐标是从什么时候起就是这个值」。
+ *
+ * ## 为什么需要它
+ * 车况报文里的经纬度**没有自己的时间戳**，而 [_lastUpdated][com.leapcontrol.app.ui.AppRuntime]
+ * 是**我们拉取的时刻**。于是不管车停在原地三小时还是三天，只要 App 刷新一次车况，
+ * 界面就写「更新于 刚刚」—— 这是**假新鲜**：用户看到的是一个说得斩钉截铁、
+ * 但其实只表示「我刚问过云端」的时间。
+ *
+ * 能确定的事实只有一个：**这组数字从什么时候起没变过**。所以这里按坐标值判断
+ * 稳定起点：值没变（GPS 抖动不算变）就一直沿用它，值变了才记成现在。
+ * 车真的在跑时坐标每次刷新都变，时间照样是「刚刚」；车停着不动，时间就会一直往回长，
+ * 长到「3 小时前」「1 天前」—— 那正是该怀疑这个位置的时候。
+ */
+data class LocationAnchor(
+    val latitude: Double,
+    val longitude: Double,
+    /** 这条坐标第一次被看到的时刻（毫秒）。 */
+    val since: Long,
+)
+
+/** [LocationAnchor] 的推进规则（纯逻辑，可单测）。 */
+object LocationAnchorRule {
+    /**
+     * 多大的位移还算「没动」：50 米。
+     *
+     * 取 50 而不取 0：车辆定位只要重新定一次位就会漂几米到几十米，
+     * 按「完全相等」判断会让时间每漂一次就归零，等于没修。
+     * 也不取 100（和 [VehicleLocationRules.sameSpot] 一致）：那里是「算不算同一个停车点」，
+     * 这里是「位置有没有真的动过」，标准该更严一点。
+     */
+    const val SAME_POSITION_KM = 0.05
+
+    /**
+     * 用这一帧的坐标推进锚点。
+     *
+     * 坐标无效（null / 0,0 / 越界）时**原样返回旧锚点**：这一帧没报位置，
+     * 不代表车动了，不能因此把「几小时前」重置成「刚刚」。
+     */
+    fun next(previous: LocationAnchor?, latitude: Double?, longitude: Double?, now: Long): LocationAnchor? {
+        if (!VehicleLocationRules.isValid(latitude, longitude)) return previous
+        val lat = latitude!!
+        val lng = longitude!!
+        if (previous == null) return LocationAnchor(lat, lng, now)
+        val moved = VehicleLocationRules.distanceKm(previous.latitude, previous.longitude, lat, lng)
+        return if (moved <= SAME_POSITION_KM) {
+            // 位置只挪了几米：起点不变，但要跟着更新坐标本身（下次比较用新坐标）
+            previous.copy(latitude = lat, longitude = lng)
+        } else {
+            LocationAnchor(lat, lng, now)
+        }
+    }
+}
+
+/**
+ * 坐标纠偏开关的存储（WGS-84 → GCJ-02，见 [ChinaCoordinate]）。
+ *
+ * 和锚点放在同一个 prefs 里：两者都是「位置这件事」的本地设置，
+ * 退出登录 / 换车时由 [VehicleLocationStore.clear] 一起收拾才不会漏。
+ */
+object CoordinateShiftPrefs {
+    private const val PREFS = "leapcontrol_location"
+    private const val KEY_WGS_TO_GCJ = "shift_wgs_to_gcj"
+
+    fun isEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_WGS_TO_GCJ, false)
+
+    fun setEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_WGS_TO_GCJ, enabled)
+            .apply()
+    }
+}
+
+/**
+ * 锚点的落盘（单独一个 prefs，不塞进 `last.json`）。
+ *
+ * 分开存是有意的：`last.json` 由位置卡在「取图成功」时写，锚点由车况每次刷新时写，
+ * 两个节奏完全不同 —— 挤进同一个文件必然互相覆盖（要么地址被抹掉，要么时间被重置）。
+ */
+object VehicleLocationAnchorStore {
+    private const val PREFS = "leapcontrol_location"
+    private const val KEY_LAT = "anchor_lat"
+    private const val KEY_LNG = "anchor_lng"
+    private const val KEY_SINCE = "anchor_since"
+
+    fun load(context: Context): LocationAnchor? {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val latitude = prefs.getFloat(KEY_LAT, Float.NaN).toDouble()
+        val longitude = prefs.getFloat(KEY_LNG, Float.NaN).toDouble()
+        val since = prefs.getLong(KEY_SINCE, 0L)
+        if (!VehicleLocationRules.isValid(latitude, longitude) || since <= 0L) return null
+        return LocationAnchor(latitude, longitude, since)
+    }
+
+    fun save(context: Context, anchor: LocationAnchor?) {
+        val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        if (anchor == null) {
+            editor.clear().apply()
+            return
+        }
+        editor
+            // 坐标按 float 存：精度约 1 米，用来判「有没有动过」足够，也不必担心 Double 序列化
+            .putFloat(KEY_LAT, anchor.latitude.toFloat())
+            .putFloat(KEY_LNG, anchor.longitude.toFloat())
+            .putLong(KEY_SINCE, anchor.since)
+            .apply()
+    }
 }
 
 /**
@@ -182,6 +299,8 @@ object VehicleLocationStore {
             longitude = longitude,
             reportedAt = json.optLong("at", 0L),
             address = json.optString("address").takeIf { it.isNotBlank() },
+            // 老缓存没有这个键：退回 at（那时它同时也被当成位置时间用）
+            seenAt = json.optLong("seen", 0L).takeIf { it > 0L } ?: json.optLong("at", 0L),
             hasThumb = mapFile(context, full = false, dark = false).length() > 0L,
             hasFull = mapFile(context, full = true, dark = false).length() > 0L,
         )
@@ -202,6 +321,8 @@ object VehicleLocationStore {
         thumb: Bitmap? = null,
         full: Bitmap? = null,
         dark: Boolean = false,
+        /** 这条坐标从什么时候起没变过（[LocationAnchor.since]）；0 = 不知道。 */
+        seenAt: Long = 0L,
     ) {
         if (!VehicleLocationRules.isValid(latitude, longitude)) return
         runCatching {
@@ -211,6 +332,7 @@ object VehicleLocationStore {
                 put("lat", latitude)
                 put("lng", longitude)
                 put("at", reportedAt)
+                put("seen", seenAt)
                 put("address", address.orEmpty())
             }
             val target = metaFile(context)

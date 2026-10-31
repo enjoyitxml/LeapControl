@@ -104,8 +104,15 @@ fun FindCarScreen(
     // 刷新按钮除了重查车况，还要能把「上次没取到的地址 / 地图」再请求一次：
     // 只重查车况的话坐标没变，加载逻辑不会重跑，按钮看着像没生效
     var retry by remember { mutableStateOf(0) }
+    val seenAt = status?.locationSeenAt ?: 0L
     val ui = rememberVehiclePlace(
-        runtime, latitude, longitude, reportedAt, full = true, retry = retry,
+        runtime = runtime,
+        latitude = latitude,
+        longitude = longitude,
+        reportedAt = reportedAt,
+        seenAt = seenAt,
+        full = true,
+        retry = retry,
     )
     val place = ui as? VehiclePlaceUi.Ready
     // 展示 / 导航用坐标：**车况优先**，没有才退回缓存或这次取图时用的那个点。
@@ -113,7 +120,8 @@ fun FindCarScreen(
     // 但导航要走当前坐标 —— 图上那个点是「拍下这张图时的车」。
     val shownLat = latitude ?: place?.latitude
     val shownLng = longitude ?: place?.longitude
-    val shownAt = place?.cachedAt ?: reportedAt
+    // 位置的年龄看「这条坐标从什么时候起没变过」，不看我们拉取车况的时刻（见 [LocationAnchorRule]）
+    val shownAt = place?.cachedAt ?: seenAt.takeIf { it > 0L } ?: reportedAt
     val fromCache = place?.cachedAt != null
     val canNavigate = VehicleLocationRules.isValid(shownLat, shownLng)
     val coordinate = if (VehicleLocationRules.isValid(shownLat, shownLng)) {
@@ -121,15 +129,22 @@ fun FindCarScreen(
     } else {
         null
     }
-    val age = VehicleLocationRules.ageText(
-        VehicleLocationRules.ageMs(shownAt, System.currentTimeMillis()),
-    )
+    val ageMs = VehicleLocationRules.ageMs(shownAt, System.currentTimeMillis())
+    val age = VehicleLocationRules.ageText(ageMs)
+    // 半小时以上没变过就明说一句「这是旧位置」：车端定位在进地库后就丢了，
+    // 最后一条通常停在入口或地库外的马路上 —— 不提醒的话，用户会以为它就停在图上那一点
+    val staleNotice = ageMs != null && ageMs >= 30 * 60 * 1000L
 
     var refreshing by remember { mutableStateOf(false) }
     // 目的地搜索弹层挂在这一页上：用户在这一页想「把地址发过去」时不必退回首页
     var showDestination by remember { mutableStateOf(false) }
     // 出行方式弹层：和首页卡同一个，步行排在第一位（见 [NavModeDialog]）
     var navPicker by remember { mutableStateOf(false) }
+    // 点导航时先取一次最新车况，期间把按钮改成「正在取最新位置」并挡住重复点击
+    var navPreparing by remember { mutableStateOf(false) }
+    // 坐标纠偏开关：整页刷新后要跟着重组，所以自己持一份，不每次去读 prefs
+    var shiftOn by remember { mutableStateOf(runtime.coordinateShiftEnabled()) }
+    var showShift by remember { mutableStateOf(false) }
 
     // 停车位照片：和首页卡共用同一套存储与拍照流程，这一页只是把图放大到 1400 好认
     val photo = rememberParkingPhoto(onMessage, thumbSize = 1400)
@@ -243,6 +258,20 @@ fun FindCarScreen(
                 fontSize = 12.sp,
             )
 
+            // 位置是「很久没变」的时候必须说清为什么：车端定位一进地库就丢，
+            // 云端留着的是进库前最后一次定位 —— 那个点常在入口或库外的路上。
+            // 不说这一句，用户会认定「定位不准」；说了，才知道该看下面的车位照片。
+            if (staleNotice) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "这是${age ?: "较久前"}的位置，车机之后没再上报过。" +
+                        "进地库后卫星信号会中断，这个点通常停在入口或马路上，请配合下面的停车位照片确认。",
+                    color = C.textSecondary.copy(alpha = 0.9f),
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+
             if (coordinate != null) {
                 Spacer(Modifier.height(12.dp))
                 Row(
@@ -281,13 +310,22 @@ fun FindCarScreen(
         ) {
             if (canNavigate) {
                 BigAction(
-                    text = "导航到车辆",
+                    text = if (navPreparing) "正在取最新位置" else "导航到车辆",
                     primary = true,
                     modifier = Modifier.weight(1f),
                     icon = { Icon(Icons.Filled.Navigation, contentDescription = null, tint = C.accent, modifier = Modifier.size(17.dp)) },
                 ) {
-                    // 走到车位还是开过去，先问一句。开车去「找车」在楼下这个位置上说不通
-                    navPicker = true
+                    if (navPreparing) return@BigAction
+                    // 走到车位还是开过去，先问一句。开车去「找车」在楼下这个位置上说不通。
+                    // 问之前先查一次车况：车可能是几小时前停的，手上这份坐标是那时拉到的
+                    navPreparing = true
+                    scope.launch {
+                        runCatching { runtime.refreshStatus() }
+                        // 顺手把地址/地图也重取一次：位置真变了，那张图就是旧地方
+                        retry += 1
+                        navPreparing = false
+                        navPicker = true
+                    }
                 }
             }
             BigAction(
@@ -321,13 +359,35 @@ fun FindCarScreen(
             lineHeight = 16.sp,
         )
 
+        // 出口：整张图整体偏几百米时（坐标系对不上），这是唯一能自救的地方。
+        // 藏在普通文案下面而不是做成显眼按钮 —— 绝大多数人用不到它，
+        // 但真碰上的人在这里能找到，而且改完当场就能看出有没有用。
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = if (shiftOn) "坐标纠偏：已开启 · 点此调整" else "整张图都偏了几百米？点这里纠偏",
+            color = C.accent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { showShift = true }
+                .padding(vertical = 6.dp, horizontal = 2.dp),
+        )
+
         // debug 构建才显示：万一这台车的位置键不在已知的 2/3、3724/3725 里，
-        // 这一行能直接说明是「报文没信号」「值不是数字」还是「报了 0,0」。
+        // 这一行能直接说明是「报文没信号」「值不是数字」还是「报了 0,0」；
+        // 有坐标时则报出**用的是哪一对键**和位置的实际年龄 —— 「定位不准」这类反馈，
+        // 一张截图就能分清是坐标系（整张图整体偏）还是位置太旧（时间很长）。
         // release 版本不打扰用户 —— 他们看这行没有意义，也没法处理。
-        if (BuildConfig.DEBUG && ui == VehiclePlaceUi.NoLocation) {
+        if (BuildConfig.DEBUG && ui != VehiclePlaceUi.Loading) {
+            val diagnostic = if (ui == VehiclePlaceUi.NoLocation || coordinate == null) {
+                status?.locationHint ?: "车况报文里没有位置信息"
+            } else {
+                "位置键 ${status?.locationSource ?: "未知"} · ${age ?: "时间未知"} · 纠偏${if (shiftOn) "开" else "关"}"
+            }
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "诊断：${status?.locationHint ?: "车况报文里没有位置信息"}",
+                text = "诊断：$diagnostic",
                 color = C.textSecondary.copy(alpha = 0.75f),
                 fontSize = 10.5.sp,
                 lineHeight = 15.sp,
@@ -364,6 +424,31 @@ fun FindCarScreen(
                     if (!ok) {
                         Toast.makeText(context, "没有找到可用的地图应用", Toast.LENGTH_SHORT).show()
                     }
+                }
+            },
+        )
+    }
+
+    // 坐标纠偏：改完必须重拉，否则地图还是按旧坐标画的，用户会以为开关没生效
+    if (showShift) {
+        CoordinateShiftDialog(
+            enabled = shiftOn,
+            onDismiss = { showShift = false },
+            onPick = { on ->
+                showShift = false
+                if (on == shiftOn) return@CoordinateShiftDialog
+                shiftOn = on
+                runtime.setCoordinateShiftEnabled(on)
+                refreshing = true
+                scope.launch {
+                    runCatching { runtime.refreshStatus() }
+                    retry += 1
+                    refreshing = false
+                    Toast.makeText(
+                        context,
+                        if (on) "已按换算后的坐标重新获取" else "已恢复原始坐标",
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 }
             },
         )

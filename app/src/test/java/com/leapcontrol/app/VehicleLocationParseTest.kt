@@ -111,6 +111,56 @@ class VehicleLocationParseTest {
     }
 
     @Test
+    fun `命名键是 0 0 时不该挡住 2 与 3 的真坐标`() {
+        val raw = JSONObject()
+            .put("3724", "0")
+            .put("3725", "0")
+            .put("2", "120.123456")
+            .put("3", "30.123456")
+
+        // 解码后 3724/3725 会变成 latitude/longitude，旧逻辑只看「键在不在」就认了，
+        // 结果一对 0 把真坐标挡在外面 —— 现在要跳过它
+        val values = SignalTable.decode(raw).toValues()
+        val pair = VehicleLocationDomain.selectUsable(values).pair
+        assertEquals(30.123456, pair.latitude.toString().toDouble(), 1e-9)
+        assertEquals(120.123456, pair.longitude.toString().toDouble(), 1e-9)
+    }
+
+    @Test
+    fun `命名键是空串时退到 3725 与 3724`() {
+        val values = mapOf("latitude" to "", "longitude" to "", "3725" to "30.5", "3724" to "120.5")
+        val pair = VehicleLocationDomain.selectUsable(values).pair
+
+        assertEquals(30.5, pair.latitude.toString().toDouble(), 1e-9)
+        assertEquals(120.5, pair.longitude.toString().toDouble(), 1e-9)
+    }
+
+    @Test
+    fun `三对候选全坏时保留原值 好让诊断说清是 0 0`() {
+        val values = mapOf("latitude" to "0", "longitude" to "0")
+        val pair = VehicleLocationDomain.selectUsable(values).pair
+
+        assertEquals("0", pair.latitude)
+        assertEquals(
+            "上报的坐标是 0,0（车机还没定位或已休眠）",
+            VehicleLocationDiagnostics.describe(values),
+        )
+    }
+
+    @Test
+    fun `诊断能说清这次用的是哪一对键`() {
+        assertEquals(
+            "命名键（3724/3725 解码）",
+            VehicleLocationDiagnostics.describeSource(mapOf("latitude" to 30.5, "longitude" to 120.5)),
+        )
+        assertEquals(
+            "信号 3/2",
+            VehicleLocationDiagnostics.describeSource(mapOf("3" to "30.5", "2" to "120.5")),
+        )
+        assertNull(VehicleLocationDiagnostics.describeSource(mapOf("soc" to "80")))
+    }
+
+    @Test
     fun `诊断区分没信号 非数字 零坐标三种情况`() {
         assertEquals(
             "报文里没有位置信号（2/3、3724/3725 都没出现）",

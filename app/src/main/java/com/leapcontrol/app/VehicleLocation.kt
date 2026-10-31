@@ -191,22 +191,67 @@ object VehicleLocationDomain {
      * 「车机还没上报过位置」，而车其实一直在正常上报。
      */
     fun selectFromDecodedOrRaw(values: Map<String, Any?>): SelectedCoordinatePair {
-        val named = selectCoordinatePair(values)
-        if (named.pair.hasAnyValue()) return named
+        val candidates = candidatePairs(values)
+        return candidates.firstOrNull { it.pair.hasAnyValue() } ?: candidates.last()
+    }
 
-        val rawPrimary = CoordinatePair(
-            latitude = values[PRIMARY_LATITUDE_SIGNAL],
-            longitude = values[PRIMARY_LONGITUDE_SIGNAL]
-        )
-        if (rawPrimary.hasAnyValue()) {
-            return SelectedCoordinatePair(rawPrimary, VehicleLocationSource.PRIMARY)
-        }
+    /**
+     * 业务取数用的版本：**跳过这一对解不出合法坐标的**，而不是「键存在就认」。
+     *
+     * 与 [selectFromDecodedOrRaw] 的差别只在「值坏掉」这一种情况：
+     *  - 报文里同时有 `3724`/`3725` 与 `2`/`3`，而前者是 `0` / 空串（车机刚唤醒、
+     *    或是老网关残留的占位值）时，旧逻辑看到「键非空」就直接认了，
+     *    于是一对 0 把它们按在地上 —— 明明 `2`/`3` 有真坐标，界面却说没有位置；
+     *  - 反过来，如果两对都是真坐标但差得较远（一台车不可能同时停两个地方），
+     *    优先取位置更新的那一对是猜不出来的，所以维持「命名键优先」的顺序不变，
+     *    只把「选了也是废的」那一对让过去。
+     *
+     * 全部候选都不可用时退回 [selectFromDecodedOrRaw] 的结果 —— 让诊断那句
+     * 「上报的坐标是 0,0」还能照常说出口，不要把原因也一起吞掉。
+     */
+    fun selectUsable(values: Map<String, Any?>): SelectedCoordinatePair {
+        val candidates = candidatePairs(values)
+        return candidates.getOrNull(usablePairIndex(values))
+            ?: candidates.firstOrNull { it.pair.hasAnyValue() }
+            ?: candidates.last()
+    }
 
-        val verified = CoordinatePair(
-            latitude = values[VERIFIED_LATITUDE_SIGNAL],
-            longitude = values[VERIFIED_LONGITUDE_SIGNAL]
+    /**
+     * 三档候选里**第一个可用**的序号（0 命名 / 1 3725+3724 / 2 3+2），没有可用的时候是 -1。
+     *
+     * 单独暴露出来是给 debug 诊断用的：报告里要能说清「这一帧到底用了哪一对键」，
+     * 否则「位置不准」这类问题只能靠猜。
+     */
+    fun usablePairIndex(values: Map<String, Any?>): Int {
+        val candidates = candidatePairs(values)
+        return candidates.indexOfFirst { isUsablePair(it.pair) }
+    }
+
+    /** 三档候选，顺序即优先级：命名键 → `3724`/`3725` → `2`/`3`。 */
+    private fun candidatePairs(values: Map<String, Any?>): List<SelectedCoordinatePair> = listOf(
+        selectCoordinatePair(values),
+        SelectedCoordinatePair(
+            CoordinatePair(
+                latitude = values[PRIMARY_LATITUDE_SIGNAL],
+                longitude = values[PRIMARY_LONGITUDE_SIGNAL]
+            ),
+            VehicleLocationSource.PRIMARY
+        ),
+        SelectedCoordinatePair(
+            CoordinatePair(
+                latitude = values[VERIFIED_LATITUDE_SIGNAL],
+                longitude = values[VERIFIED_LONGITUDE_SIGNAL]
+            ),
+            VehicleLocationSource.VERIFIED_SIGNAL_MAP
         )
-        return SelectedCoordinatePair(verified, VehicleLocationSource.VERIFIED_SIGNAL_MAP)
+    )
+
+    /** 这一对坐标能不能直接拿去用（两个值都要解得出、不是 0,0、不越界）。 */
+    private fun isUsablePair(pair: CoordinatePair): Boolean {
+        val latitude = parseCoordinate(pair.latitude) ?: return false
+        val longitude = parseCoordinate(pair.longitude) ?: return false
+        if (latitude == 0.0 && longitude == 0.0) return false
+        return latitude in -90.0..90.0 && longitude in -180.0..180.0
     }
 
     fun validate(
@@ -371,7 +416,7 @@ object VehicleLocationDiagnostics {
     fun describe(values: Map<String, Any?>): String? {
         val seen = CANDIDATE_KEYS.filter { values[it] != null }
         if (seen.isEmpty()) return "报文里没有位置信号（2/3、3724/3725 都没出现）"
-        val pair = VehicleLocationDomain.selectFromDecodedOrRaw(values).pair
+        val pair = VehicleLocationDomain.selectUsable(values).pair
         val latitude = parse(pair.latitude)
         val longitude = parse(pair.longitude)
         if (latitude == null || longitude == null) {
@@ -383,6 +428,23 @@ object VehicleLocationDiagnostics {
             return "坐标越界：$latitude, $longitude"
         }
         return null
+    }
+
+    /**
+     * 这次实际用的是哪一对键 —— **只给 debug 构建看**。
+     *
+     * 有两套键这件事本身就是「位置怎么不对」最可疑的地方：如果某台车同时报
+     * `3725`/`3724` 和 `3`/`2` 而两个值差得很远，说明其中一对是旧的，
+     * 一眼看出用的是哪一对，才知道该不该调整优先级。
+     */
+    fun describeSource(values: Map<String, Any?>): String? {
+        val index = VehicleLocationDomain.usablePairIndex(values)
+        if (index < 0) return null
+        return when (index) {
+            0 -> "命名键（3724/3725 解码）"
+            1 -> "信号 3725/3724"
+            else -> "信号 3/2"
+        }
     }
 
     private fun parse(value: Any?): Double? = when (value) {

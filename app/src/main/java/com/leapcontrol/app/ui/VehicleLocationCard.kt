@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -58,6 +59,7 @@ import com.leapcontrol.app.R
 import com.leapcontrol.app.VehicleLocationRules
 import com.leapcontrol.app.VehicleLocationStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -154,7 +156,16 @@ fun VehicleLocationCard(
     val context = LocalContext.current
     val latitude = status?.latitude
     val longitude = status?.longitude
-    val ui = rememberVehiclePlace(runtime, latitude, longitude, reportedAt, refreshKey = refreshKey)
+    // 这条坐标从什么时候起没变过（见 [LocationAnchorRule]）。没有坐标时是 0
+    val seenAt = status?.locationSeenAt ?: 0L
+    val ui = rememberVehiclePlace(
+        runtime = runtime,
+        latitude = latitude,
+        longitude = longitude,
+        reportedAt = reportedAt,
+        seenAt = seenAt,
+        refreshKey = refreshKey,
+    )
     val place = ui as? VehiclePlaceUi.Ready
 
     // 展示用坐标：**车况优先**，没有才退回缓存里那份。
@@ -163,7 +174,10 @@ fun VehicleLocationCard(
     // （[VehiclePlaceUi.Ready.cachedAt] 非 null 时车况里本来就没有坐标，只能退回缓存）
     val shownLat = latitude ?: place?.latitude
     val shownLng = longitude ?: place?.longitude
-    val shownAt = place?.cachedAt ?: reportedAt
+    // 「更新于 x 前」说的是**这条位置本身**的年龄，不是我们拉取车况的时刻。
+    // 车况里的坐标没有自己的时间戳，所以只能用「从什么时候起没变过」来推；
+    // 实在推不出来（新装、刚换车）才退回报文时间，至少不比原来更假
+    val shownAt = place?.cachedAt ?: seenAt.takeIf { it > 0L } ?: reportedAt
 
     // 坐标是否可用：不可用时只禁用「导航到车辆」，
     // 「发送目的地」与车况无关（它只查高德 + 调起高德 App），没定位也必须能点
@@ -175,6 +189,9 @@ fun VehicleLocationCard(
 
     // 出行方式弹层：「导航到车辆」的第一步
     var navPicker by remember { mutableStateOf(false) }
+    // 正在为导航取最新车况：按钮按下去到弹出层之间有一瞬，防重复点
+    var navPreparing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     Box(
         modifier = Modifier
@@ -262,8 +279,9 @@ fun VehicleLocationCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         CardAction(
-                            text = "导航到车辆",
-                            enabled = canNavigate,
+                            // 卡片只有约 100dp 宽，长句会被裁掉 —— 这里只给两个字
+                            text = if (navPreparing) "定位中" else "导航到车辆",
+                            enabled = canNavigate && !navPreparing,
                             modifier = Modifier.weight(1f),
                             icon = { tint ->
                                 Icon(
@@ -276,7 +294,15 @@ fun VehicleLocationCard(
                         ) {
                             // 先问「走去还是开过去」：车就停在几百米外的车位上，
                             // 直接跳驾车导航是在教用户开车去找车（见 [NavModeDialog]）
-                            navPicker = true
+                            // 但在问之前**先查一次车况**：车可能是几小时前停的，
+                            // 手上这份坐标是那时拉到的，导航到旧点等于把人带错地方。
+                            // 这一步是用户主动点的，不违反「不频繁拉取」的约定
+                            navPreparing = true
+                            scope.launch {
+                                runCatching { runtime.refreshStatus() }
+                                navPreparing = false
+                                navPicker = true
+                            }
                         }
                         CardAction(
                             text = "发送目的地",
@@ -499,6 +525,13 @@ internal fun rememberVehiclePlace(
     latitude: Double?,
     longitude: Double?,
     reportedAt: Long,
+    /**
+     * 这条坐标从什么时候起没变过（[com.leapcontrol.app.LocationAnchorRule] 的结论）。
+     *
+     * **不能当 produceState 的 key**：它只在坐标真的变了时才变，加了也不会多跑一次请求；
+     * 但它必须跟着写进缓存，否则断网重进首页时「更新于」会退回成「我们上次拉取的时刻」。
+     */
+    seenAt: Long = 0L,
     /** true = 找车页要的大图；false = 首页卡缩略图。两者各自独立缓存。 */
     full: Boolean = false,
     /**
@@ -511,6 +544,8 @@ internal fun rememberVehiclePlace(
 ): VehiclePlaceUi {
     val context = LocalContext.current
     val latestReportedAt by rememberUpdatedState(reportedAt)
+    // 同 reportedAt：它不参与重启判断，但落盘时要用**最新**那个（车可能刚挪了位置）
+    val latestSeenAt by rememberUpdatedState(seenAt)
     val hasKey = runtime.hasAmapKey()
     // 深色主题下要一份翻过配色的图（高德静态图没有夜间样式，见 [MapDarkTint]）。
     // 直接读 LocalAppColors 而不是加参数：所有调用点都已经被 ProvideAppColors 包住，
@@ -544,7 +579,8 @@ internal fun rememberVehiclePlace(
                     address = cached.address,
                     latitude = cached.latitude,
                     longitude = cached.longitude,
-                    cachedAt = cached.reportedAt,
+                    // 缓存里如果记着「这条坐标从什么时候起没变」，用它；没有才退回落盘时刻
+                    cachedAt = cached.seenAt.takeIf { it > 0L } ?: cached.reportedAt,
                 )
             } else {
                 VehiclePlaceUi.NoLocation
@@ -607,6 +643,7 @@ internal fun rememberVehiclePlace(
                 thumb = if (full) null else fetched,
                 full = if (full) fetched else null,
                 dark = dark,
+                seenAt = latestSeenAt,
             )
         }
 
