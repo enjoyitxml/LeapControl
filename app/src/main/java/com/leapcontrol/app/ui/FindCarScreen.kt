@@ -420,7 +420,8 @@ fun FindCarScreen(
                 val lat = shownLat
                 val lng = shownLng
                 if (lat != null && lng != null) {
-                    val ok = MapIntents.navigate(context, lat, lng, place?.address ?: "车辆位置", mode)
+                    // 同首页卡片：坐标型目的地不能传地址当 dname，会被高德按 POI 吸附
+                    val ok = MapIntents.navigate(context, lat, lng, mode = mode)
                     if (!ok) {
                         Toast.makeText(context, "没有找到可用的地图应用", Toast.LENGTH_SHORT).show()
                     }

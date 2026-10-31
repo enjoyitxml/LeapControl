@@ -348,7 +348,9 @@ fun VehicleLocationCard(
                 val lat = shownLat
                 val lng = shownLng
                 if (lat != null && lng != null) {
-                    val ok = MapIntents.navigate(context, lat, lng, place?.address ?: "车辆位置", mode)
+                    // 目的地是坐标、不是 POI：名字用默认的「车辆位置」，
+                    // 传地址（…万科金域传奇）会被高德按 POI 检索后把钉子挪到小区中心
+                    val ok = MapIntents.navigate(context, lat, lng, mode = mode)
                     if (!ok) {
                         Toast.makeText(context, "没有找到可用的地图应用", Toast.LENGTH_SHORT).show()
                     }
