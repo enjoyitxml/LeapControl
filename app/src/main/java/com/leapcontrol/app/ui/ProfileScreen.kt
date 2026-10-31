@@ -102,6 +102,8 @@ fun ProfileScreen(
     var updateDownloading by remember { mutableStateOf(false) }
     var updateProgress by remember { mutableStateOf<Float?>(null) }
     var updateDownloadError by remember { mutableStateOf<String?>(null) }
+    // 更新频率弹层：入口是「检查更新」那一行右侧的小按钮（原来在设置里，太深了）
+    var showUpdateMode by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         if (AvatarStore.exists(context)) {
@@ -257,17 +259,40 @@ fun ProfileScreen(
 
             // 检查更新：入口开关见 SHOW_UPDATE_CHECK（当前启用）。
             // 点击即查一次最新 Release，查到新版本直接弹下载弹窗。
+            // 右侧那颗「设置更新频率」原来是「设置 → 版本更新」里的一张卡：
+            // 用户嫌更新太频繁时，人正看着这一行，让他在设置里翻三层找开关说不过去。
             if (SHOW_UPDATE_CHECK) {
                 ProfileItem(
                     R.drawable.ic_system_update,
                     "检查更新",
                     desc = when {
                         checkingUpdate -> "正在检查…"
-                        checkFailed -> "检查失败，请检查网络后重试"
-                        updateInfo != null -> "发现新版本 v${updateInfo?.version}，点击下载"
-                        else -> "当前已是最新版本（v${runtime.currentVersion()}）"
+                        checkFailed -> "检查失败，点此重试"
+                        // 副标题一律单行、右侧还要让出「设置更新频率」的位置，
+                        // 所以这里刻意写短：完整版本号只在「已是最新」时出现
+                        updateInfo != null -> "可更新到 v${updateInfo?.version}"
+                        else -> "已是最新 v${runtime.currentVersion()}"
                     },
                     showDot = updateInfo != null,
+                    trailing = {
+                        // 副操作：只换检测频率，不打断这一行的「手动检查」语义。
+                        // 自带 clickable，点它不会穿透去触发整行的检查更新。
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(LocalAppColors.current.chipBg)
+                                .clickable { showUpdateMode = true }
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                        ) {
+                            Text(
+                                "设置更新频率",
+                                color = LocalAppColors.current.accent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                            )
+                        }
+                    },
                 ) {
                     if (!checkingUpdate) {
                         scope.launch {
@@ -425,6 +450,15 @@ fun ProfileScreen(
                 },
             )
         }
+
+        // ---- 更新频率弹层（「检查更新」那行右侧的小按钮触发）----
+        if (showUpdateMode) {
+            UpdateCheckModeDialog(
+                runtime = runtime,
+                onDismiss = { showUpdateMode = false },
+                onPicked = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() },
+            )
+        }
     }
 }
 
@@ -435,6 +469,11 @@ internal fun ProfileItem(
     desc: String,
     /** 标题后跟一个小红点：表示这项有「待处理」的内容（目前只有检查更新用）。 */
     showDot: Boolean = false,
+    /**
+     * 行尾的副操作（在箭头左侧）。自带点击，**不会**冒泡成整行点击 ——
+     * 目前只有「检查更新」用它挂「设置更新频率」。
+     */
+    trailing: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -485,6 +524,12 @@ internal fun ProfileItem(
             )
         }
         Spacer(Modifier.width(6.dp))
+        // 副操作占的是「副标题右侧、箭头左侧」那块空位：竖向上与整行居中，
+        // 不额外撑高这一条（整页七条要在一屏里放下）
+        if (trailing != null) {
+            trailing()
+            Spacer(Modifier.width(6.dp))
+        }
         Icon(
             Icons.Filled.KeyboardArrowRight,
             null,

@@ -710,17 +710,32 @@ class AppRuntime(context: Context) {
         updatePrefs.edit().putString("dismissed_version", version).apply()
     }
 
-    // ---- 自动检测更新的档位（关闭 / 7 天 / 14 天 / 30 天）----
-    // 落盘的是「天数」而不是枚举序号：以后加档位、调顺序都不会把老用户的选择读错。
+    // ---- 自动检测更新的档位（关闭 / 每次启动 / 7 天 / 14 天 / 30 天）----
+    // 落盘的是档位的字符串 key 而不是枚举序号：以后加档位、调顺序都不会把老用户的选择读错。
     // 老用户没有这个键 → 走默认（7 天），与改版前「每次启动都查」相比更省流量，
     // 但绝不会因为读不到设置而彻底不查。
 
-    /** 当前自动检测档位。 */
-    fun updateCheckMode(): UpdateCheckMode =
-        UpdateCheckPolicy.fromDays(updatePrefs.getInt("auto_check_days", UpdateCheckPolicy.DEFAULT.days))
+    /** 当前自动检测档位。首次读会把 0.2.54 的整数键迁移过来。 */
+    fun updateCheckMode(): UpdateCheckMode {
+        updatePrefs.getString(UpdateCheckPolicy.PREF_KEY, null)?.let {
+            return UpdateCheckPolicy.fromKey(it)
+        }
+        // 0.2.54 存的是 "auto_check_days" 整数。那版发布过，不能直接丢掉它的选择。
+        if (updatePrefs.contains(UpdateCheckPolicy.LEGACY_PREF_KEY)) {
+            val migrated = UpdateCheckPolicy.fromDays(
+                updatePrefs.getInt(UpdateCheckPolicy.LEGACY_PREF_KEY, UpdateCheckPolicy.DEFAULT.intervalDays),
+            )
+            updatePrefs.edit()
+                .putString(UpdateCheckPolicy.PREF_KEY, migrated.key)
+                .remove(UpdateCheckPolicy.LEGACY_PREF_KEY)
+                .apply()
+            return migrated
+        }
+        return UpdateCheckPolicy.DEFAULT
+    }
 
     fun setUpdateCheckMode(mode: UpdateCheckMode) {
-        updatePrefs.edit().putInt("auto_check_days", mode.days).apply()
+        updatePrefs.edit().putString(UpdateCheckPolicy.PREF_KEY, mode.key).apply()
     }
 
     /** 上次**成功**自动/手动检测的时间戳；0 = 从未成功检测过。 */
