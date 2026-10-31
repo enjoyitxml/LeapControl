@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  系统备份（Android 11 及以下）只备份零记的数据目录。
+
+  为什么不备份全部：登录凭证、车辆信息都在 SharedPreferences 里，
+  跟着云备份走没有意义（换机要重新登录），还会把令牌复制到别处。
+  只把 journal/ 交出去 —— 那是用户自己记的账，丢了最疼。
+-->
+<full-backup-content>
+    <include domain="file" path="journal" />
+</full-backup-content>

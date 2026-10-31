@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.sp
  *
  * 这里不做「功能清单」，只回答新用户最常问的几件事：车模怎么换、背景怎么换、
  * 怎么和官方 APP 同时登录、快捷控车怎么加、纯电为什么没续航、首页卡片怎么排、
- * 零记是什么。文案尽量给可执行的路径（哪个页面 → 哪个按钮），
+ * 零记是什么、更新提醒太频繁怎么调。文案尽量给可执行的路径（哪个页面 → 哪个按钮），
  * 而不是泛泛的「可在设置中修改」。
  *
  * 图标可以在「个性化 → 首页图标」里关掉，但页面本身保留：
@@ -44,6 +44,10 @@ fun PlaybookScreen(
     journalEnabled: Boolean = true,
 ) {
     val C = LocalAppColors.current
+    // 小节序号由计数器给，不写死数字：零记那一节跟着总开关显隐，
+    // 写死的话关掉零记就会出现「6 → 8」这种断号，看着像少了一节。
+    var sectionNo = 0
+    fun takeNo(): Int = ++sectionNo
 
     Column(
         modifier = Modifier
@@ -65,7 +69,7 @@ fun PlaybookScreen(
         Spacer(Modifier.height(10.dp))
 
         PlaybookSection(
-            no = 1,
+            no = takeNo(),
             title = "如何更换车模",
             body = "点击右上角「个性化」，下拉找到「车模外观」，这里有两个方案：\n\n" +
                 "① 直接改色：软件内置了各色车漆，点一下就能换，立刻生效；\n" +
@@ -78,7 +82,7 @@ fun PlaybookScreen(
         Spacer(Modifier.height(12.dp))
 
         PlaybookSection(
-            no = 2,
+            no = takeNo(),
             title = "自定义背景",
             body = "零控提供了比较丰富的背景自定义：点界面上的小白点可以快速切换主题；" +
                 "也可以在设置里改成「点车模 / 点卡片就换壁纸」。\n\n" +
@@ -93,7 +97,7 @@ fun PlaybookScreen(
         Spacer(Modifier.height(12.dp))
 
         PlaybookSection(
-            no = 3,
+            no = takeNo(),
             title = "零控和官方 APP 同时登录",
             body = "零控走的就是官方接口，所以同一个账号在零控登录之后，官方 APP 那边会被挤下线。\n\n" +
                 "想两边同时在线，需要准备两个手机号：用副卡号注册一个零跑账号，" +
@@ -108,7 +112,7 @@ fun PlaybookScreen(
         Spacer(Modifier.height(12.dp))
 
         PlaybookSection(
-            no = 4,
+            no = takeNo(),
             title = "如何快捷控车",
             body = "下拉手机控制中心，点「编辑」，找到零控的快捷控车按钮添加进去。" +
                 "之后不用打开 App 就能直接控车，而且控车无需密码验证，享受畅快体验。\n\n" +
@@ -119,7 +123,7 @@ fun PlaybookScreen(
         Spacer(Modifier.height(12.dp))
 
         PlaybookSection(
-            no = 5,
+            no = takeNo(),
             title = "纯电为什么显示不了续航",
             body = "个别纯电车型（比如 C01 纯电）没有上报标准的续航字段，" +
                 "零控按默认规则去认，就会认成「--」。\n\n" +
@@ -132,7 +136,7 @@ fun PlaybookScreen(
         Spacer(Modifier.height(12.dp))
 
         PlaybookSection(
-            no = 6,
+            no = takeNo(),
             title = "首页小卡片",
             body = "首页卡片支持自定义排序、任意添加删除：滑到卡片区最下面点「编辑」，" +
                 "长按卡片拖动排序，点卡片右上角的叉删掉，底部的「添加卡片」再挑回来，改完点「完成」。\n\n" +
@@ -144,7 +148,7 @@ fun PlaybookScreen(
             Spacer(Modifier.height(12.dp))
 
             PlaybookSection(
-                no = 7,
+                no = takeNo(),
                 title = "零记",
                 body = "零记是我在原作者版本的基础上加进来的记录功能：" +
                     "可以设定用车目标、记录日常用车成本、打卡去过的城市，也会提醒保养与保险到期。\n\n" +
@@ -153,6 +157,23 @@ fun PlaybookScreen(
                     "可以在「我的 → 支持开发者」里找到我，或者到车友群里说一声。",
             )
         }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 更新频率：放在最后，先在前面把功能都讲完。
+        // 这一条存在的原因很具体 —— 版本迭代快，提醒频繁了容易被当成「骚扰」，
+        // 得让人知道这不是写死的，自己能调。
+        PlaybookSection(
+            no = takeNo(),
+            title = "更新提醒太频繁？",
+            body = "零控的更新包发在 GitHub 官方通道，打开 App 时如果查到新版本，会提醒一次。\n\n" +
+                "觉得提醒太频繁的话，频率可以自己调：设置 → 版本更新 → 自动检测更新，" +
+                "改成「每 7 天 / 每 14 天 / 每 30 天」查一次；\n" +
+                "选「关闭」就完全不自动检测，之后只在「我的 → 检查更新」里手动查，" +
+                "什么时候看更新由你决定。",
+            tip = "GitHub 在国内偶尔很慢甚至下不动，不是你手机的问题：" +
+                "换个网络重试，或者到车友群里直接拿安装包（群号在「我的」页最下面，点一下就能复制）。",
+        )
 
         Spacer(Modifier.height(20.dp))
         Text(

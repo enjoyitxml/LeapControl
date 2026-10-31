@@ -43,6 +43,8 @@ import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.ShumeiSecurityManager
 import com.leapcontrol.app.TrunkState
 import com.leapcontrol.app.TrunkStateMapper
+import com.leapcontrol.app.UpdateCheckMode
+import com.leapcontrol.app.UpdateCheckPolicy
 import com.leapcontrol.app.UpdateCheckResult
 import com.leapcontrol.app.journal.BaiduAsr
 import com.leapcontrol.app.Vehicle
@@ -708,6 +710,30 @@ class AppRuntime(context: Context) {
         updatePrefs.edit().putString("dismissed_version", version).apply()
     }
 
+    // ---- 自动检测更新的档位（关闭 / 7 天 / 14 天 / 30 天）----
+    // 落盘的是「天数」而不是枚举序号：以后加档位、调顺序都不会把老用户的选择读错。
+    // 老用户没有这个键 → 走默认（7 天），与改版前「每次启动都查」相比更省流量，
+    // 但绝不会因为读不到设置而彻底不查。
+
+    /** 当前自动检测档位。 */
+    fun updateCheckMode(): UpdateCheckMode =
+        UpdateCheckPolicy.fromDays(updatePrefs.getInt("auto_check_days", UpdateCheckPolicy.DEFAULT.days))
+
+    fun setUpdateCheckMode(mode: UpdateCheckMode) {
+        updatePrefs.edit().putInt("auto_check_days", mode.days).apply()
+    }
+
+    /** 上次**成功**自动/手动检测的时间戳；0 = 从未成功检测过。 */
+    fun lastUpdateCheckAt(): Long = updatePrefs.getLong("last_check_at", 0L)
+
+    /**
+     * 这次启动要不要自动联网检测。
+     *
+     * 手动点「检查更新」成功也会记时间，所以刚手动查过不会紧接着又自动查一次。
+     */
+    fun shouldAutoCheckUpdate(now: Long = System.currentTimeMillis()): Boolean =
+        UpdateCheckPolicy.isDue(updateCheckMode(), lastUpdateCheckAt(), now)
+
     /**
      * 拉取 GitHub 最新 Release 并与当前版本比较。
      *
@@ -719,6 +745,9 @@ class AppRuntime(context: Context) {
             _updateInfo.value = null
             return@withContext UpdateCheckResult.Failed
         }
+        // 只有真的拿到 Release 才记时间：网络失败不记账，否则「连不上」会被当成
+        // 「刚查过」，接下来一整周都不再重试。
+        updatePrefs.edit().putLong("last_check_at", System.currentTimeMillis()).apply()
         val newer = runCatching { GitHubUpdate.isNewer(latest.version, currentVersion()) }.getOrDefault(false)
         if (newer) {
             _updateInfo.value = latest

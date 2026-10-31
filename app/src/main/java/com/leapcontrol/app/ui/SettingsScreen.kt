@@ -62,6 +62,8 @@ import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.QuickSwitchLock
 import com.leapcontrol.app.QuickSwitchMode
 import com.leapcontrol.app.SessionStore
+import com.leapcontrol.app.UpdateCheckMode
+import com.leapcontrol.app.UpdateCheckPolicy
 import com.leapcontrol.app.R
 import com.leapcontrol.app.tiles.QuickTiles
 import com.leapcontrol.app.journal.BaiduAsr
@@ -94,6 +96,8 @@ fun SettingsScreen(
     var showPowerType by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmGate by remember { mutableStateOf(runtime.biometricConfirmEnabled()) }
+    // 自动检测更新的档位（关闭 / 7 天 / 14 天 / 30 天）
+    var showUpdateMode by remember { mutableStateOf(false) }
     // 蓝牙钥匙详情页（从本页进入时以整页覆盖的形式出现，返回即回到设置）
     var showBleKey by remember { mutableStateOf(false) }
     LocalBleKeyHost.current?.let { host ->
@@ -368,6 +372,9 @@ fun SettingsScreen(
             // （关掉零记的说明里写着「数据仍保留在这台手机上」，用户第一反应就是来这儿找出口）
             Spacer(Modifier.height(12.dp))
             JournalBackupRows(runtime = runtime, onMessage = { message = it })
+            // 数据安全：自动备份 + 更新后数据不见了时的找回入口
+            JournalStorageWarningRow(runtime = runtime)
+            JournalSafetyRows(runtime = runtime, onMessage = { message = it })
         }
 
         Spacer(Modifier.height(14.dp))
@@ -466,6 +473,31 @@ fun SettingsScreen(
                     repeat(4 - rowSpecs.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 版本更新：自动检测的节奏 ----
+        // 单独成卡：这一项只影响「要不要联网 / 多久联网一次」，跟车辆、外观都无关。
+        // 默认 7 天；关掉后 App 启动完全不联网，只剩「我的 → 检查更新」手动查。
+        SettingsCard("版本更新") {
+            ClickRow(
+                title = "自动检测更新",
+                desc = UpdateCheckPolicy.statusText(
+                    mode = runtime.updateCheckMode(),
+                    lastCheckAt = runtime.lastUpdateCheckAt(),
+                    now = System.currentTimeMillis(),
+                ),
+                iconRes = R.drawable.ic_system_update,
+            ) { showUpdateMode = true }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "只在打开 App 时判断是否该查一次，不会在后台定时唤醒。\n" +
+                    "更新包分发在 GitHub 官方通道，国内网络下载可能偏慢。",
+                color = C.textSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
         }
 
         Spacer(Modifier.height(14.dp))
@@ -601,6 +633,49 @@ fun SettingsScreen(
         )
     }
 
+    // ---- 自动检测更新的频率 ----
+    // 四档单选：关闭 / 7 天 / 14 天 / 30 天。选中即生效、不设「保存」按钮 ——
+    // 这只是一条偏好，没有需要整体确认的连带后果。
+    if (showUpdateMode) {
+        // 当前档位提到循环外读一次：四个选项各读一遍 prefs 没必要
+        val currentMode = runtime.updateCheckMode()
+        AlertDialog(
+            onDismissRequest = { showUpdateMode = false },
+            containerColor = C.panelBg,
+            title = { Text("自动检测更新", color = C.textPrimary) },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        "零控只在打开时判断一次，不会后台定时联网。\n" +
+                            "选「关闭」后，App 启动完全不联网，「我的 → 检查更新」仍可手动查。",
+                        color = C.textSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    UpdateCheckMode.entries.forEach { m ->
+                        SettingOptionRow(
+                            label = m.label,
+                            desc = m.desc,
+                            selected = currentMode == m,
+                        ) {
+                            runtime.setUpdateCheckMode(m)
+                            showUpdateMode = false
+                            message = if (m == UpdateCheckMode.OFF) {
+                                "已关闭自动检测，之后请在「我的 → 检查更新」手动查"
+                            } else {
+                                "已设为${m.label}自动检测一次"
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showUpdateMode = false }) { Text("关闭", color = C.textSecondary) }
+            },
+        )
+    }
+
     // ---- 动力类型（增程 / 纯电） ----
     // 只在「自动」和两种手动之间切换，不做别的花样：
     // 纯电车若被认成增程，首屏会多出一行「油 0%」，主续航还会去取综合续航 → 显示「--」。
@@ -619,7 +694,7 @@ fun SettingsScreen(
                         lineHeight = 17.sp,
                     )
                     Spacer(Modifier.height(12.dp))
-                    PowerTypeOption(
+                    SettingOptionRow(
                         label = "自动识别",
                         desc = "有燃油信号才算增程，其余按纯电",
                         selected = powerOverride == null,
@@ -628,7 +703,7 @@ fun SettingsScreen(
                         showPowerType = false
                         message = "已改回自动识别动力类型"
                     }
-                    PowerTypeOption(
+                    SettingOptionRow(
                         label = "纯电",
                         desc = "只显示电量一行，续航取纯电",
                         selected = powerOverride == SessionStore.VehiclePowerType.PURE_ELECTRIC,
@@ -637,7 +712,7 @@ fun SettingsScreen(
                         showPowerType = false
                         message = "已设为纯电"
                     }
-                    PowerTypeOption(
+                    SettingOptionRow(
                         label = "增程",
                         desc = "显示电量与燃油两行，取综合续航",
                         selected = powerOverride == SessionStore.VehiclePowerType.RANGE_EXTENDER,
@@ -916,9 +991,9 @@ private fun QuickSwitchCards(
 /** 当前模式的触发方式说明：点之前就讲清楚，别让人试了才知道点哪儿。 */
 private fun quickSwitchHint(mode: QuickSwitchMode): String = mode.desc
 
-/** 动力类型弹层里的单选项：选中项铺一层 chip 底色 + 右侧对勾。 */
+/** 设置弹层里的单选项（动力类型、自动检测更新共用）：选中项铺一层 chip 底色 + 右侧对勾。 */
 @Composable
-private fun PowerTypeOption(
+private fun SettingOptionRow(
     label: String,
     desc: String,
     selected: Boolean,

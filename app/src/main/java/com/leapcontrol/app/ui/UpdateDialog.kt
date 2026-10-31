@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,12 +39,19 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.R
+import android.widget.Toast
 
 /**
  * 版本更新提醒弹窗：检测到 GitHub 有新版本时弹出。
@@ -177,6 +185,46 @@ fun UpdateDialog(
                     }
                 }
                 Spacer(Modifier.height(22.dp))
+                // ---- 下载通道说明 ----
+                // 安装包放在 GitHub Releases，国内网络时不时卡在几百 KB/s 甚至直连失败。
+                // 这句话就是为了让用户知道「下不动不是 App 坏了」，并给出加群这条兜底路径。
+                // 整行可点：点一下复制群号，省得手抄 9 位数字（和「我的」页页脚一致）。
+                val clipboard = LocalClipboardManager.current
+                val context = LocalContext.current
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            clipboard.setText(AnnotatedString(QQ_GROUP))
+                            Toast.makeText(context, "已复制群号 $QQ_GROUP", Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Info,
+                        contentDescription = null,
+                        tint = C.textSecondary.copy(alpha = 0.85f),
+                        modifier = Modifier
+                            .padding(top = 1.dp)
+                            .size(13.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = buildAnnotatedString {
+                            append("更新包走 GitHub 官方通道。下载缓慢或无法下载时，请切换网络重试，或加 QQ 群 ")
+                            withStyle(SpanStyle(color = C.accent, fontWeight = FontWeight.Medium)) {
+                                append(QQ_GROUP)
+                            }
+                            append(" 在群内下载（点此复制群号）。")
+                        },
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
                 // 下载进度 / 失败提示：只在走 App 内下载时出现
                 if (downloading || downloadError != null) {
                     if (downloading) {

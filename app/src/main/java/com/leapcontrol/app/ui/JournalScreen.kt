@@ -71,6 +71,8 @@ fun JournalScreen(runtime: AppRuntime) {
     val journal = runtime.journal
     val data by journal.data
     val order by journal.cardOrder
+    // 更新后 VIN 变了 / 当前车辆查不到数据时的接续提示（见 JournalRuntime.loadFor）
+    val recovery by journal.recovery
     // 里程勋章看的是**车辆总里程**，不是本地那几天的累计：
     // 本地 daily 表刚开始只有近 7 天，用它会让人均「千公里」勋章卡住不动。
     //
@@ -185,6 +187,12 @@ fun JournalScreen(runtime: AppRuntime) {
                 )
             }
             Spacer(Modifier.height(16.dp))
+
+            // 数据安全提示：发生自动接续、或本机有多份数据需要认领时才出现
+            recovery?.let { note ->
+                JournalRecoveryBanner(note = note, onDismiss = { journal.dismissRecovery() })
+                Spacer(Modifier.height(12.dp))
+            }
 
             // ---- 卡片区：顺序 / 显隐都可改，最下面是「编辑」 ----
             ReorderableCardArea(

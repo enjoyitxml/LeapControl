@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ 的备份 / 迁移规则：与 backup_rules.xml 同一口径，只交零记数据目录。
+
+  cloud-backup  = 云备份（Google / 厂商云）
+  device-transfer = 换机时两台设备直连迁移（国产 ROM 的「手机搬家」多半走这条）
+  两条都包含 journal/，是为了「换机」这个场景本身，而不是为了云。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="file" path="journal" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="journal" />
+    </device-transfer>
+</data-extraction-rules>

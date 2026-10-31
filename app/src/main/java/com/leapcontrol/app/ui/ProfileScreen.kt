@@ -61,8 +61,7 @@ import com.leapcontrol.app.R
 import com.leapcontrol.app.UpdateCheckResult
 import kotlinx.coroutines.launch
 
-/** QQ 交流群群号。 */
-private const val QQ_GROUP = "179731222"
+// QQ 交流群群号定义在 AppCommunity.kt：更新弹窗的下载兜底文案也要用它。
 
 /** 入口卡片之间的间距：整页要在一屏里放完，12dp 收到 8dp（七条入口就是 24dp）。 */
 private val ITEM_GAP = 8.dp

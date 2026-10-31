@@ -276,8 +276,11 @@ fun MainScreen(
     }
     // 启动后检测一次 GitHub 更新；确有新版本且未对该版本选择「不再提醒」才弹窗。
     // 开关 SHOW_UPDATE_CHECK 关闭时整段不执行，App 不会主动联网查版本。
+    // 频率由「设置 → 版本更新 → 自动检测更新」决定（关闭 / 7 天 / 14 天 / 30 天）：
+    // 只有距上次成功检测期满才联网，OFF 档直接跳过 —— 这就是「仅手动检查更新」。
     LaunchedEffect(Unit) {
         if (!SHOW_UPDATE_CHECK) return@LaunchedEffect
+        if (!runtime.shouldAutoCheckUpdate()) return@LaunchedEffect
         val result = runCatching { runtime.checkForUpdate() }.getOrNull()
         if (result is UpdateCheckResult.Newer && result.info.version != runtime.dismissedVersion()) {
             pendingUpdate = result.info
