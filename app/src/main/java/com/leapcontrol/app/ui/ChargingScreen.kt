@@ -81,6 +81,8 @@ fun ChargingScreen(
     loadFailed: Boolean,
     saving: Boolean,
     gunBusy: Boolean,
+    /** 正在下发的充电枪动作（unlock / start / stop）；null 表示空闲。 */
+    pendingGun: String?,
     onGunAction: (String) -> Unit,
     onRetryLoad: () -> Unit,
     onOpenScheduled: () -> Unit,
@@ -161,13 +163,18 @@ fun ChargingScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 ChargeOutlineButton(
-                    label = "解锁充电枪",
+                    label = if (pendingGun == "unlock") "正在解锁…" else "解锁充电枪",
                     enabled = !gunBusy,
                     modifier = Modifier.weight(1f),
                     onClick = { onGunAction("unlock") },
                 )
                 ChargeSolidButton(
-                    label = if (charging) "结束充电" else "开始充电",
+                    // 回执窗口有 10 秒，按钮得自己说明「在发」；只禁用会像点空了
+                    label = when (pendingGun) {
+                        "start" -> "正在启动…"
+                        "stop" -> "正在停止…"
+                        else -> if (charging) "结束充电" else "开始充电"
+                    },
                     enabled = !gunBusy,
                     modifier = Modifier.weight(1f),
                     onClick = { onGunAction(if (charging) "stop" else "start") },
@@ -429,7 +436,7 @@ private fun ScheduleRow(title: String, value: String, onClick: () -> Unit) {
 }
 
 /**
- * 充电上限滑杆（50%~100%，5% 一档）。
+ * 充电上限滑杆（80%~100%，5% 一档）。
  *
  * 为什么不用 Material Slider：官方这一条要「绿色渐变轨道 + 分段白点 + 白色圆钮 +
  * 底部 90% 最佳限值三角」，用 Slider 只能改颜色，白点与三角都得另画一层，
@@ -448,7 +455,7 @@ private fun LimitSocSlider(soc: Int, onChange: (Int) -> Unit) {
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("50%", color = C.textSecondary, fontSize = 12.sp)
+            Text("${ChargeSchedule.MIN_LIMIT_SOC}%", color = C.textSecondary, fontSize = 12.sp)
             Spacer(Modifier.width(10.dp))
             BoxWithConstraints(
                 modifier = Modifier
@@ -500,10 +507,10 @@ private fun LimitSocSlider(soc: Int, onChange: (Int) -> Unit) {
                             cornerRadius = CornerRadius(trackHeight / 2f),
                         )
                     }
-                    // 分段白点（60/70/80/90）
+                    // 分段白点：80~100 之间的档位（85/90/95），两端是端点、不画
                     val dotRadius = 1.6.dp.toPx()
-                    for (step in 1..4) {
-                        val x = trackStart + trackWidth * (step / 5f)
+                    for (step in ChargeSchedule.LIMIT_STEPS.drop(1).dropLast(1)) {
+                        val x = trackStart + trackWidth * ChargeSchedule.socToFraction(step)
                         drawCircle(
                             color = Color.White.copy(alpha = if (x <= trackStart + activeWidth) 0.75f else 0.35f),
                             radius = dotRadius,
@@ -524,7 +531,7 @@ private fun LimitSocSlider(soc: Int, onChange: (Int) -> Unit) {
                 )
             }
             Spacer(Modifier.width(10.dp))
-            Text("100%", color = C.textSecondary, fontSize = 12.sp)
+            Text("${ChargeSchedule.MAX_LIMIT_SOC}%", color = C.textSecondary, fontSize = 12.sp)
         }
 
         // 90% 最佳限值：三角尖对准 90% 位置，文字居中于三角下方。

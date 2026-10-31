@@ -19,7 +19,7 @@ import org.json.JSONObject
 data class ChargeCenterDraft(
     /** 健康充电（电池养护）开关。 */
     val healthy: Boolean = false,
-    /** 充电上限 50..100，5% 一档。健康充电与预约充电共用同一个值。 */
+    /** 充电上限 80..100，5% 一档。健康充电与预约充电共用同一个值。 */
     val limitSoc: Int = ChargeSchedule.MAX_LIMIT_SOC,
     val scheduledEnabled: Boolean = false,
     val scheduledStart: String = "23:00",
@@ -56,7 +56,13 @@ object ChargeSchedule {
     /** 1=周一 … 7=周日（与 [ChargePlanCyclesHelper] 的 daySet 一致）。 */
     val ALL_DAYS: Set<Int> = (1..7).toSet()
 
-    const val MIN_LIMIT_SOC = 50
+    /**
+     * 充电上限的下界是 **80**，不是 50。
+     *
+     * 官方 App 与车机只允许 80%~100%（低于 80 的档位在两边都不存在，下发后车端也不会生效），
+     * 早期按 50 起步做滑杆，导致能选出一堆车上根本没有的值。
+     */
+    const val MIN_LIMIT_SOC = 80
     const val MAX_LIMIT_SOC = 100
     const val SOC_STEP = 5
 
@@ -126,7 +132,10 @@ object ChargeSchedule {
     fun summaryText(start: String?, end: String?, days: Set<Int>): String =
         "${daysLabel(days)} ${rangeText(start, end)}"
 
-    /** 充电上限对齐到 50..100 的 5 的倍数（车端与健康充电接口都按整数百分比收）。 */
+    /** 滑杆上的全部档位（含两端）：80 / 85 / 90 / 95 / 100。 */
+    val LIMIT_STEPS: List<Int> = (MIN_LIMIT_SOC..MAX_LIMIT_SOC step SOC_STEP).toList()
+
+    /** 充电上限对齐到 80..100 的 5 的倍数（车端与健康充电接口都按整数百分比收）。 */
     fun sanitizeSoc(value: Int): Int {
         val clamped = value.coerceIn(MIN_LIMIT_SOC, MAX_LIMIT_SOC)
         val snapped = ((clamped + SOC_STEP / 2) / SOC_STEP) * SOC_STEP

@@ -57,8 +57,9 @@ import com.leapcontrol.app.journal.CityCatalog
 import com.leapcontrol.app.journal.CityCheckin
 import com.leapcontrol.app.journal.CityProjection
 import com.leapcontrol.app.journal.CityWish
-import com.leapcontrol.app.journal.CostStats
 import com.leapcontrol.app.journal.JournalDates
+import com.leapcontrol.app.journal.KmRange
+import com.leapcontrol.app.journal.MileageSeries
 
 /**
  * 旗帜色板（不跟主题走：旗子是一张图上的标识，颜色越稳越好认）。
@@ -129,7 +130,6 @@ fun JournalCheckinScreen(runtime: AppRuntime, onBack: () -> Unit) {
 
     val totalKm = data.dailyKm.values.fold(0.0) { a, b -> a + b }
     val bestDay = data.dailyKm.maxByOrNull { it.value }
-    val days = journal.recentKm(7)
 
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -238,26 +238,59 @@ fun JournalCheckinScreen(runtime: AppRuntime, onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
 
             JournalCard {
+                // ---- 里程趋势：日 / 周 / 月 / 年 ----
+                // 数据来自本地全量（dailyKm 一天天累积），官方接口那 7 天明细只用来校准最近一周，
+                // 更早的历史不会被裁掉，所以这里的「年」能看到提车以来的全部记录。
+                var kmRange by remember { mutableStateOf(KmRange.DAY) }
+                // 不用 remember 缓存：跨天之后 today 变了，窗口要整体前移一格；
+                // 缓存住会停在前一天。窗口只有 14 格，重算的开销可以忽略。
+                val points = MileageSeries.of(data.dailyKm, kmRange)
+                val kmMax = points.maxOfOrNull { it.km } ?: 0.0
+                val hasKm = kmMax > 0.0
+                val peak = MileageSeries.peak(points)
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("每日里程", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text("里程趋势", color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.weight(1f))
                     Text(
-                        if (days.all { it.km <= 0.0 }) "近 7 天没有数据" else "近 7 天",
+                        if (hasKm) "合计 ${formatKm(MileageSeries.total(points))} km" else "暂无数据",
                         color = C.textSecondary,
                         fontSize = 11.sp,
                     )
                 }
-                Spacer(Modifier.height(14.dp))
-                val max = days.maxOfOrNull { it.km } ?: 0.0
-                JournalBars(
-                    values = days.map { if (max > 0) (it.km / max).toFloat() else 0f },
-                    labels = days.map { CostStats.dayLabel(it.date) },
-                    valueTexts = days.map { if (it.km > 0) formatKm(it.km) else "" },
-                    barHeight = 56.dp,
+                Spacer(Modifier.height(12.dp))
+                JournalSegmented(
+                    options = KmRange.entries.map { it.label },
+                    selectedIndex = kmRange.ordinal,
+                    onSelect = { kmRange = KmRange.entries[it] },
                 )
+                Spacer(Modifier.height(12.dp))
+                JournalLineChart(
+                    values = points.map { if (hasKm) (it.km / kmMax).toFloat() else 0f },
+                    labels = points.map { it.label },
+                    height = 124.dp,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    JournalStat(
+                        value = formatKm(MileageSeries.average(points)),
+                        label = "平均每${kmRange.label}",
+                        modifier = Modifier.weight(1f),
+                    )
+                    JournalStat(
+                        value = peak?.let { formatKm(it.km) } ?: "—",
+                        label = "最高",
+                        modifier = Modifier.weight(1f),
+                    )
+                    JournalStat(
+                        value = peak?.label ?: "—",
+                        label = "出现在",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "里程来自车辆数据（近 7 日明细 + 总里程每日差分），不用手动填。",
+                    "里程存在手机本地，每天累计，不受官方 7 天限制；没有记录的日子按 0 计。",
                     color = C.textSecondary,
                     fontSize = 11.sp,
                 )

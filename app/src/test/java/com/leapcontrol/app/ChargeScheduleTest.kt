@@ -16,7 +16,8 @@ import org.junit.Test
  *     用户会以为只充 0 分钟；09:00→18:00 又不能标次日。
  *  2. **重复日文案与掩码** —— 190 的 `cycles` 是 7 位 0/1 掩码（索引 0=周一），
  *     161 的 `days` 是整数数组（0=周日），两套编号规则不同，混用会把周一设成周日。
- *  3. **充电上限对齐** —— 车端只收整数百分比，滑杆是 5% 一档，越界值必须夹到 50..100。
+ *  3. **充电上限对齐** —— 车端只收整数百分比，滑杆是 5% 一档，越界值必须夹到 80..100。
+ *     下界是 80 而不是 50：官方 App 与车机都只有 80~100，低于 80 的档位不存在。
  */
 class ChargeScheduleTest {
 
@@ -67,20 +68,25 @@ class ChargeScheduleTest {
 
     @Test
     fun `充电上限夹取并对齐5的倍数`() {
-        assertEquals(50, ChargeSchedule.sanitizeSoc(20))
+        // 下界 80：低于它的值（包括老版本存下来的 50）一律抬到 80
+        assertEquals(80, ChargeSchedule.sanitizeSoc(20))
+        assertEquals(80, ChargeSchedule.sanitizeSoc(50))
+        assertEquals(80, ChargeSchedule.sanitizeSoc(80))
         assertEquals(100, ChargeSchedule.sanitizeSoc(120))
         assertEquals(90, ChargeSchedule.sanitizeSoc(90))
         assertEquals(95, ChargeSchedule.sanitizeSoc(93))
         assertEquals(100, ChargeSchedule.sanitizeSoc(98))
+        // 80..100 之间只有 5 个档位
+        assertEquals(listOf(80, 85, 90, 95, 100), ChargeSchedule.LIMIT_STEPS)
     }
 
     @Test
     fun `滑杆位置与上限互转`() {
-        assertEquals(0f, ChargeSchedule.socToFraction(50), 0.001f)
+        assertEquals(0f, ChargeSchedule.socToFraction(80), 0.001f)
         assertEquals(1f, ChargeSchedule.socToFraction(100), 0.001f)
-        assertEquals(0.8f, ChargeSchedule.socToFraction(90), 0.001f)
-        assertEquals(50, ChargeSchedule.fractionToSoc(0f))
-        assertEquals(90, ChargeSchedule.fractionToSoc(0.8f))
+        assertEquals(0.5f, ChargeSchedule.socToFraction(90), 0.001f)
+        assertEquals(80, ChargeSchedule.fractionToSoc(0f))
+        assertEquals(90, ChargeSchedule.fractionToSoc(0.5f))
         assertEquals(100, ChargeSchedule.fractionToSoc(1f))
     }
 

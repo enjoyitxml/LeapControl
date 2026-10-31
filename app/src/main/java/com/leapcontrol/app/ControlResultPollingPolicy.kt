@@ -5,7 +5,18 @@ object ControlResultPollingPolicy {
     const val INTERVAL_MS = 500L
     const val APP_MAX_WAIT_MS = 24_000L
 
+    /**
+     * 充电枪类指令（`192` 解锁锁止销 / `193` 起停充电）的回执窗口。
+     *
+     * 这两条是机械动作，车端确认比锁车这类即时指令慢得多，实测 3~8 秒才回 `result=0`。
+     * 旧实现只问 4 次（约 2 秒）必然问不到，于是每次都落到
+     * 「指令已下发，请在车辆上确认执行结果」——用户看到的就是"点了没反应"。
+     * 10 秒覆盖实测时延，同时不让按钮卡过久（`gunBusy` 期间按钮是禁用的）。
+     */
+    const val CHARGE_GUN_MAX_WAIT_MS = 10_000L
+
     val appMaxAttempts: Int = attemptsWithin(APP_MAX_WAIT_MS)
+    val chargeGunMaxAttempts: Int = attemptsWithin(CHARGE_GUN_MAX_WAIT_MS)
 
     fun delayBeforeAttempt(attemptIndex: Int): Long {
         require(attemptIndex >= 0) { "attemptIndex must be non-negative" }

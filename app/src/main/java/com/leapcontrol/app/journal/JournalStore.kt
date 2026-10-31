@@ -22,9 +22,32 @@ class JournalStore(context: Context) {
 
     private val dir = File(context.filesDir, "journal")
 
-    private fun file(vin: String): File {
-        val key = vin.ifBlank { "default" }.replace(Regex("""[^A-Za-z0-9_-]"""), "_")
-        return File(dir, "journal_$key.json")
+    /** VIN → 文件名片段。备份/迁移要按同一套规则认文件，所以单独暴露出来。 */
+    fun keyOf(vin: String): String =
+        vin.ifBlank { "default" }.replace(Regex("""[^A-Za-z0-9_-]"""), "_")
+
+    private fun file(vin: String): File = File(dir, "$FILE_PREFIX${keyOf(vin)}$FILE_SUFFIX")
+
+    /**
+     * 读出所有车辆的数据（key 是文件名里的 VIN 片段）。
+     *
+     * 换过车的人磁盘上会同时留着几份，导出时全都要带上 —— 只说「导出当前车」的话，
+     * 另一辆车的账就永远搬不走了。读不动的单个文件跳过，不影响其余部分。
+     */
+    fun loadAll(): Map<String, JournalData> {
+        if (!dir.exists()) return emptyMap()
+        val files = dir.listFiles() ?: return emptyMap()
+        val out = LinkedHashMap<String, JournalData>()
+        files.forEach { f ->
+            val name = f.name
+            if (!f.isFile || !name.startsWith(FILE_PREFIX) || !name.endsWith(FILE_SUFFIX)) return@forEach
+            val key = name.removePrefix(FILE_PREFIX).removeSuffix(FILE_SUFFIX)
+            if (key.isBlank()) return@forEach
+            out[key] = runCatching {
+                JournalData.fromJson(JSONObject(f.readText()))
+            }.getOrDefault(JournalData.EMPTY)
+        }
+        return out
     }
 
     fun load(vin: String): JournalData = runCatching {
@@ -270,6 +293,10 @@ class JournalRuntime(
      *
      * 同一天第一次调用只记下起点（当天里程仍是 0，等下一次刷新才有增量）；
      * 跨天之后自动换基线。里程回退（换了仪表 / 数据异常）不写负值。
+     *
+     * 跨天换基线时会把「上次记录 → 今天」这段的增量补进中间那几天（见 [fillGap]）：
+     * 否则中间几天没打开 App 的话，这几天的里程会凭空消失 —— 用户要的是
+     * 「所有数据都留着」，而不是只有打开 App 的那几天。
      */
     fun recordOdometer(totalKm: Double?) {
         val total = totalKm?.takeIf { it.isFinite() && it >= 0.0 && it < 2_000_000.0 } ?: return
@@ -278,7 +305,11 @@ class JournalRuntime(
             val baseDay = data.odometerDay
             val baseKm = data.odometerKm
             if (baseDay != today || baseKm == null) {
-                return@mutate data.copy(odometerDay = today, odometerKm = total)
+                return@mutate data.copy(
+                    dailyKm = fillGap(data.dailyKm, baseDay, baseKm, total, today),
+                    odometerDay = today,
+                    odometerKm = total,
+                )
             }
             val delta = total - baseKm
             if (delta <= 0.0 || delta > 2_000.0) return@mutate data
@@ -288,6 +319,41 @@ class JournalRuntime(
                 odometerKm = total,
             )
         }
+    }
+
+    /**
+     * 把 `(baseDay, today]` 这段的总里程增量按天平摊进 dailyKm。
+     *
+     * 只在间隔 1~[MAX_GAP_DAYS] 天时补：这段时间车通常每天都在跑，平摊比
+     * 「整段都记到打开 App 那一天」更接近真实。间隔再长（比如一个月没开 App）
+     * 就没有信息量了，画在图上只是一段凭空的斜坡，只换基线、不补数。
+     *
+     * 已存在的更大值不覆盖 —— 服务端近 7 日明细比这里的估算准，取大才是对的。
+     */
+    private fun fillGap(
+        dailyKm: Map<String, Double>,
+        baseDay: String?,
+        baseKm: Double?,
+        total: Double,
+        today: String,
+    ): Map<String, Double> {
+        if (baseDay == null || baseKm == null || baseDay == today) return dailyKm
+        val from = JournalDates.parseDayKey(baseDay) ?: return dailyKm
+        val to = JournalDates.parseDayKey(today) ?: return dailyKm
+        val gap = java.time.temporal.ChronoUnit.DAYS.between(from, to).toInt()
+        if (gap <= 0 || gap > MAX_GAP_DAYS) return dailyKm
+        val delta = total - baseKm
+        if (delta <= 0.0) return dailyKm
+        val perDay = delta / gap
+        // 日均 800km 已经超出家用车的可信范围，宁可不补也不要把脏数据铺到图上
+        if (perDay <= 0.0 || perDay > MAX_DAILY_KM) return dailyKm
+        val merged = dailyKm.toMutableMap()
+        for (i in 1..gap) {
+            val key = JournalDates.dayKey(from.plusDays(i.toLong()))
+            val old = merged[key] ?: 0.0
+            if (perDay > old) merged[key] = perDay
+        }
+        return merged
     }
 
     /** 近 [days] 天的里程（含今天），按日期升序；缺的天补 0。 */
@@ -302,6 +368,17 @@ class JournalRuntime(
 
     fun totalKm(): Double = ensureLoaded().dailyKm.values.fold(0.0) { acc, v -> acc + v }
 
+    /**
+     * 里程趋势：把**本地全量**每日里程按 [range] 聚合成固定格数。
+     *
+     * 「全量」指零记 JSON 里的 `dailyKm`，不是官方接口那 7 天 —— 官方近 7 日明细
+     * 只用来校准最近 7 天，更早的数据靠这里一天天累积，永远不会被裁掉。
+     */
+    fun kmSeries(
+        range: KmRange,
+        today: java.time.LocalDate = JournalDates.today(),
+    ): List<KmPoint> = MileageSeries.of(ensureLoaded().dailyKm, range, today)
+
     // ---------------- 保养 / 保险提醒 ----------------
 
     /** 设置或清除保养计划（传 null 即关闭提醒）。 */
@@ -309,6 +386,79 @@ class JournalRuntime(
 
     /** 设置或清除保险计划（传 null 即关闭提醒）。 */
     fun setInsurance(plan: InsurancePlan?) = mutate { it.copy(insurance = plan) }
+
+    // ---------------- 备份 / 迁移 ----------------
+
+    /**
+     * 把本机**所有车辆**的零记数据打成一段 JSON 文本。
+     *
+     * 当前车直接用内存里的那份覆盖磁盘上的：落盘是异步协程，刚记完一笔就点导出时，
+     * 磁盘上可能还是上一版，导出会少最后一笔。
+     */
+    fun exportBackup(appVersion: String, now: Long = System.currentTimeMillis()): String {
+        val current = ensureLoaded()
+        val currentVin = vinProvider()
+        val all = store.loadAll().toMutableMap()
+        all[store.keyOf(currentVin)] = current
+        val vehicles = all.toSortedMap().map { (key, data) -> JournalBackup.Vehicle(key, data) }
+        return JournalBackup.encode(
+            JournalBackup.Payload(
+                exportedAt = now,
+                appVersion = appVersion,
+                vehicles = vehicles,
+                cardOrder = prefs.getString(KEY_CARD_ORDER, null),
+            ),
+        )
+    }
+
+    /**
+     * 导入一份备份，与**每辆车**本机已有的数据合并（规则见 [JournalBackup.merge]）。
+     *
+     * 直接写盘、不走 [mutate]：导入可能是用户换机后唯一一次操作，
+     * 不该等着某个协程排队；而且这里要一次处理多辆车，`mutate` 只认当前车。
+     */
+    fun importBackup(payload: JournalBackup.Payload): JournalBackup.Summary {
+        val currentVin = vinProvider()
+        val currentKey = store.keyOf(currentVin)
+        var newCosts = 0
+        var newCheckins = 0
+        var newWishes = 0
+        var newKmDays = 0
+        payload.vehicles.forEach { vehicle ->
+            val isCurrent = vehicle.vin == currentKey
+            val local = if (isCurrent) ensureLoaded() else store.load(vehicle.vin)
+            val merged = JournalBackup.merge(local, vehicle.data)
+            if (merged == local) return@forEach
+            newCosts += merged.costs.size - local.costs.size
+            newCheckins += merged.checkins.size - local.checkins.size
+            newWishes += merged.wishes.size - local.wishes.size
+            newKmDays += merged.dailyKm.size - local.dailyKm.size
+            if (isCurrent) {
+                loadedVin = currentVin
+                _data.value = merged
+            }
+            store.save(if (isCurrent) currentVin else vehicle.vin, merged)
+        }
+        // 排版偏好：本机没动过才用备份里的，避免把当前手机的排版冲掉
+        var cardOrderRestored = false
+        val backupOrder = payload.cardOrder
+        if (!backupOrder.isNullOrBlank() && prefs.getString(KEY_CARD_ORDER, null).isNullOrBlank()) {
+            val cards = JournalCardLayout.parse(backupOrder)
+            if (cards.isNotEmpty()) {
+                _cardOrder.value = cards
+                prefs.edit().putString(KEY_CARD_ORDER, JournalCardLayout.serialize(cards)).apply()
+                cardOrderRestored = true
+            }
+        }
+        return JournalBackup.Summary(
+            vehicles = payload.vehicles.size,
+            newCosts = newCosts,
+            newCheckins = newCheckins,
+            newWishes = newWishes,
+            newKmDays = newKmDays,
+            cardOrderRestored = cardOrderRestored,
+        )
+    }
 
     private fun newId(): String = UUID.randomUUID().toString().take(8)
 }
@@ -322,3 +472,14 @@ data class DailyKm(
 
 /** 概览页卡片顺序的存储键（与账单数据分开：这是排版偏好，不按 VIN 隔离）。 */
 private const val KEY_CARD_ORDER = "card_order"
+
+/** 每辆车的文件名：`journal_<vin>.json`（导出的 `vehicles[].vin` 就是中间那一段）。 */
+private const val FILE_PREFIX = "journal_"
+
+private const val FILE_SUFFIX = ".json"
+
+/** 跨天补里程的最大间隔（天）：超过这个跨度就不做平摊，只换基线。 */
+private const val MAX_GAP_DAYS = 7
+
+/** 单日里程的可信上限：超过它认为是仪表 / 数据异常，宁可漏记也不写脏值。 */
+private const val MAX_DAILY_KM = 800.0

@@ -364,6 +364,10 @@ fun SettingsScreen(
                     iconRes = R.drawable.ic_mic,
                 ) { showAsrKey = true }
             }
+            // 备份入口不跟总开关走：零记关掉之后数据仍然在本机，这时候更需要能导出去。
+            // （关掉零记的说明里写着「数据仍保留在这台手机上」，用户第一反应就是来这儿找出口）
+            Spacer(Modifier.height(12.dp))
+            JournalBackupRows(runtime = runtime, onMessage = { message = it })
         }
 
         Spacer(Modifier.height(14.dp))

@@ -3,7 +3,12 @@ package com.leapcontrol.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -300,6 +305,8 @@ fun HomeScreen(
         var showPreheatSchedule by remember { mutableStateOf(false) }
         // 充电枪操作指令在 PIN 验证完成后重放
         var pendingChargeGun by remember { mutableStateOf<String?>(null) }
+        // 正在下发的充电枪动作（unlock / start / stop）：充电中心用它把按钮文案改成「…中」
+        var chargeGunAction by remember { mutableStateOf<String?>(null) }
         // 二级页面：座椅舒适 / 车载冰箱 / 完整空调
         var showSeatComfort by remember { mutableStateOf(false) }
         var showFridge by remember { mutableStateOf(false) }
@@ -704,7 +711,10 @@ fun HomeScreen(
                 val current = chargeDraft
                 chargeDraft = current.copy(
                     healthy = live?.healthyChargeEnabled ?: current.healthy,
-                    limitSoc = plan?.percent ?: current.limitSoc,
+                    // 车端回读的 percent 也过一次 sanitizeSoc：历史遗留值（比如 50）会越界，
+                    // 不清掉就会出现「标题写 50%、圆钮却停在 80%」的矛盾
+                    limitSoc = plan?.percent?.let { ChargeSchedule.sanitizeSoc(it) }
+                        ?: current.limitSoc,
                     scheduledEnabled = plan?.isEnable ?: current.scheduledEnabled,
                     scheduledStart = ChargeSchedule.timeOfDay(plan?.beginTime) ?: current.scheduledStart,
                     scheduledEnd = ChargeSchedule.timeOfDay(plan?.endTime) ?: current.scheduledEnd,
@@ -877,6 +887,9 @@ fun HomeScreen(
         fun runChargeGun(action: String) {
             scope.launch {
                 controlling = "chargeGun"
+                // 记下具体是哪一条，充电中心页据此把对应按钮变成「解锁中 / 启动中 / 停止中」：
+                // 这两条指令的回执窗口有 10 秒，按钮纯禁用会像点空了
+                chargeGunAction = action
                 actionMessage = null
                 try {
                     val msg = when (action) {
@@ -886,6 +899,13 @@ fun HomeScreen(
                     }
                     actionMessage = msg
                     refresh(force = true)
+                    // 车端的 chargeState 要滞后几秒才翻转，这里补一次刷新，
+                    // 让「充电中心」的读数与按钮文案跟着变；放在独立协程里，
+                    // 不能延长按钮的禁用时间
+                    scope.launch {
+                        delay(AC_SETTLE_DELAY_MS)
+                        refresh(force = true)
+                    }
                 } catch (e: NeedPinException) {
                     pendingChargeGun = action
                     showPinDialog = true
@@ -893,6 +913,7 @@ fun HomeScreen(
                     actionMessage = friendlyError(e)
                 }
                 controlling = null
+                chargeGunAction = null
             }
         }
 
@@ -1025,6 +1046,7 @@ fun HomeScreen(
                 loadFailed = chargeLoadFailed,
                 saving = chargeSaving,
                 gunBusy = controlling == "chargeGun",
+                pendingGun = chargeGunAction,
                 onGunAction = { runChargeGun(it) },
                 onRetryLoad = { loadChargeCenter() },
                 onOpenScheduled = { showChargeSchedule = true },
@@ -1266,6 +1288,9 @@ fun HomeScreen(
             Spacer(Modifier.height(16.dp))
             val currentStatus = status
             val soc = currentStatus?.soc
+            // 充电中判定与充电中心页保持一致：以 chargeState 为准，缺失时退回布尔信号
+            val chargingNow = currentStatus?.chargeState == 1 ||
+                (currentStatus?.chargeState == null && currentStatus?.charging == true)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Top,
@@ -1299,6 +1324,11 @@ fun HomeScreen(
                                 bottom = 6.dp * LocalDensity.current.fontScale.coerceAtMost(1.3f),
                             ),
                         )
+                        // 充电中：总续航右侧的充电头脉冲入口（只在充电时出现），点进充电中心
+                        if (chargingNow) {
+                            Spacer(Modifier.width(6.dp))
+                            ChargingPulseEntry(onClick = { showChargingCenter = true })
+                        }
                     }
                     Spacer(Modifier.height(6.dp))
                     // 里程行（手绘稿样式）：图标 · 里程 · 进度条 · 百分比
@@ -2830,6 +2860,91 @@ private fun StatusItem(iconRes: Int, label: String, alert: Boolean) {
             // 状态文案不折行：折了会把右侧状态栏撑高，左边的续航区跟着错位
             maxLines = 1,
             softWrap = false,
+        )
+    }
+}
+
+/**
+ * 总续航右侧的「充电中」入口：充电头图标 + 两圈向外扩散的脉冲环。
+ *
+ * - 只在 `chargeState == 1`（充电中）时由调用方渲染，未插枪 / 已充满都不出现；
+ * - 颜色沿用里程条的绿（`0xFF2FCC71`），脉冲环与光晕都是同色低透明度叠加，
+ *   不引入新色相，深色浅色主题下都不用另调；
+ * - 点击直接进充电中心（就是首页那颗胶囊的同一目标页）。
+ *
+ * 不做涟漪：这里是个 40dp 的透明热点，方形涟漪会在续航区盖出一块背景。
+ */
+@Composable
+private fun ChargingPulseEntry(onClick: () -> Unit) {
+    val green = Color(0xFF2FCC71)
+    val glow = Color(0xFF46E58C)
+    val transition = rememberInfiniteTransition(label = "chargePulse")
+    // 两圈环错相半个周期：读起来是"电流一下一下往外推"，而不是单点呼吸
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing)),
+        label = "chargePulsePhase",
+    )
+    // 图标本体的轻微心跳，与环分开走，避免整块一起涨缩
+    val beat by transition.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            tween(760, easing = FastOutSlowInEasing),
+            RepeatMode.Reverse,
+        ),
+        label = "chargePulseBeat",
+    )
+    Box(
+        modifier = Modifier
+            // 抬 3dp 让图标中心落在 40sp 数字的视觉中线上
+            .padding(bottom = 3.dp)
+            .size(40.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val c = center
+            val maxR = size.minDimension / 2f - 1.dp.toPx()
+            val baseR = size.minDimension * 0.30f
+            // 中心常亮光晕：先告诉眼睛这一格在通电
+            val haloR = baseR * 1.9f
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(glow.copy(alpha = 0.30f), glow.copy(alpha = 0f)),
+                    center = c,
+                    radius = haloR,
+                ),
+                radius = haloR,
+                center = c,
+            )
+            // 向外扩散的脉冲环
+            repeat(2) { i ->
+                val p = (phase + i * 0.5f) % 1f
+                drawCircle(
+                    color = green.copy(alpha = (1f - p) * 0.55f),
+                    radius = baseR + (maxR - baseR) * p,
+                    center = c,
+                    style = Stroke(width = 1.3.dp.toPx()),
+                )
+            }
+        }
+        Icon(
+            painter = painterResource(R.drawable.ic_charge_plug),
+            contentDescription = "充电中，进入充电中心",
+            tint = green,
+            modifier = Modifier
+                .size(19.dp)
+                .graphicsLayer {
+                    scaleX = beat
+                    scaleY = beat
+                    alpha = (0.80f + (beat - 0.94f) * 3.6f).coerceIn(0f, 1f)
+                },
         )
     }
 }

@@ -2108,7 +2108,7 @@ class LeapmotorApi internal constructor(
         val route = ensureRoute()
         val url = "${route.appRegion}/carownerservice/v3/api/healthyCharging/control"
         val stateInt = if (enabled) 1 else 0
-        val socInt = targetSoc.coerceIn(50, 100)
+        val socInt = targetSoc.coerceIn(ChargeSchedule.MIN_LIMIT_SOC, ChargeSchedule.MAX_LIMIT_SOC)
         val params = mapOf(
             "carvin" to session.selectedVin,
             "vin" to session.selectedVin,
@@ -2172,7 +2172,7 @@ class LeapmotorApi internal constructor(
         }
         val stateJson = JSONObject().apply {
             put("chargeEnable", chargeEnableInt)
-            put("chargesoc", targetSoc.coerceIn(50, 100))
+            put("chargesoc", targetSoc.coerceIn(ChargeSchedule.MIN_LIMIT_SOC, ChargeSchedule.MAX_LIMIT_SOC))
             put("circulation", if (enabled) circulation else 0)
             put("cycles", vehicleCyclesMask)
             put("starttime", startTime)

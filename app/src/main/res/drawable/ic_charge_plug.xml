@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 充电中入口：充电头（两根插脚 + 插头主体 + 拖出的线），实心造型，靠 tint 上色 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 插头主体：上两个直角、下两个大圆角 -->
+    <path
+        android:pathData="M7.4 7.6 H16.6 A2.6 2.6 0 0 1 19.2 10.2 V12.2 A2.9 2.9 0 0 1 16.3 15.1 H7.7 A2.9 2.9 0 0 1 4.8 12.2 V10.2 A2.6 2.6 0 0 1 7.4 7.6 Z"
+        android:fillColor="#FF000000" />
+    <!-- 两根插脚 -->
+    <path
+        android:pathData="M8.6 3.0 V6.6"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M15.4 3.0 V6.6"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round" />
+    <!-- 拖出的电线：向下再向左弯 -->
+    <path
+        android:pathData="M12 15.1 V18.0 A2.3 2.3 0 0 1 9.7 20.3 H6.2"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.3"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

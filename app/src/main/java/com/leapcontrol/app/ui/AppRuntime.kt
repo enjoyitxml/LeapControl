@@ -2202,11 +2202,17 @@ class AppRuntime(context: Context) {
         val api = LeapmotorApi(session)
         val cmd = Commands.build(commandName)
         val result = withNetworkRetry { api.sendControl(cmd, pin) }
-        for (attempt in 0 until 4) {
-            Thread.sleep(ControlResultPollingPolicy.delayBeforeAttempt(attempt))
-            val resp = api.queryControlResult(result.msgID)
-            val value = (resp.opt("result") ?: resp.opt("code"))?.toString()
-            if (value == "0" || value == "200") return@withContext "${cmd.label}成功"
+        // 没有回执号就无处追问，直接按「已受理」返回，不要空转满 10 秒
+        if (result.hasPollingId()) {
+            // 解锁枪锁止销 / 起停充电都是机械动作，车端确认比锁车慢得多（实测 3~8 秒），
+            // 用普通指令那 4 次（约 2 秒）必然问不到，永远落到「指令已下发…」。
+            for (attempt in 0 until ControlResultPollingPolicy.chargeGunMaxAttempts) {
+                Thread.sleep(ControlResultPollingPolicy.delayBeforeAttempt(attempt))
+                // 单次查询失败不该让整条指令失败，继续问下一轮
+                val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull() ?: continue
+                val value = (resp.opt("result") ?: resp.opt("code"))?.toString()
+                if (value == "0" || value == "200") return@withContext "${cmd.label}成功"
+            }
         }
         "指令已下发，请在车辆上确认执行结果"
     }
