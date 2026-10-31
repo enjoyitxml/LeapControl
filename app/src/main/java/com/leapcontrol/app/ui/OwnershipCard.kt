@@ -29,6 +29,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.MileageEnergySummary
@@ -46,9 +47,15 @@ import com.leapcontrol.app.QuickTarget
  * 数字用常规字重而不是 Bold —— 图上那串「1013 天 44064 公里」笔画很细，
  * 加粗会让整块变笨重，也会把右侧的雪山留白吃掉。
  *
- * 两个数字都来自接口（见 [OwnershipStats]）：
+ * 两个大数字都来自接口（见 [OwnershipStats]）：
  *  - 提车天数：里程/能耗累计接口的 ownershipDays；
  *  - 累计公里：同一份汇总的总里程，缺失时退回车况报文里的 totalMileage。
+ *
+ * 第三行是同一份汇总里的**累计用电**（kWh，顺带拼上百公里电耗），
+ * 字号压到 11.5sp 而不是并进上面那排大数字：一行排三个 30sp 的数字，
+ * 卡片宽 349dp 就会挤出边界（「公里」「千瓦时」两个单位加起来就 60dp 了），
+ * 而且这张卡的画面比数据重要，数字太多会把它读成一张报表。
+ * 没有数据时这一行整行不出现（不是显示「--」），风景卡的版面不能留一条空行。
  *
  * 卡片配色固定为白字 + 图片，不随深浅色主题变化。
  */
@@ -80,6 +87,11 @@ fun OwnershipCard(
     // 口径与保养提醒卡统一：表显里程优先、里程接口兜底（见 OwnershipStats.currentKm）
     val kmText = OwnershipStats.formatKm(
         OwnershipStats.currentKm(status?.totalMileage, energy?.totalMileageKm),
+    )
+    // 累计用电 + 百公里电耗：两个都缺时是 null，整行不画
+    val energyLine = OwnershipStats.energyLine(
+        energy?.cumulativeEnergyKwh,
+        energy?.overallConsumption,
     )
     val backdrop = OwnershipBackdrops.byId(backdropId)
     // 提到外面：避免在 if 分支里 remember（模式切换时那个分支的槽位会被丢弃重建）
@@ -203,6 +215,22 @@ fun OwnershipCard(
                     fontSize = 13.sp,
                     style = TextStyle(shadow = shadow),
                     modifier = Modifier.padding(bottom = 5.dp),
+                )
+            }
+
+            // 第三行：累计用电（顺带百公里电耗）。
+            // 用 11.5sp 的小字压在大数字下面，而不是并进那一排 —— 三个 30sp 数字在
+            // 349dp 宽的卡上一定会挤出去；这里是补充信息，不该抢天数和里程的主位。
+            if (energyLine != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = energyLine,
+                    color = Color.White.copy(alpha = 0.82f),
+                    fontSize = 11.5.sp,
+                    letterSpacing = 0.2.sp,
+                    style = TextStyle(shadow = shadow),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

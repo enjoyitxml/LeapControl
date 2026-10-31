@@ -12,6 +12,7 @@ import android.widget.Toast
 import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
+import com.leapcontrol.app.ui.StatusSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,10 +28,12 @@ import kotlinx.coroutines.withContext
  * 点击后直接在本进程内下发控车指令（不需要常驻前台服务）：
  * 指令通常在 1~3 秒内完成，即使进程随后被回收，指令也已到达车端。
  *
- * 开关型磁贴（空调 / 后备箱 / 车窗 / 遮阳帘）的**方向只看本地记住的开合态**，
- * 不再用车况回读做判据 —— 原因见 [QuickTiles.setOn] 上的注释：
- * 部分车型读不到 acOn / trunkOpen 这类信号，会把每次点击都判成「当前是关的」，
- * 于是磁贴只能开、关不掉。
+ * 开关型磁贴（空调 / 后备箱 / 车窗 / 遮阳帘）分两层：
+ * - **点击方向**只看本地记住的开合态，不拿车况当判据 —— 原因见 [QuickTiles] 上的注释：
+ *   部分车型读不到 acOn / trunkOpen 这类信号，会把每次点击都判成「当前是关的」，
+ *   于是磁贴只能开、关不掉；
+ * - **显示状态**则跟随车况：每次展开控制中心都用最新报文校准一次，
+ *   用户在车里手动关了空调 / 后备箱，磁贴不能还亮着。
  */
 abstract class VehicleTileService : TileService() {
 
@@ -52,8 +55,11 @@ abstract class VehicleTileService : TileService() {
 
     override fun onStartListening() {
         super.onStartListening()
+        // 先用进程内已知的最新车况把状态摆正，再渲染：控制中心一展开就是对的，
+        // 不用等下面那个异步校准（它可能要发一次网络请求）
+        if (!busy) applyKnownStatus()
         if (!busy) render()
-        // 顺手用车况校准一次开合态：用户在车里手动开了后备箱，磁贴不该还显示「已关闭」
+        // 异步再校一次：顺手覆盖「App 完全没跑、进程内没有快照」的情况
         if (spec.kind == TileKind.TOGGLE) scope.launch { syncFromVehicle() }
     }
 
@@ -117,25 +123,58 @@ abstract class VehicleTileService : TileService() {
     }
 
     /**
+     * 用**进程内已知车况**校准（不联网，同步执行，供 onStartListening 直接调用）。
+     *
+     * 只接受「比用户最后一次点击更新」的快照：比点击更旧的报文代表的是上一状态，
+     * 拿它来改会把用户刚下发的意图覆盖掉。
+     */
+    private fun applyKnownStatus() {
+        if (spec.kind != TileKind.TOGGLE) return
+        val lastAction = QuickTiles.lastActionAt(this, spec)
+        val status = StatusSnapshot.get(SNAPSHOT_TTL_MS, since = lastAction) ?: return
+        val open = isOpen(status) ?: return
+        if (QuickTiles.isOn(this, spec) == open) return
+        QuickTiles.setOn(this, spec, open, fromUser = false)
+    }
+
+    /**
      * 用车况校准开合态（只在后台悄悄改状态，不弹任何提示、不打断用户）。
      *
-     * 三条安全线：
-     * 1. 一分钟内只校一次 —— 每次拉开控制中心所有磁贴都会 onStartListening，不能每次都打车况接口；
-     * 2. 该车型读不到这个信号（null）就原地不动，绝不拿「读不到」当「关闭」；
-     * 3. 校准期间用户点过磁贴，就以用户刚下发的指令为准，不让更早的车况把状态改回去。
+     * 这是「在车里手动关了空调 / 后备箱，控制中心那格还亮着」的修复路径，
+     * 因此校准必须**跟着控制中心的展开走**，而不是隔一分钟才放行一次。
+     *
+     * 四条安全线：
+     * 1. 状态只按车况改显示，**点击方向仍看本地**（见 [QuickTiles] 上的注释），
+     *    读不到信号（null）就原地不动，绝不拿「读不到」当「关闭」；
+     * 2. 快照比用户最后一次点击旧 → 不用它；刚点过又没有更新快照 → 等宽限期过去再说，
+     *    否则旧报文会把用户刚下发的意图改回去；
+     * 3. 同一块磁贴两次校准之间留最小间隔，真正挡住重复请求的是 [TileStatusSync] 的 15 秒缓存
+     *    （控制中心一次展开会唤醒七八块磁贴，各自发请求就是七八个）；
+     * 4. 校准过程中用户又点了一次，直接放弃这次结果。
      */
     private suspend fun syncFromVehicle() {
+        if (spec.kind != TileKind.TOGGLE) return
         val ctx = applicationContext
-        val startedAt = System.currentTimeMillis()
-        if (startedAt - QuickTiles.syncedAt(ctx, spec) < SYNC_INTERVAL_MS) return
+        val now = System.currentTimeMillis()
+        val lastAction = QuickTiles.lastActionAt(ctx, spec)
 
-        val status = TileStatusSync.status(ctx) ?: return
-        QuickTiles.markSynced(ctx, spec)
-        if (busy || QuickTiles.lastActionAt(ctx, spec) > startedAt) return
+        var status = StatusSnapshot.get(SNAPSHOT_TTL_MS, since = lastAction)
+        if (status == null) {
+            // 没有比点击更新的进程内快照。刚点过就先别校：
+            // 此刻车端大概率还没执行完，读回来的还是上一条报文。
+            if (now - lastAction < ACTION_GRACE_MS) return
+            if (now - QuickTiles.syncedAt(ctx, spec) < SYNC_INTERVAL_MS) return
+            status = TileStatusSync.status(ctx, minAt = lastAction) ?: return
+        }
 
         val open = isOpen(status) ?: return
+        if (busy) return
+        // 校准期间用户点过磁贴：以那次下发的方向为准
+        if (QuickTiles.lastActionAt(ctx, spec) != lastAction) return
+        // 读到有效信号才记账；信号为 null 的车型下次展开还会继续尝试
+        QuickTiles.markSynced(ctx, spec)
         if (QuickTiles.isOn(ctx, spec) == open) return
-        QuickTiles.setOn(ctx, spec, open)
+        QuickTiles.setOn(ctx, spec, open, fromUser = false)
         if (!busy) render()
     }
 
@@ -193,8 +232,23 @@ abstract class VehicleTileService : TileService() {
     }
 
     private companion object {
-        /** 车况校准的最小间隔：一分钟内同一块磁贴只校一次。 */
-        const val SYNC_INTERVAL_MS = 60_000L
+        /**
+         * 同一块磁贴两次车况校准之间的最小间隔。
+         *
+         * 原来是一分钟，结果用户在车里关掉空调/后备箱后马上拉开控制中心，磁贴还亮着 ——
+         * 那 60 秒里校准被直接跳过，用户看到的就是「状态永远不回来」。
+         * 真正的请求节流由 [TileStatusSync]（15 秒快照缓存）负责，这里只防同一瞬间的重复调用。
+         */
+        const val SYNC_INTERVAL_MS = 5_000L
+
+        /**
+         * 刚点完磁贴的宽限期：这段时间里车况可能还是上一条报文，
+         * 用它去校准会把用户刚下发的意图改回去。
+         */
+        const val ACTION_GRACE_MS = 8_000L
+
+        /** 进程内车况快照的最长可用年龄。再老的话宁可联网拉一次。 */
+        const val SNAPSHOT_TTL_MS = 30_000L
     }
 }
 
@@ -210,10 +264,14 @@ private object TileStatusSync {
     private var at = 0L
     private var cached: CarStatus? = null
 
-    suspend fun status(context: Context): CarStatus? = mutex.withLock {
+    /**
+     * @param minAt 只接受**晚于**这个时刻拉到的报文。传「用户最后一次点磁贴的时间」，
+     *   缓存里如果是更早的报文就重新拉，避免拿旧状态盖掉用户刚下发的指令。
+     */
+    suspend fun status(context: Context, minAt: Long = 0L): CarStatus? = mutex.withLock {
         val now = System.currentTimeMillis()
         val hit = cached
-        if (hit != null && now - at < TTL_MS) return@withLock hit
+        if (hit != null && now - at < TTL_MS && at >= minAt) return@withLock hit
         val fresh = runCatching { AppRuntime(context).refreshStatus() }.getOrNull()
             ?: return@withLock null
         cached = fresh

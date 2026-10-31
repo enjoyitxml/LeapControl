@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  FileProvider 暴露给系统安装器的路径。
-  只开放 filesDir/update/ 这一个目录，不要写成 whole files dir——
+  FileProvider 暴露的路径，逐个目录开放，不要写成 whole files dir——
   那会把账号、车况缓存等私有文件一并暴露给拿到 URI 的应用。
+
+  - update/：系统安装器读取新版本 APK；
+  - parking/：系统相机把停车位照片写进我们给的 URI（只在这一条路径上临时授权写）。
 -->
 <paths>
     <files-path
         name="update"
         path="update/" />
+    <files-path
+        name="parking"
+        path="parking/" />
 </paths>

@@ -7,6 +7,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.time.LocalDate
 
 /** 两张能耗卡的解析与格式化（近 6 周百公里能耗 / 上周能耗构成）。 */
 class WeeklyEnergyTest {
@@ -126,6 +127,30 @@ class WeeklyEnergyTest {
     }
 
     @Test
+    fun `上周区间按周一到周日倒推`() {
+        // 2026-10-31 是周六，本周一是 10-26，上周即 10-19 ~ 10-25
+        assertEquals(
+            "10.19 – 10.25",
+            EnergyFormat.lastWeekRange(LocalDate.of(2026, 10, 31)),
+        )
+        // 周日属于「这一周的最后一天」，不能再往前推一周
+        assertEquals(
+            "10.19 – 10.25",
+            EnergyFormat.lastWeekRange(LocalDate.of(2026, 11, 1)),
+        )
+        // 周一当天：上一周刚结束
+        assertEquals(
+            "10.19 – 10.25",
+            EnergyFormat.lastWeekRange(LocalDate.of(2026, 10, 26)),
+        )
+        // 跨年：2027-01-04（周一）的上一周是 2026-12-28 ~ 2027-01-03
+        assertEquals(
+            "12.28 – 1.3",
+            EnergyFormat.lastWeekRange(LocalDate.of(2027, 1, 6)),
+        )
+    }
+
+    @Test
     fun `周柱标签取这一周的周日`() {
         // 服务端只给完整自然周：10-19（周一）~10-25（周日）这一周，标签必须写 10/25，
         // 否则 10-30 打开首页，最后一根柱下面写着 10/19，看着像半个月没更新。
@@ -142,6 +167,63 @@ class WeeklyEnergyTest {
         assertEquals("10/25", EnergyFormat.weekTick("第一周", "2026-10-25"))
         // 都给不出可用日期时保持原样，不崩
         assertEquals("--", EnergyFormat.weekTick(null, null))
+    }
+
+    @Test
+    fun `横轴最近一周写上周而不是具体日期`() {
+        // 今天 2026-10-31（周六）→ 最近一个完整周是 10/19 ~ 10/25，那一根写「上周」
+        val now = LocalDate.of(2026, 10, 31)
+        assertEquals(
+            "上周",
+            EnergyFormat.weekAxisLabel("2026-10-19", "2026-10-25", isLast = true, now = now),
+        )
+        // 其余各根仍是日期，不受影响
+        assertEquals(
+            "10/18",
+            EnergyFormat.weekAxisLabel("2026-10-12", "2026-10-18", isLast = false, now = now),
+        )
+    }
+
+    @Test
+    fun `数据滞后时最后一根不冒充上周`() {
+        // 接口晚一天出数，最后一根还停在 10/18：这时标「上周」会让人以为数据是新的。
+        // 宁可如实写日期，让它自己暴露「只到 10/18」
+        val now = LocalDate.of(2026, 10, 31)
+        assertEquals(
+            "10/18",
+            EnergyFormat.weekAxisLabel("2026-10-12", "2026-10-18", isLast = true, now = now),
+        )
+    }
+
+    @Test
+    fun `跨年时上周的判定按周一到周日`() {
+        // 2027-01-02（周六）→ 上周是 2026-12-21 ~ 12-27
+        val now = LocalDate.of(2027, 1, 2)
+        assertEquals(
+            "上周",
+            EnergyFormat.weekAxisLabel("2026-12-21", "2026-12-27", isLast = true, now = now),
+        )
+        // 跨年那一周（12/28 ~ 1/3）还没结束，不能算上周，照常写日期
+        assertEquals(
+            "1/3",
+            EnergyFormat.weekAxisLabel("2026-12-28", "2027-01-03", isLast = true, now = now),
+        )
+    }
+
+    @Test
+    fun `只有一根数据时也算上周`() {
+        val now = LocalDate.of(2026, 10, 31)
+        assertEquals(
+            "上周",
+            EnergyFormat.weekAxisLabel("2026-10-19", null, isLast = true, now = now),
+        )
+    }
+
+    @Test
+    fun `日期解析不出来时不强行写上周`() {
+        val now = LocalDate.of(2026, 10, 31)
+        assertEquals("第一周", EnergyFormat.weekAxisLabel("第一周", null, isLast = true, now = now))
+        assertEquals("--", EnergyFormat.weekAxisLabel(null, null, isLast = true, now = now))
     }
 
     @Test

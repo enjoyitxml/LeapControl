@@ -239,7 +239,7 @@ fun HomeScreen(
         val journalOn by runtime.journalEnabled
         var showInsuranceSheet by remember { mutableStateOf(false) }
         var showMaintenanceSheet by remember { mutableStateOf(false) }
-        // 目的地搜索弹层（首页「发送到车机」卡）
+        // 目的地搜索弹层（首页「车辆位置与目的地」卡里的「发送目的地」）
         var showDestination by remember { mutableStateOf(false) }
         // 行驶里程 / 能耗（独立接口，拿不到就静默保持上一次结果）
         val energySummary by runtime.mileageEnergyFlow.collectAsState()
@@ -267,6 +267,11 @@ fun HomeScreen(
         var controlling by remember { mutableStateOf<String?>(null) }
         // 只在「用户手动下拉刷新」时转圈；来自生命周期的自动刷新全程静默，避免闪动
         var refreshing by remember { mutableStateOf(false) }
+        // 位置卡的手动刷新年轮：用户下拉 / 点顶部刷新 / 切车时 +1。
+        // 车辆位置**不再跟着坐标变自动重拉**（行驶中车况十几秒一次，坐标每次都变，
+        // 一趟车程就是几百次逆地理 + 几百张静态地图，白白叫醒车机、吃高德额度），
+        // 只在进首页和这个计数变化时才重新问高德，见 rememberVehiclePlace。
+        var placeEpoch by remember { mutableStateOf(0) }
         var carName by remember { mutableStateOf(runtime.displayName()) }
         var showRenameDialog by remember { mutableStateOf(false) }
         var showPinDialog by remember { mutableStateOf(false) }
@@ -279,6 +284,8 @@ fun HomeScreen(
         var pendingAcOnTemp by remember { mutableStateOf<Int?>(null) }
         // 全屏空调页（点首页空调条进入）
         var showAcScreen by remember { mutableStateOf(false) }
+        // 找车页（点首页「车辆位置」卡进入）
+        var showFindCar by remember { mutableStateOf(false) }
         // 空调页里的指令在 PIN 验证完成后重放（记录命令名，含 acSetting: 合成命令）
         var pendingAcPanelCommand by remember { mutableStateOf<String?>(null) }
         // 设定温度的本地草稿：概览条与展开面板共用同一份，两处加减号才不会各调各的
@@ -389,7 +396,7 @@ fun HomeScreen(
         // 打开时向 MainScreen 汇报，让场景动画只在首页主界面跑
         val onMainPage = !showChargingCenter && !showSeatComfort && !showFridge && !showClimate &&
             !showAcScreen && !showScheduledAc && !showVehicleHealth && !showOta &&
-            !showControlEditor && !showBleKey && !showPlaybook
+            !showControlEditor && !showBleKey && !showPlaybook && !showFindCar
         LaunchedEffect(onMainPage) { onMainPageChange(onMainPage) }
 
         // ---- 系统返回（返回键 / 左右滑返回手势）：逐级退回，不再直接退出 App ----
@@ -409,6 +416,7 @@ fun HomeScreen(
                 }
                 showOta -> showOta = false
                 showVehicleHealth -> showVehicleHealth = false
+                showFindCar -> showFindCar = false
                 showAcScreen -> showAcScreen = false
                 showClimate -> showClimate = false
                 showFridge -> showFridge = false
@@ -535,12 +543,14 @@ fun HomeScreen(
             val unregister = runtime.registerNetworkRestoreListener()
             onDispose { unregister() }
         }
-        // 行驶中提高刷新频率：车在跑时挡位 / 车速变化快，靠「切前台才刷」跟不上，
-        // 停在首页主界面时每 12 秒静默回拉一次（不转圈、不改文案）
+        // 行驶中静默回拉车况：车在跑时挡位 / 车速 / 续航变化快，靠「切前台才刷」跟不上。
+        // 节奏是 **60 秒**（原来是 12 秒）：行驶中最敏感的是续航和空调，一分钟一档完全够用，
+        // 而 12 秒一档等于一趟车程发几百次请求 —— T-Box 醒着时对车电池影响很小，
+        // 但白白多花流量和请求额度，没必要。只停在本页时生效，且不转圈、不改文案。
         val drivingNow = status?.isDriving == true
         LaunchedEffect(drivingNow, onMainPage) {
             while (drivingNow && onMainPage) {
-                delay(12_000)
+                delay(60_000)
                 refresh()
             }
         }
@@ -985,6 +995,17 @@ fun HomeScreen(
                     showScheduledAc = true
                 },
             )
+        } else if (showFindCar) {
+            // 找车页：把车况里的经纬度画在大地图上，并给一个「导航到车辆」的出口。
+            // 位置与时间都从车况透传，页面自己不联网取车况（避免第二套刷新逻辑）
+            FindCarScreen(
+                runtime = runtime,
+                status = status,
+                reportedAt = lastUpdated,
+                // 找车页自己也能发目的地，回执走首页统一的那条横幅
+                onMessage = { actionMessage = it },
+                onBack = { showFindCar = false },
+            )
         } else if (showAcScreen) {
             // 首页空调条点进来的全屏空调页：温度草稿与首页共用（acTargetTemp），
             // 所以两处加减号不会各调各的
@@ -1221,7 +1242,7 @@ fun HomeScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(enabled = !refreshing) { refresh() },
+                            .clickable(enabled = !refreshing) { placeEpoch++; refresh() },
                     ) {
                         if (refreshing) {
                             CircularProgressIndicator(
@@ -1256,6 +1277,9 @@ fun HomeScreen(
                                     controlLayout = runtime.controlLayout()
                                     runtime.loadCachedStatus()
                                     refreshError = null
+                                    // 换了台车就是换个地方停：位置卡必须重取，
+                                    // 否则会拿上一辆车的图去画这一辆的位置
+                                    placeEpoch++
                                     refresh(force = true)
                                 }
                             }
@@ -1267,7 +1291,7 @@ fun HomeScreen(
             // ---- 可滚动内容区（续航 / 充电中心 / 车模 / 快捷控车 / 模块）----
             androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                 isRefreshing = refreshing,
-                onRefresh = { refresh(force = true, silent = false) },
+                onRefresh = { placeEpoch++; refresh(force = true, silent = false) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -1542,13 +1566,6 @@ fun HomeScreen(
                         onOpen = { showAcScreen = true },
                     )
 
-                    // 发送到车机：搜目的地 → 调起高德路径规划，手机与车机登同一账号即同步。
-                    // 卡片只负责开弹层，搜索与下发都在弹层里（见 DestinationSearch.kt）
-                    HomeCardId.DESTINATION -> DestinationSearchCard(
-                        hasKey = runtime.hasAmapKey(),
-                        onClick = { showDestination = true },
-                    )
-
                     // 胎压卡（左半，四轮数值 + 车模）+ 近 7 天行程卡（右半，每日里程柱状图）。
                     // 两张半屏卡合成一个可拖动条目：拆开时拖动过程中会出现「各占一行」的中间态。
                     HomeCardId.TIRE_TRIP -> Row(modifier = Modifier.fillMaxWidth()) {
@@ -1563,7 +1580,7 @@ fun HomeScreen(
                         )
                     }
 
-                    // 周能耗分布：上周总能耗环形图 + 行车 / 空调 / 其他占比
+                    // 周能耗分布：上周总能耗 + 一条三色比例带 + 三项明细（行车 / 空调 / 其他）
                     HomeCardId.COMPOSITION -> WeeklyEnergyCompositionCard(
                         composition = weeklyEnergy?.composition,
                     )
@@ -1594,7 +1611,21 @@ fun HomeScreen(
                         )
                     }
 
-                    // 相伴卡：提车天数 / 累计公里，背景图可在个性化里换。
+                    // 车辆位置与目的地：上半是地图缩略图（点开进找车页看大图），
+                    // 下方并排「导航到车辆」与「发送目的地」（后者开搜索弹层）。
+                    // 时间取 lastUpdated（车况报文时间）而不是「现在」：熄火后车机休眠、
+                    // 位置冻结在熄火点，只有这个时间能告诉用户这条位置还算不算数。
+                    HomeCardId.LOCATION -> VehicleLocationCard(
+                        runtime = runtime,
+                        status = currentStatus,
+                        reportedAt = lastUpdated,
+                        onOpen = { showFindCar = true },
+                        onSendDestination = { showDestination = true },
+                        onMessage = { actionMessage = it },
+                        refreshKey = placeEpoch,
+                    )
+
+                    // 相伴卡：提车天数 / 累计公里 / 累计用电，背景图可在个性化里换。
                     // 选的是用户自己的背景时同样把快捷切换压掉 —— 那张图按 3:1 裁过，
                     // 被随机换成内置的 6 张之一后找不回来。
                     HomeCardId.OWNERSHIP -> OwnershipCard(
@@ -1779,7 +1810,7 @@ fun HomeScreen(
 
         // （车辆健康弹窗 / 四季主题弹窗：入口按钮已移除，代码保留，后续可从设置页或我的页重新挂回）
 
-        // ---- 目的地搜索弹层：从首页「发送到车机」卡进入 ----
+        // ---- 目的地搜索弹层：从首页「车辆位置与目的地」卡的「发送目的地」进入 ----
         if (showDestination) {
             DestinationSearchSheet(
                 runtime = runtime,

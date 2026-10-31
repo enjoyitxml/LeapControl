@@ -63,16 +63,16 @@ import kotlinx.coroutines.launch
 
 // QQ 交流群群号定义在 AppCommunity.kt：更新弹窗的下载兜底文案也要用它。
 
-/** 入口卡片之间的间距：整页要在一屏里放完，12dp 收到 8dp（七条入口就是 24dp）。 */
+/** 入口卡片之间的间距：整页要在尽量少滚动的前提下看完，12dp 收到 8dp。 */
 private val ITEM_GAP = 8.dp
 
 /**
- * 「我的」页面：入口列表 —— 设置 / 个性化 / 支持开发者 / 开源协议与致谢 / 关于，
- * 其中「关于」内嵌「免责声明」「隐私条款」两个子入口，
+ * 「我的」页面：入口列表 —— 设置 / 个性化 / 玩法说明 / 支持开发者 / 开源协议与致谢 /
+ * 检查更新 / 意见反馈 / 关于，其中「关于」内嵌「免责声明」「隐私条款」两个子入口，
  * 其余项都下沉到各自的二级页；页面顶部是头像（可换内置卡通头像或相册照片），
  * 页面底部是 QQ 交流群页脚与退出登录。
  *
- * 「意见反馈」入口已按需求删除（问卷地址一并不再保留）。
+ * 「意见反馈」紧贴「关于」上方，点击交给系统浏览器打开问卷（地址见 [FEEDBACK_URL]）。
  * 「检查更新」入口由 [SHOW_UPDATE_CHECK] 控制，当前启用（启动自动检测 + 手动检查）。
  */
 @Composable
@@ -314,6 +314,20 @@ fun ProfileScreen(
                 }
                 Spacer(Modifier.height(ITEM_GAP))
             }
+
+            // 意见反馈：紧贴「关于」上方，是整页最后一个「有事找开发者」的入口。
+            // 点击交给系统浏览器（问卷要登录 QQ / 微信态，内置 WebView 拿不到系统账号）。
+            // 不放进 SHOW_DEV_ENTRIES 分支：反馈入口面向所有用户，跟着外链开关一起关掉没道理。
+            ProfileItem(
+                R.drawable.ic_feedback,
+                "意见反馈",
+                "两分钟问卷，说说哪里不顺手或还缺什么",
+            ) {
+                if (!runtime.openExternal(FEEDBACK_URL)) {
+                    Toast.makeText(context, "没有找到可用的浏览器", Toast.LENGTH_SHORT).show()
+                }
+            }
+            Spacer(Modifier.height(ITEM_GAP))
 
             // 关于放最底部：内嵌「免责声明」「隐私条款」入口
             ProfileItem(

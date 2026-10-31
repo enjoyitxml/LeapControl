@@ -8,3 +8,12 @@ package com.leapcontrol.app.ui
  * 弹窗里必须能直接看到群号，不能只写「加群」两个字让用户自己去别处找。
  */
 internal const val QQ_GROUP = "179731222"
+
+/**
+ * 意见反馈问卷地址（腾讯问卷）。
+ *
+ * 「我的 → 意见反馈」用系统浏览器打开，不在 App 内嵌 WebView：
+ * 问卷需要登录 QQ / 微信态，内置内核拿不到系统账号，用户会被卡在登录页。
+ * 换问卷时只改这里，页面代码不用动。
+ */
+internal const val FEEDBACK_URL = "https://wj.qq.com/s2/28445754/rmv1/"

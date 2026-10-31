@@ -31,7 +31,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -64,16 +63,17 @@ import androidx.compose.ui.window.DialogProperties
 import com.leapcontrol.app.AmapPoi
 import com.leapcontrol.app.R
 import com.leapcontrol.app.MapIntents
+import com.leapcontrol.app.NavMode
 import kotlinx.coroutines.launch
 
 /**
- * 「发送到车机」——目的地搜索。
+ * 「发送目的地到车机」——目的地搜索。
  *
- * 两件事拆开：
- *  - [DestinationSearchCard]：首页一张横条卡，点一下开弹层；
- *  - [DestinationSearchSheet]：搜索弹层，搜到 POI 后可以「发送到车机」或直接「导航」。
+ * 这里**只剩弹层**了：原来还有一张「将目的地发送到车机」的横条卡，
+ * 已经并进首页「车辆位置」卡（见 [VehicleLocationCard]）——
+ * 两个功能同源（同一把高德 Web Key、同一趟上车前的操作），
+ * 卡片上留两个并排的动作，比占两张卡的版面清楚，也少一次滚动。
  *
- * 卡片默认位置紧跟空调条：它是出发前的高频动作，埋进「设置 → 高级设置」里等于不存在。
  * 唯一的前置条件是高德 Web Key，而弹层第一次打开就是申请教程 + 当场粘贴保存，
  * 配置不必再回设置页（那边「高德 Web Key」的入口留作备用）。
  *
@@ -81,66 +81,6 @@ import kotlinx.coroutines.launch
  * 手机与车机只要登录同一个高德账号，上车后车机就会提示继续导航 ——
  * 零跑官方没有对外的推送接口，这是唯一不需要抓协议的做法。
  */
-@Composable
-fun DestinationSearchCard(
-    /** 高德 Web Key 是否可用：没有的话卡片照样能点（进去看教程），但副标题要说实话。 */
-    hasKey: Boolean,
-    onClick: () -> Unit,
-) {
-    val C = LocalAppColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            // 与空调条同高，两张卡上下相邻时不至于一高一矮
-            .heightIn(min = CARD_MIN_HEIGHT)
-            .clip(RoundedCornerShape(8.dp))
-            .background(C.panelBg, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .background(C.accent.copy(alpha = 0.13f), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            // 定位图钉 + 仪表台轮廓的自绘图标（用户提供的图形）：
-            // 比 Material 的实心箭头更像「把地点交给车」，也和首页其它卡片的图标语言一致
-            Icon(
-                painter = painterResource(R.drawable.ic_send_to_car),
-                contentDescription = null,
-                tint = C.accent,
-                modifier = Modifier.size(22.dp),
-            )
-        }
-        Spacer(Modifier.width(11.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "将目的地发送到车机",
-                color = C.textPrimary,
-                fontSize = 14.5.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = if (hasKey) "搜个地址，手机与车机高德同账号即同步" else "还没配置高德 Key，点开看看怎么填",
-                color = C.textSecondary,
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Icon(
-            Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-            contentDescription = null,
-            tint = C.textSecondary,
-            modifier = Modifier.size(19.dp),
-        )
-    }
-}
 
 /**
  * 目的地搜索弹层（屏幕正中的圆角卡片）。
@@ -334,7 +274,12 @@ fun DestinationSearchSheet(
                                         PoiRow(
                                             poi = poi,
                                             onNavigate = {
-                                                MapIntents.navigate(context, poi.latitude, poi.longitude, poi.name)
+                                                // 「发送目的地」这条线全是开车场景（地址要发给车机），
+                                                // 所以这里明确指定驾车，不能吃 NavMode 默认的步行
+                                                MapIntents.navigate(
+                                                    context, poi.latitude, poi.longitude, poi.name,
+                                                    mode = NavMode.CAR,
+                                                )
                                                 onDismiss()
                                             },
                                             onSend = {
@@ -447,7 +392,7 @@ private fun KeySetup(
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "也可以到「设置 → 发送到车机 → 高德 Web Key」里填",
+                text = "也可以到「设置 → 车辆位置与目的地 → 高德 Web Key」里填",
                 color = C.textSecondary,
                 fontSize = 10.5.sp,
                 lineHeight = 14.sp,
@@ -716,9 +661,6 @@ private fun ActionButton(
         )
     }
 }
-
-/** 卡片最小高度：与首页空调条取同一数值，两块卡上下挨着时高度才对得上。 */
-private val CARD_MIN_HEIGHT = 74.dp
 
 /** 结果区上限定高：留够 4~5 条，再多就滚动，弹层不会随结果数量忽高忽低。 */
 private val RESULT_AREA_HEIGHT = 296.dp

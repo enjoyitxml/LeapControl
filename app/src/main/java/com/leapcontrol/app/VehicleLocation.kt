@@ -180,8 +180,15 @@ object VehicleLocationDomain {
     }
 
     /**
-     * Reads named fields first, then the verified numeric primary signal IDs.
-     * Unverified signal IDs are deliberately ignored in P0.
+     * 依次尝试三种键：命名字段 → `3724`/`3725` → `2`/`3`。
+     *
+     * API 文档里「车辆位置」这一行写的是 **`2` / `3724` = longitude、`3` / `3725` = latitude**
+     * —— 同一对信号在不同车型/网关下用两套键名下发。
+     *
+     * 先前这里只认命名与 3724/3725，而 [SignalTable.decode] 会把 3724/3725 折成
+     * `latitude`/`longitude`、**只把 `2`/`3` 原样留在解码结果里**，
+     * 于是只报 `2`/`3` 的车型永远取不到坐标 —— 首页卡和找车页一直停在
+     * 「车机还没上报过位置」，而车其实一直在正常上报。
      */
     fun selectFromDecodedOrRaw(values: Map<String, Any?>): SelectedCoordinatePair {
         val named = selectCoordinatePair(values)
@@ -191,7 +198,15 @@ object VehicleLocationDomain {
             latitude = values[PRIMARY_LATITUDE_SIGNAL],
             longitude = values[PRIMARY_LONGITUDE_SIGNAL]
         )
-        return SelectedCoordinatePair(rawPrimary, VehicleLocationSource.PRIMARY)
+        if (rawPrimary.hasAnyValue()) {
+            return SelectedCoordinatePair(rawPrimary, VehicleLocationSource.PRIMARY)
+        }
+
+        val verified = CoordinatePair(
+            latitude = values[VERIFIED_LATITUDE_SIGNAL],
+            longitude = values[VERIFIED_LONGITUDE_SIGNAL]
+        )
+        return SelectedCoordinatePair(verified, VehicleLocationSource.VERIFIED_SIGNAL_MAP)
     }
 
     fun validate(
@@ -333,6 +348,49 @@ data class SelectedCoordinatePair(
     val pair: CoordinatePair,
     val source: VehicleLocationSource
 )
+
+/**
+ * 「位置取不到」的一句话原因 —— **只用于诊断，不参与任何业务判断**。
+ *
+ * 同一个「没有位置」背后至少有四种情况：报文里根本没有位置信号、键名是没收录的那一对、
+ * 值不是数字、或者车机自己报了个 0,0。用户在手机上无从分辨，
+ * 而我们看不到他的车况报文 —— 所以 debug 构建把这句话显示在找车页底部，
+ * 一张截图就能定位该往哪修。release 构建不显示（见 `FindCarScreen`）。
+ */
+object VehicleLocationDiagnostics {
+    /** 目前认识的坐标键（含两套数字信号 ID）。 */
+    private val CANDIDATE_KEYS = listOf(
+        VehicleLocationDomain.PRIMARY_LATITUDE_KEY,
+        VehicleLocationDomain.PRIMARY_LONGITUDE_KEY,
+        VehicleLocationDomain.PRIMARY_LATITUDE_SIGNAL,
+        VehicleLocationDomain.PRIMARY_LONGITUDE_SIGNAL,
+        VehicleLocationDomain.VERIFIED_LATITUDE_SIGNAL,
+        VehicleLocationDomain.VERIFIED_LONGITUDE_SIGNAL,
+    )
+
+    fun describe(values: Map<String, Any?>): String? {
+        val seen = CANDIDATE_KEYS.filter { values[it] != null }
+        if (seen.isEmpty()) return "报文里没有位置信号（2/3、3724/3725 都没出现）"
+        val pair = VehicleLocationDomain.selectFromDecodedOrRaw(values).pair
+        val latitude = parse(pair.latitude)
+        val longitude = parse(pair.longitude)
+        if (latitude == null || longitude == null) {
+            val raw = listOfNotNull(pair.latitude, pair.longitude).joinToString(" / ")
+            return "位置键 ${seen.joinToString("、")} 的值不是数字：$raw"
+        }
+        if (latitude == 0.0 && longitude == 0.0) return "上报的坐标是 0,0（车机还没定位或已休眠）"
+        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) {
+            return "坐标越界：$latitude, $longitude"
+        }
+        return null
+    }
+
+    private fun parse(value: Any?): Double? = when (value) {
+        null -> null
+        is Number -> value.toDouble().takeIf { it.isFinite() }
+        else -> value.toString().trim().toDoubleOrNull()
+    }
+}
 
 /** Converts the protocol's status-time value into the epoch used by freshness rules. */
 object VehicleLocationTimestamp {

@@ -25,12 +25,14 @@ import com.leapcontrol.app.ChargePlanCyclesHelper
 import com.leapcontrol.app.ChargeSchedule
 import com.leapcontrol.app.ChargeStatus
 import com.leapcontrol.app.Commands
+import com.leapcontrol.app.ControlPollBackoff
 import com.leapcontrol.app.ControlResultPollingPolicy
 import com.leapcontrol.app.FridgeControlCommand
 import com.leapcontrol.app.FridgeMode
 import com.leapcontrol.app.FridgeStyle
 import com.leapcontrol.app.LeapmotorApi
 import com.leapcontrol.app.MileageEnergyParser
+import com.leapcontrol.app.ParkingPhotoStore
 import com.leapcontrol.app.MileageEnergySummary
 import com.leapcontrol.app.ScheduledAcPlan
 import com.leapcontrol.app.ScheduledAcState
@@ -51,7 +53,9 @@ import com.leapcontrol.app.Vehicle
 import com.leapcontrol.app.VehicleChargePlan
 import com.leapcontrol.app.WeeklyEnergyData
 import com.leapcontrol.app.WeeklyEnergyParser
+import com.leapcontrol.app.VehicleLocationDiagnostics
 import com.leapcontrol.app.VehicleLocationDomain
+import com.leapcontrol.app.VehicleLocationStore
 import com.leapcontrol.app.VehicleOtaInfo
 import com.leapcontrol.app.VehicleCapabilityDetector
 import com.leapcontrol.app.VehicleCapabilities
@@ -77,6 +81,8 @@ class NeedPinException : Exception("需要先设置 4 位控车密码")
  * 控车结果轮询的最长等待时间。
  * 车辆休眠时 T-Box 需要先被唤醒再执行，实测常在 5~15 秒区间内回执；
  * 官方抓包文档同样给出最长 24 秒的窗口。
+ *
+ * 配合 [ControlPollBackoff] 的递进节奏，这 20 秒里只会发出 5 次探询（原来 20 次）。
  */
 private const val CONTROL_RESULT_MAX_WAIT_MS = 20_000L
 /** 里程 / 能耗缓存有效期：15 分钟。老服务限频，不必每次进首页都打一次。 */
@@ -163,6 +169,11 @@ data class CarStatus(
     val tires: List<TireInfo> = emptyList(),
     val latitude: Double? = null,
     val longitude: Double? = null,
+    /**
+     * 坐标取不到时的一句话原因（[VehicleLocationDiagnostics]）。
+     * 只在 debug 构建的找车页显示，用于用户拍照回报；正常有坐标时为 null。
+     */
+    val locationHint: String? = null,
     val acTargetTemp: String? = null,
     val acWindLevel: String? = null,
     val acCircle: String? = null,
@@ -683,6 +694,11 @@ class AppRuntime(context: Context) {
         customCarCacheVin = null
         _carModelRevision.value += 1
         runCatching { statusPrefs.edit().clear().apply() }
+        // 停车位置缓存必须一起清：那个目录里存着车停在哪、旁边是什么地址，
+        // 换账号后还留着，等于把上一位车主的行踪给了下一个人
+        VehicleLocationStore.clear(appContext)
+        // 停车位照片同理，而且它更直接：照片里常能看到车牌、车位号、甚至车库门牌
+        ParkingPhotoStore.clear(appContext)
     }
 
     // ---------------- 车辆配置识别（冰箱 / 天窗 / 哨兵 / 座椅等） ----------------
@@ -857,6 +873,9 @@ class AppRuntime(context: Context) {
         val st = runCatching { JSONObject(raw) }.getOrNull()
         _status.value = st?.let { runCatching { buildStatus(it, observeCaps = false) }.getOrNull() }
         _lastUpdated.value = runCatching { statusPrefs.getLong(statusTimeKey(vin), 0L) }.getOrDefault(0L)
+        // 磁盘缓存也写进进程内快照：磁贴展开时能立刻套用上一次已知状态。
+        // 时间戳用缓存时间而不是 now —— 几小时前的报文不能当「刚拉到的」用。
+        StatusSnapshot.put(_status.value, _lastUpdated.value)
     }
 
     /** 已加载能力所对应的 VIN，用于切换车辆时判断是否需要重新加载。 */
@@ -931,6 +950,9 @@ class AppRuntime(context: Context) {
         // 结果通过 statusFlow 下发：首页直接读到新值，不需要 UI 自己再 setState
         _status.value = status
         _lastUpdated.value = System.currentTimeMillis()
+        // 同步给控制中心磁贴：用户在车里手动关掉的空调 / 后备箱，
+        // 靠的就是这条新鲜报文把磁贴的高亮改回来（磁贴展开时直接读这里，不再发请求）
+        StatusSnapshot.put(status, _lastUpdated.value)
         status
     }
 
@@ -1109,6 +1131,7 @@ class AppRuntime(context: Context) {
             tires = parseTires(st),
             latitude = parseLocation(st).first,
             longitude = parseLocation(st).second,
+            locationHint = locationHint(st),
             acTargetTemp = acSetting["temperature"],
             acWindLevel = acSetting["windlevel"],
             acCircle = acSetting["circle"]?.let {
@@ -1377,7 +1400,7 @@ class AppRuntime(context: Context) {
             ?.removeSuffix("%")
             ?.toDoubleOrNull()
 
-    /** 车辆经纬度（优先命名信号，其次已验证的数字信号）。 */
+    /** 车辆经纬度（优先命名信号，其次 3724/3725，最后 2/3；见 [VehicleLocationDomain]）。 */
     private fun parseLocation(st: JSONObject): Pair<Double?, Double?> {
         val values = HashMap<String, Any?>()
         val keys = st.keys()
@@ -1388,6 +1411,17 @@ class AppRuntime(context: Context) {
         val pair = VehicleLocationDomain.selectFromDecodedOrRaw(values).pair
         return (pair.latitude?.toString()?.toDoubleOrNull()) to
             (pair.longitude?.toString()?.toDoubleOrNull())
+    }
+
+    /** 「位置取不到」的原因（仅供 debug 构建显示，正常有坐标时为 null）。 */
+    private fun locationHint(st: JSONObject): String? {
+        val values = HashMap<String, Any?>()
+        val keys = st.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            values[k] = st.opt(k)
+        }
+        return VehicleLocationDiagnostics.describe(values)
     }
 
     /**
@@ -2115,8 +2149,14 @@ class AppRuntime(context: Context) {
         return value?.takeIf { it.isNotEmpty() }
     }
 
-    /** 轮询节奏：首次 1s，随后每 1s 一次（官方约定首包 1s、间隔 500ms，最长 24s）。 */
-    private fun resultPollDelayMs(attempt: Int): Long = if (attempt == 0) 1_000L else 1_000L
+    /**
+     * 轮询节奏：1s → 2s → 3s → 5s 递进（见 [ControlPollBackoff]）。
+     *
+     * 以前这里两个分支都写 1000L，注释里说的「首次 1s、随后递进」其实没实现，
+     * 结果是一条指令问满 20 次。车端回执基本都在前 6 秒，后面十几次纯属空问。
+     * 首个探询时刻不变，慢场景（等 T-Box 唤醒）也本来就问不出更早的结果。
+     */
+    private fun resultPollDelayMs(attempt: Int): Long = ControlPollBackoff.delayMs(attempt)
 
     /** 校验并保存 4 位控车密码。 */
     suspend fun verifyAndSavePin(pin: String): Boolean = withContext(Dispatchers.IO) {

@@ -2,6 +2,7 @@ package com.leapcontrol.app
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.util.Locale
 
@@ -9,7 +10,8 @@ import java.util.Locale
  * 近 N 周百公里能耗的一个点。
  *
  * [weekStart] / [weekEnd] 是服务端原样返回的 ISO 日期（`2026-10-19`），
- * 展示前统一走 [EnergyFormat.weekTick] 取这一周的右端点（周日）转成 `10/25`。
+ * 展示前统一走 [EnergyFormat.weekTick] 取这一周的右端点（周日）转成 `10/25`；
+ * 折线图横轴最右一根改用 [EnergyFormat.weekAxisLabel]，会写成「上周」。
  */
 data class WeeklyEnergyPoint(
     val weekStart: String,
@@ -297,10 +299,53 @@ object EnergyFormat {
      * 所以**优先用 weekStart + 6 天**算右端点，只有 weekStart 解析不出来时才退回 weekEnd。
      */
     fun weekTick(weekStart: String?, weekEnd: String?): String {
-        val start = parseWeekDate(weekStart)
-        val last = start?.plusDays(6) ?: parseWeekDate(weekEnd)
+        val last = weekEndDate(weekStart, weekEnd)
         if (last != null) return "${last.monthValue}/${last.dayOfMonth}"
         return weekLabel(weekStart ?: weekEnd)
+    }
+
+    /** 横轴上「最近一周」的标签文案。 */
+    const val LAST_WEEK_LABEL = "上周"
+
+    /**
+     * 折线图横轴标签：普通周写 `10/19`，**最近一周写「上周」**。
+     *
+     * 用户原话：最近一周不要显示具体日期，改成「上周」。理由很直接 —— 那一根柱子
+     * 表示的本来就是「上周」这回事，`10/25` 只是它的右端点，写在轴上反而要多想一步。
+     *
+     * 但只在它**确实是上周**时才这么写：接口偶尔晚一天出数，最后一根可能还停在
+     * 上上周，那时标「上周」就是错的（用户会以为数据没更新），这种情况退回日期，
+     * 让它自己暴露「数据只到 10/18」这件事。
+     */
+    fun weekAxisLabel(
+        weekStart: String?,
+        weekEnd: String?,
+        isLast: Boolean,
+        now: LocalDate = LocalDate.now(),
+    ): String {
+        val fallback = weekTick(weekStart, weekEnd)
+        if (!isLast) return fallback
+        val last = weekEndDate(weekStart, weekEnd) ?: return fallback
+        val lastSunday = now.with(DayOfWeek.MONDAY).minusWeeks(1).plusDays(6)
+        return if (last == lastSunday) LAST_WEEK_LABEL else fallback
+    }
+
+    /** 这一周的右端点：`weekStart + 6` 优先，解析不出来才退回 `weekEnd`。 */
+    private fun weekEndDate(weekStart: String?, weekEnd: String?): LocalDate? =
+        parseWeekDate(weekStart)?.plusDays(6) ?: parseWeekDate(weekEnd)
+
+    /**
+     * 「上周」的日期区间（周一 → 周日），形如 `10.19 – 10.25`。
+     *
+     * 服务端的周能耗构成只下发三项度数、不带日期，可卡片上不写清楚是哪一周，
+     * 用户就分不清「上周」是刚到的那一周还是上上周。日期按设备本地日期倒推：
+     * 上周一 = 本周一 − 7 天（ISO 周，周一为首日）。
+     */
+    fun lastWeekRange(now: LocalDate = LocalDate.now()): String {
+        val monday = now.with(DayOfWeek.MONDAY).minusWeeks(1)
+        val sunday = monday.plusDays(6)
+        return "${monday.monthValue}.${monday.dayOfMonth} – " +
+            "${sunday.monthValue}.${sunday.dayOfMonth}"
     }
 
     /** `2026-10-19` / `2026/10/19` / `10-19`（补当前年份）→ [LocalDate]；解析不了返回 null。 */

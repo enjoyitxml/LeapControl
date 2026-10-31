@@ -58,6 +58,43 @@ class OwnershipStatsTest {
     }
 
     @Test
+    fun `累计用电千分位取整且零值不认`() {
+        assertEquals("8,246", OwnershipStats.formatKwh(8245.6))
+        assertEquals("1,250", OwnershipStats.formatKwh(1250.4))
+        assertEquals("1,251", OwnershipStats.formatKwh(1250.5))
+        // 0 度多半是字段没返回，不能画成「累计用电 0 kWh」
+        assertNull(OwnershipStats.formatKwh(0.0))
+        assertNull(OwnershipStats.formatKwh(-3.0))
+        assertNull("上百万度是想定不了的脏数据", OwnershipStats.formatKwh(3_000_000.0))
+        assertNull(OwnershipStats.formatKwh(null))
+    }
+
+    @Test
+    fun `综合能耗一位小数且拒绝离谱值`() {
+        assertEquals("12.3", OwnershipStats.formatConsumption(12.34))
+        assertEquals("18.0", OwnershipStats.formatConsumption(18.0))
+        // 服务端偶尔把「剩余电量百分比」认成能耗，87 kWh/100km 这种要挡掉
+        assertNull(OwnershipStats.formatConsumption(87.0))
+        assertNull(OwnershipStats.formatConsumption(0.4))
+        assertNull(OwnershipStats.formatConsumption(null))
+    }
+
+    @Test
+    fun `第三行按有几个数拼几个数`() {
+        assertEquals(
+            "累计用电 8,246 kWh · 百公里 12.3 kWh",
+            OwnershipStats.energyLine(8245.6, 12.34),
+        )
+        // 只有累计电量
+        assertEquals("累计用电 8,246 kWh", OwnershipStats.energyLine(8245.6, null))
+        // 只有百公里电耗
+        assertEquals("百公里平均 12.3 kWh", OwnershipStats.energyLine(null, 12.34))
+        // 两个都没有就不画这一行（不是显示「--」）
+        assertNull(OwnershipStats.energyLine(null, null))
+        assertNull(OwnershipStats.energyLine(0.0, 0.0))
+    }
+
+    @Test
     fun `提车天数在顶层能被解析`() {
         val resp = JSONObject(
             """

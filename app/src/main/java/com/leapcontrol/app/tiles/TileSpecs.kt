@@ -88,17 +88,25 @@ object QuickTiles {
     // 于是每次点磁贴都只发开启指令 —— 用户看到的就是「点开了之后没办法取消」。
     // 空调卡片当初也是同一个坑（见 ComfortScreens 里那段注释）。
     //
-    // 车况仍然有用，但只用来**校准**（用户可能在车里手动开了后备箱），而且信号为 null 时一律不动本地状态。
+    // 车况只用来**校准显示**（用户可能在车里手动开了后备箱，或者手动关了空调）：
+    // 磁贴展开时读车况，非 null 就按车况修正，null 一律不动本地状态。
+    // 点击方向仍以本地为准，所以「读不到信号」的车型也不会退化成只能开不能关。
 
     fun isOn(context: Context, spec: TileSpec): Boolean =
         prefsOf(context).getBoolean("state_${spec.id}", false)
 
-    fun setOn(context: Context, spec: TileSpec, on: Boolean) {
-        prefsOf(context).edit()
-            .putBoolean("state_${spec.id}", on)
-            // 同一份时间戳既是「最后一次动作时间」，也用来挡住过期车况把状态改回去
-            .putLong("state_at_${spec.id}", System.currentTimeMillis())
-            .apply()
+    /**
+     * 写开合态。
+     *
+     * [fromUser] 决定要不要刷新「最后一次用户动作时间」`state_at`：
+     * - 用户点磁贴（true）→ 两样都写，这个时间戳既是动作记录，也是「别拿更旧的车况覆盖我」的凭据；
+     * - 车况校准（false）→ **只写状态**。校准不是用户动作，写进去会让之后 8 秒的宽限期
+     *   误以为是刚点过，反而把真正的用户点击挡在外面。
+     */
+    fun setOn(context: Context, spec: TileSpec, on: Boolean, fromUser: Boolean = true) {
+        val editor = prefsOf(context).edit().putBoolean("state_${spec.id}", on)
+        if (fromUser) editor.putLong("state_at_${spec.id}", System.currentTimeMillis())
+        editor.apply()
     }
 
     /** 上一次由用户（或指令回写）改动这块磁贴状态的时间。 */
