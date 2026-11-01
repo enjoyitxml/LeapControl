@@ -128,6 +128,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.collectAsState
+import com.leapcontrol.app.AcSwitchIntent
 import com.leapcontrol.app.ChargePlanCyclesHelper
 import com.leapcontrol.app.ChargeSchedule
 import com.leapcontrol.app.EnergyFormat
@@ -383,6 +384,26 @@ fun HomeScreen(
         }
         val acTargetTemp = AcTempDraft.shown(acOnNow, remoteAcTemp, pendingAcTempDraft)
 
+        // ---- 空调开关的本地意图 ----
+        // 点下去先按意图显示（车端 acSwitch 上报滞后 2~5 秒，等它回显会觉得「点了没反应」），
+        // 车端回报了同一状态、或超过 GIVE_UP_MS 还没认，就把显示交还给车况。
+        // 判定规则见 [AcSwitchIntent]。
+        var acSwitchIntent by remember { mutableStateOf<Boolean?>(null) }
+        var acIntentAt by remember { mutableStateOf(0L) }
+        // 空调开关指令是否在途：在途期间的重复点击只更新意图，由收敛循环补发，不并发打网关
+        var acSwitchInFlight by remember { mutableStateOf(false) }
+        LaunchedEffect(status?.acOn, acSwitchIntent) {
+            val intent = acSwitchIntent ?: return@LaunchedEffect
+            val since = System.currentTimeMillis() - acIntentAt
+            if (AcSwitchIntent.keep(status?.acOn, intent, since) == null) {
+                acSwitchIntent = null
+                return@LaunchedEffect
+            }
+            // 车端迟迟不认：到点后老老实实显示车端状态，别长期假装已经关了
+            delay(AcSwitchIntent.GIVE_UP_MS)
+            if (acSwitchIntent == intent) acSwitchIntent = null
+        }
+
         LaunchedEffect(journalOn) {
             vehicles = runCatching { runtime.vehicles() }.getOrDefault(emptyList())
             // 首页可能挂着保养 / 保险卡：零记的数据是按需加载的，这里主动读一次，
@@ -606,8 +627,10 @@ fun HomeScreen(
                     // 没发出去就把界面上刚跳的温度退回去，别让页面显示一个车上根本没有的温度
                     onFailed?.invoke()
                     actionMessage = friendlyError(e)
+                } finally {
+                    // 被取消（离开首页 / 切页）时也要复位，否则温度按钮会永久禁用
+                    controlling = null
                 }
-                controlling = null
             }
         }
 
@@ -670,30 +693,64 @@ fun HomeScreen(
          *
          * [temperature] 是界面上当前的设定温度。车端没有单独的调温指令，温度只是「开空调」
          * 指令里的一个字段（[Commands.buildAc]），所以只有开启时才有意义——关闭指令一律不带。
-         * 指令返回后强制回拉车况（refresh），把真实的 acSwitch / acSetting 状态刷回界面。
+         *
+         * ## 为什么不再是「一次点击一个协程」
+         * 空调回执窗口最长 8 秒（见 [AppRuntime.control] 里 170 的短窗口），加上回拉车况，
+         * 一次点击原来会把开关锁十几秒。用户在锁定期内再点，点击被 `busy` 完全吞掉；
+         * 等锁一放开、车端又还没上报，开关会弹回旧状态，用户就按着错的方向继续点 ——
+         * 这就是「点好几遍才生效」的来源。
+         *
+         * 现在：
+         * 1. 点击先记意图（[acSwitchIntent]），界面立刻跟手，不等车端上报；
+         * 2. 指令**串行**发：在途期间的点击只更新意图，这一条回来后按最新意图补发。
+         *    既不并发撞网关，也保证最终落在用户最后一次点的状态；
+         * 3. 每条指令回来立刻回拉车况，再等 [AC_SETTLE_DELAY_MS] 收敛一次（不阻塞循环）；
+         * 4. [acSwitchInFlight] / [controlling] 一律在 finally 复位：协程被取消时
+         *    卡在 true 会让开关永久失效（和之前充电枪那颗按钮踩过同一个坑）。
          */
         fun runAcCommand(turnOn: Boolean, temperature: Int? = null) {
+            acSwitchIntent = turnOn
+            acIntentAt = System.currentTimeMillis()
+            // 在途：意图已经更新，收敛循环回来后自然会补发，不在这里再开一条
+            if (acSwitchInFlight) return
+            val presetTemp = temperature ?: acTargetTemp
             scope.launch {
-                val command = if (turnOn) "acOn" else "acOff"
-                val preset = if (turnOn) temperature else null
-                controlling = command
-                actionMessage = null
+                acSwitchInFlight = true
                 try {
-                    actionMessage = runtime.control(command, presetAcTemperature = preset)
-                    // 关键：回拉真实车况，刷新首页空调状态展示
-                    refresh(force = true)
-                    // 车端上报 acSwitch / acSetting 通常滞后几秒，再拉一次让状态收敛，
-                    // 避免刚下发就回读到旧值、状态展示与实际不符
-                    delay(AC_SETTLE_DELAY_MS)
-                    refresh(force = true)
-                } catch (e: NeedPinException) {
-                    pendingAcCommand = command
-                    pendingAcOnTemp = preset
-                    showPinDialog = true
-                } catch (e: Exception) {
-                    actionMessage = friendlyError(e)
+                    var sent: Boolean? = null
+                    while (true) {
+                        val target = AcSwitchIntent.nextTarget(acSwitchIntent, sent) ?: break
+                        sent = target
+                        val command = if (target) "acOn" else "acOff"
+                        controlling = command
+                        actionMessage = null
+                        try {
+                            actionMessage = runtime.control(
+                                command,
+                                presetAcTemperature = if (target) presetTemp else null,
+                            )
+                        } catch (e: NeedPinException) {
+                            pendingAcCommand = command
+                            pendingAcOnTemp = if (target) presetTemp else null
+                            showPinDialog = true
+                            return@launch
+                        } catch (e: Exception) {
+                            // 没发出去：撤掉意图，别让界面停在「已开 / 已关」的假状态
+                            acSwitchIntent = null
+                            actionMessage = friendlyError(e)
+                        }
+                        refresh(force = true)
+                        // 车端 acSwitch / acSetting 上报滞后 2~3 秒，再收敛一次。
+                        // 放到独立协程里，避免拖住收敛循环、也别挡下一次点击
+                        scope.launch {
+                            delay(AC_SETTLE_DELAY_MS)
+                            refresh(force = true)
+                        }
+                    }
+                } finally {
+                    controlling = null
+                    acSwitchInFlight = false
                 }
-                controlling = null
             }
         }
 
@@ -921,9 +978,12 @@ fun HomeScreen(
                     showPinDialog = true
                 } catch (e: Exception) {
                     actionMessage = friendlyError(e)
+                } finally {
+                    // 充电枪指令最长要等 10 秒回执；中途被取消（切页 / 重建）也必须复位，
+                    // 否则 controlling 卡在 "chargeGun"，按钮会永远停在禁用的「正在停止…」，点了像没反应
+                    controlling = null
+                    chargeGunAction = null
                 }
-                controlling = null
-                chargeGunAction = null
             }
         }
 
@@ -971,6 +1031,8 @@ fun HomeScreen(
                 onBack = { showClimate = false },
                 status = status,
                 busy = controlling != null,
+                // 开关意图与首页空调条共用：点下去立刻跟手，不等车端上报
+                pendingOn = acSwitchIntent,
                 onCommand = { cmd ->
                     // 空调开/关改成显式指令路由，不再依赖状态推断
                     when (cmd) {
@@ -1012,7 +1074,10 @@ fun HomeScreen(
             AcScreen(
                 status = status,
                 caps = capabilities,
+                // 风量 / 循环 / 温度都是整组下发，指令在途时锁住这些入口避免互相覆盖；
+                // 电源按钮不看 busy，点下去立刻按意图显示（见 AcPowerButton）
                 busy = controlling != null,
+                pendingOn = acSwitchIntent,
                 targetTemp = acTargetTemp,
                 // 正在下发的指令名：车控指令最长要等 24 秒才回执，这段时间页面必须有东西在动，
                 // 否则用户以为点了没反应（以前二级页连结果条都看不到）
@@ -1555,7 +1620,10 @@ fun HomeScreen(
                     // 点卡片空白处进入全屏空调页（风量 / 出风方向 / 座椅舒适…都在那一页）
                     HomeCardId.AC -> AcQuickCard(
                         status = currentStatus,
+                        // 温度加减仍按「有任意空调指令在途」禁用：连发两条 170 会互相覆盖
+                        // （风量 / 循环 / 温度都是整组下发）。电源按钮不看这个值，点了就放行。
                         busy = controlling != null,
+                        pendingOn = acSwitchIntent,
                         target = acTargetTemp,
                         onStep = { stepAcTemp(it) },
                         onToggle = { turnOn, temp ->

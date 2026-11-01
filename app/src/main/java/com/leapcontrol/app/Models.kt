@@ -1108,7 +1108,9 @@ object Commands {
         "sentryOn" -> ControlCommand("400", """{"operation":"on"}""", "开启哨兵模式")
         "sentryOff" -> ControlCommand("400", """{"operation":"off"}""", "关闭哨兵模式")
         "startCharging" -> ControlCommand("193", """{"value":"start"}""", "开始充电")
-        "stopCharging" -> ControlCommand("193", """{"value":"stop"}""", "停止充电")
+        // 停止充电的入参是 finish，不是 stop：车端 OBC 只认 start / finish，
+        // 传 stop 云端照样回「受理」(code 0)，但车端毫无反应 —— 这正是「点停止充电没反应」的根因
+        "stopCharging" -> ControlCommand("193", """{"value":"finish"}""", "停止充电")
         "unlockCharger" -> ControlCommand("192", """{"operation":"unlock"}""", "解锁充电枪")
         "fridgeOn" -> buildFridgeControl(FridgeControlCommand(enable = true, mode = FridgeMode.COLD, temp = FRIDGE_DEFAULT_TEMP, style = FridgeStyle.NORMAL))
         "fridgeOff" -> buildFridgeControl(FridgeControlCommand(enable = false, mode = FridgeMode.COLD, temp = FRIDGE_DEFAULT_TEMP, style = FridgeStyle.NORMAL))

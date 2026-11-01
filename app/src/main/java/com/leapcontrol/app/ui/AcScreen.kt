@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leapcontrol.app.AcSwitchIntent
 import com.leapcontrol.app.Commands
 import com.leapcontrol.app.VehicleCapabilities
 
@@ -72,6 +73,13 @@ fun AcScreen(
     caps: VehicleCapabilities,
     busy: Boolean,
     targetTemp: Int,
+    /**
+     * 本地开关意图：用户刚点下的目标状态，null 表示以车况为准。
+     *
+     * 与首页空调条共用同一份意图，点下去立刻跟手；车端 acSwitch 上报滞后 2~5 秒，
+     * 只看 [status] 会「点了半天不亮」，用户就会反复点。
+     */
+    pendingOn: Boolean? = null,
     /** 正在下发的指令文案（如「主驾加热2档」），null 表示空闲。 */
     busyLabel: String?,
     /** 重新回拉车况：运行状态区右上角的「刷新」。 */
@@ -87,7 +95,7 @@ fun AcScreen(
 ) {
     val C = LocalAppColors.current
 
-    val acOn = status?.acOn == true
+    val acOn = AcSwitchIntent.shown(status?.acOn, pendingOn)
     val indoor = normalizeTemp(status?.interiorTemp)
 
     // 车端当前值：页面上所有「调一项、其余保持不变」的指令都拿它做底
@@ -289,7 +297,8 @@ fun AcScreen(
                             if (acOn) C.textPrimary.copy(alpha = 0.06f)
                             else C.accent.copy(alpha = 0.14f),
                         )
-                        .clickable(enabled = !busy) { onPower(!acOn) }
+                        // 与左侧圆钮一致：指令在途也放行，重复/反向点击由上层意图合并
+                        .clickable { onPower(!acOn) }
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     contentAlignment = Alignment.Center,
                 ) {

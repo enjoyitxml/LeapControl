@@ -501,7 +501,8 @@ private fun FindCarPlaceholder(ui: VehiclePlaceUi) {
         VehiclePlaceUi.NoLocation -> "没有可用的车辆位置" to "上车启动一次车机后就会有"
         VehiclePlaceUi.NoKey -> "未配置高德 Key" to "点下面「发送目的地」按引导填一次即可"
         VehiclePlaceUi.Failed -> "地图没加载出来" to "检查网络后点右上角刷新"
-        is VehiclePlaceUi.Ready -> "正在获取位置" to "通常一秒内完成"
+        // 走到这里说明「地址有了、图没取到」：再写「正在获取」会让人一直干等
+        is VehiclePlaceUi.Ready -> "地图没画出来" to "点右上角刷新重试，地址是准的"
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(

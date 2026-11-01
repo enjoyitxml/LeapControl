@@ -29,6 +29,16 @@ data class VehiclePlace(
      * 「这条位置本身有多旧」，而不是「我上次问云端是什么时候」。0 表示不知道。
      */
     val seenAt: Long = 0L,
+    /**
+     * 磁盘上那几张地图**画的是哪个点**。
+     *
+     * 必须单独记，不能默认「等于 [latitude]/[longitude]」：拉图可能失败（超时 / 额度用完），
+     * 而地址与坐标照样写进去了 —— 于是元数据是 B 点、图还是 A 点。加载时只比坐标就会
+     * 把 A 的图当成 B 的图用，而且永远不再重拉（用户报的「地图不更新、刷新也没用」）。
+     * 0,0 表示不知道（老缓存没有这两个键）。
+     */
+    val mapLat: Double = 0.0,
+    val mapLng: Double = 0.0,
     /** 磁盘上是否已经有这张图（只看文件在不在，不预先解码，避免组合期做 IO）。 */
     val hasThumb: Boolean = false,
     val hasFull: Boolean = false,
@@ -54,6 +64,20 @@ object VehicleLocationRules {
         if (!isValid(latitude, longitude)) return false
         val km = distanceKm(stored.latitude, stored.longitude, latitude, longitude)
         return km <= SAME_SPOT_RADIUS_KM
+    }
+
+    /**
+     * 缓存里那几张地图，画的是不是**当前这个位置**。
+     *
+     * 只比坐标（[sameSpot]）不够 —— 拉图失败时元数据照样会更新，图上留下的还是上一个地点。
+     * 所以要拿图片自己的归属点 [VehiclePlace.mapLat] 去比；0,0（老缓存）一律算「不知道」，
+     * 宁可多拉一次图，也不能把别处的图钉在当前地址上。
+     */
+    fun mapMatches(place: VehiclePlace?, latitude: Double?, longitude: Double?): Boolean {
+        if (place == null || latitude == null || longitude == null) return false
+        if (!isValid(latitude, longitude)) return false
+        if (!isValid(place.mapLat, place.mapLng)) return false
+        return distanceKm(place.mapLat, place.mapLng, latitude, longitude) <= SAME_SPOT_RADIUS_KM
     }
 
     /** 坐标是否可信：排除 null、非有限值、0,0 与越界（车端偶尔上报空值）。 */
@@ -301,6 +325,9 @@ object VehicleLocationStore {
             address = json.optString("address").takeIf { it.isNotBlank() },
             // 老缓存没有这个键：退回 at（那时它同时也被当成位置时间用）
             seenAt = json.optLong("seen", 0L).takeIf { it > 0L } ?: json.optLong("at", 0L),
+            // 老缓存没有归属信息 → 0,0（「不知道」）。加载侧会因此重拉一次图，正是想要的
+            mapLat = json.optDouble("mapLat", 0.0),
+            mapLng = json.optDouble("mapLng", 0.0),
             hasThumb = mapFile(context, full = false, dark = false).length() > 0L,
             hasFull = mapFile(context, full = true, dark = false).length() > 0L,
         )
@@ -309,6 +336,10 @@ object VehicleLocationStore {
     /**
      * 落盘。传 null 的图表示「这次没拿到新图」，**不动磁盘上已有的那张** ——
      * 断网时重新进首页，不该把上次存下来的地图擦成空白。
+     *
+     * 但「不动旧图」有个前提：旧图画的就是这个位置。位置变了还没拿到新图时，
+     * 旧图必须一起丢掉 —— 留着它，界面就会拿上一处的图配这一处的地址，
+     * 而且因为「有图有地址」被判成缓存命中，从此再也不重拉（用户报的地图不更新）。
      *
      * [dark] 决定写进哪一组文件名：图是跟着配色走的一份，不能混。
      */
@@ -326,14 +357,41 @@ object VehicleLocationStore {
     ) {
         if (!VehicleLocationRules.isValid(latitude, longitude)) return
         runCatching {
+            // 上一份记录里那张图，是不是这个位置的
+            val previous = load(context)
+            val previousMapsThisSpot = VehicleLocationRules.mapMatches(previous, latitude, longitude)
+            if (!previousMapsThisSpot) {
+                // 位置换了（或老缓存没有归属信息）：四张图一起删。
+                // 只补了一张缩略图时尤其重要 —— 大图若留着上一处的，找车页会把别的地方当成车位。
+                dropMaps(context)
+            }
+
             thumb?.let { writeBitmap(mapFile(context, full = false, dark = dark), it) }
             full?.let { writeBitmap(mapFile(context, full = true, dark = dark), it) }
+
+            // 图上确实画着某个点才写归属：留着 0,0 表示「这张图不可信」，
+            // 下次加载一律当作没图，重新拉一次。
+            // 沿用旧归属只在上一次本来就画这个位置时成立 —— 否则那是别人的坐标
+            val hasMap = hasAnyMap(context)
+            val mapLat = when {
+                !hasMap -> 0.0
+                previousMapsThisSpot && previous != null -> previous.mapLat.takeIf { it != 0.0 } ?: latitude
+                else -> latitude
+            }
+            val mapLng = when {
+                !hasMap -> 0.0
+                previousMapsThisSpot && previous != null -> previous.mapLng.takeIf { it != 0.0 } ?: longitude
+                else -> longitude
+            }
+
             val json = JSONObject().apply {
                 put("lat", latitude)
                 put("lng", longitude)
                 put("at", reportedAt)
                 put("seen", seenAt)
                 put("address", address.orEmpty())
+                put("mapLat", mapLat)
+                put("mapLng", mapLng)
             }
             val target = metaFile(context)
             val temp = File(target.parentFile, "$META.new")
@@ -344,6 +402,21 @@ object VehicleLocationStore {
             }
             // 顺手清掉上一版取景留下的图：不清也不会再被读到，只是白占空间
             prune(context)
+        }
+    }
+
+    /** 四张地图文件（缩略 / 大图 × 浅 / 深）里有没有任意一张还在。 */
+    private fun hasAnyMap(context: Context): Boolean =
+        listOf(false, true).any { full ->
+            listOf(false, true).any { dark -> mapFile(context, full, dark).length() > 0L }
+        }
+
+    /** 把地图图全删掉（元数据保留）：宁可显示占位，也不能把别处的图当成本车位。 */
+    private fun dropMaps(context: Context) {
+        listOf(false, true).forEach { full ->
+            listOf(false, true).forEach { dark ->
+                runCatching { mapFile(context, full, dark).delete() }
+            }
         }
     }
 

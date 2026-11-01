@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.cos
 import kotlin.math.sin
+import com.leapcontrol.app.AcSwitchIntent
 import com.leapcontrol.app.FridgeControlCommand
 import com.leapcontrol.app.FridgeMode
 import com.leapcontrol.app.FridgeStyle
@@ -572,6 +573,8 @@ fun ClimateScreen(
     busyOn: Boolean = false,
     /** 「关闭空调」指令在途。 */
     busyOff: Boolean = false,
+    /** 本地开关意图：用户刚点下的目标状态，null 表示以车况为准（见 [AcSwitchIntent]）。 */
+    pendingOn: Boolean? = null,
     onOpenScheduledAc: () -> Unit = {},
     /**
      * 开关空调时把当前设定温度一起下发。为空则退回 [onCommand]（不带温度）。
@@ -582,7 +585,7 @@ fun ClimateScreen(
     onAcPower: ((Boolean, Int) -> Unit)? = null,
 ) {
     val C = LocalAppColors.current
-    val acOn = status?.acOn
+    val acOn = pendingOn ?: status?.acOn
 
     // 关机态调出来的预设温度：只存在界面上，等「开启空调」时带下去
     val remoteTemp = AcTempDraft.parse(status?.acTargetTemp)

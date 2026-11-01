@@ -555,6 +555,10 @@ internal fun rememberVehiclePlace(
     val dark = LocalAppColors.current.isDark
     // key 用「有没有坐标」而不是坐标本身：见上面策略第 3 段
     val hasCoords = VehicleLocationRules.isValid(latitude, longitude)
+    // 上一次已经处理过的两个「手动刷新」计数。用来分清这次重跑是**用户按的刷新**
+    // 还是别的原因（主题切换、坐标从无到有）：只有前者才该跳过缓存、真的再拉一次图。
+    // -1 起手：首帧两个计数都是 0，不该被当成「用户刚按过刷新」
+    val manualGate = remember { intArrayOf(-1, -1) }
 
     val ui by produceState<VehiclePlaceUi>(
         initialValue = VehiclePlaceUi.Loading,
@@ -565,6 +569,9 @@ internal fun rememberVehiclePlace(
         refreshKey,
         dark,
     ) {
+        val manualRefresh = (manualGate[0] in 0 until retry) || (manualGate[1] in 0 until refreshKey)
+        manualGate[0] = retry
+        manualGate[1] = refreshKey
         if (!VehicleLocationRules.isValid(latitude, longitude)) {
             // 这一帧没拿到可信坐标（车机休眠 / 还没上报 / 报了 0,0）：先别急着说「没有位置」。
             // 熄火后位置本来就应该冻结在熄火点，本地缓存里那个点就是答案 ——
@@ -594,7 +601,11 @@ internal fun rememberVehiclePlace(
 
         val cached = withContext(Dispatchers.IO) { VehicleLocationStore.load(context) }
         val sameSpot = VehicleLocationRules.sameSpot(cached, lat, lng)
-        val cachedMap = if (sameSpot) {
+        // 坐标在同一处还不够：那张图必须确实是画这个点的（拉图失败时元数据会先更新）。
+        // 只比坐标的话，上一处的图会被当成本地缓存一直用下去，刷新按钮也救不回来。
+        // 用户按了刷新时一律不认缓存 —— 他按下去的语义就是「再取一次」，图没变就该是图没变，
+        // 而不是我们偷偷拿旧图敷衍他（一张静态图而已，多这一次请求值）
+        val cachedMap = if (!manualRefresh && sameSpot && VehicleLocationRules.mapMatches(cached, lat, lng)) {
             withContext(Dispatchers.IO) { VehicleLocationStore.loadMap(context, full = full, dark = dark) }
         } else {
             null

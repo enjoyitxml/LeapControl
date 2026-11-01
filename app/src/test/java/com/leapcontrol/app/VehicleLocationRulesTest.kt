@@ -103,4 +103,50 @@ class VehicleLocationRulesTest {
     fun `坐标兜底文案是五位小数`() {
         assertEquals("31.23042, 121.47370", VehicleLocationRules.coordinateText(shanghaiLat, shanghaiLng))
     }
+
+    /**
+     * 缓存里的图到底是哪一处的图。
+     *
+     * 这条是「地图不更新、刷新也没用」的根因守门人：元数据（坐标/地址）和图片是分开写的，
+     * 拉图失败时元数据照样前进，图还留在上一处。只看 [VehicleLocationRules.sameSpot]
+     * 会把上一处的图当成本地缓存，从此不再重拉。
+     */
+    @Test
+    fun `图归属别的点就不算这个位置的图`() {
+        // 元数据已经是新地点，但图还是上一处的（差 2 公里）
+        val moved = VehiclePlace(
+            latitude = shanghaiLat,
+            longitude = shanghaiLng,
+            reportedAt = 1_000L,
+            mapLat = 28.705910,
+            mapLng = 115.821550,
+        )
+        assertTrue(VehicleLocationRules.sameSpot(moved, shanghaiLat, shanghaiLng))
+        assertFalse(VehicleLocationRules.mapMatches(moved, shanghaiLat, shanghaiLng))
+        // 换成图自己那个点，就成立
+        assertTrue(VehicleLocationRules.mapMatches(moved, 28.705910, 115.821550))
+    }
+
+    @Test
+    fun `老缓存没有图归属信息时一律重拉`() {
+        // mapLat/mapLng 默认 0,0 = 不知道图是哪一处的
+        val legacy = VehiclePlace(shanghaiLat, shanghaiLng, reportedAt = 1_000L)
+        assertTrue(VehicleLocationRules.sameSpot(legacy, shanghaiLat, shanghaiLng))
+        assertFalse(VehicleLocationRules.mapMatches(legacy, shanghaiLat, shanghaiLng))
+    }
+
+    @Test
+    fun `同一处漂移几十米仍认那张图`() {
+        val stored = VehiclePlace(
+            latitude = shanghaiLat,
+            longitude = shanghaiLng,
+            reportedAt = 1_000L,
+            mapLat = shanghaiLat,
+            mapLng = shanghaiLng,
+        )
+        // 约 33 米：图上那个点还在视野里，没必要为漂移重拉一张
+        assertTrue(VehicleLocationRules.mapMatches(stored, shanghaiLat + 0.0003, shanghaiLng))
+        assertFalse(VehicleLocationRules.mapMatches(stored, null, shanghaiLng))
+        assertFalse(VehicleLocationRules.mapMatches(null, shanghaiLat, shanghaiLng))
+    }
 }

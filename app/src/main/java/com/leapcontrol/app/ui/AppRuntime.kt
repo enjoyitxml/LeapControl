@@ -15,6 +15,7 @@ import com.leapcontrol.app.AmapPoi
 import com.leapcontrol.app.ApkUpdater
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.BuildConfig
+import com.leapcontrol.app.ChargingControlRules
 import com.leapcontrol.app.GitHubUpdate
 import com.leapcontrol.app.HomeCardId
 import com.leapcontrol.app.HomeCardLayout
@@ -91,6 +92,18 @@ class NeedPinException : Exception("需要先设置 4 位控车密码")
  * 配合 [ControlPollBackoff] 的递进节奏，这 20 秒里只会发出 5 次探询（原来 20 次）。
  */
 private const val CONTROL_RESULT_MAX_WAIT_MS = 20_000L
+
+/**
+ * 空调（170）的回执窗口，比通用指令短得多。
+ *
+ * 空调是用户在首页最常点、也最在意「点了有没有反应」的一条：原来跟锁车一样等满 20 秒，
+ * 期间首页开关一直处于在途状态、车况也不回拉，用户看到的就是「点了十几秒没动静」，
+ * 于是反复点，每次又都多等一轮。
+ *
+ * 实测空调回执 1~5 秒就回；8 秒窗口内探询点是 1 / 3 / 6 秒（3 次），窗口到了还没回执
+ * 就走 [AppRuntime.control] 里那段「回读车况再判定」的兜底，不再死等。
+ */
+private const val AC_RESULT_MAX_WAIT_MS = 8_000L
 /** 里程 / 能耗缓存有效期：15 分钟。老服务限频，不必每次进首页都打一次。 */
 private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
 
@@ -2177,7 +2190,11 @@ class AppRuntime(context: Context) {
         // 轮询执行结果：车端 T-Box 唤醒 + 执行通常需要数秒，官方抓包协议允许最长 24 秒。
         // 之前只等约 2 秒就在车辆真正执行前放弃，返回的「已下发」无法反映真实结果，
         // 也让用户无法判断到底是「车没收到」还是「收到了没执行」。
-        val deadline = System.currentTimeMillis() + CONTROL_RESULT_MAX_WAIT_MS
+        //
+        // 空调单独用短窗口：它就在首页第一屏，等 20 秒等于把开关按死在「在途」，
+        // 超时后走下面的回读车况兜底，结论一样拿得到。
+        val windowMs = if (command.cmdid == "170") AC_RESULT_MAX_WAIT_MS else CONTROL_RESULT_MAX_WAIT_MS
+        val deadline = System.currentTimeMillis() + windowMs
         var attempt = 0
         var lastCode: String? = null
         while (System.currentTimeMillis() < deadline) {
@@ -2375,10 +2392,15 @@ class AppRuntime(context: Context) {
     /** 解锁充电枪物理锁止销（cmdid 192）。 */
     suspend fun unlockCharger(): String = controlChargeGun("unlockCharger")
 
-    /** 开始充电（cmdid 193）。 */
+    /** 开始充电（cmdid 193，`{"value":"start"}`）。 */
     suspend fun startCharging(): String = controlChargeGun("startCharging")
 
-    /** 停止充电（cmdid 193）。 */
+    /**
+     * 停止充电（cmdid 193，`{"value":"finish"}`）。
+     *
+     * 入参用 `finish` 而不是 `stop` —— 车端 OBC 只认 `start` / `finish`，
+     * 传 `stop` 云端会受理但车不动，见 [ChargingControlRules] 的说明。
+     */
     suspend fun stopCharging(): String = controlChargeGun("stopCharging")
 
     private suspend fun controlChargeGun(commandName: String): String = withContext(Dispatchers.IO) {
@@ -2387,18 +2409,26 @@ class AppRuntime(context: Context) {
         val cmd = Commands.build(commandName)
         val result = withNetworkRetry { api.sendControl(cmd, pin) }
         // 没有回执号就无处追问，直接按「已受理」返回，不要空转满 10 秒
-        if (result.hasPollingId()) {
-            // 解锁枪锁止销 / 起停充电都是机械动作，车端确认比锁车慢得多（实测 3~8 秒），
-            // 用普通指令那 4 次（约 2 秒）必然问不到，永远落到「指令已下发…」。
-            for (attempt in 0 until ControlResultPollingPolicy.chargeGunMaxAttempts) {
-                Thread.sleep(ControlResultPollingPolicy.delayBeforeAttempt(attempt))
-                // 单次查询失败不该让整条指令失败，继续问下一轮
-                val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull() ?: continue
-                val value = (resp.opt("result") ?: resp.opt("code"))?.toString()
-                if (value == "0" || value == "200") return@withContext "${cmd.label}成功"
-            }
+        if (!result.hasPollingId()) {
+            return@withContext ChargingControlRules.resultMessage(commandName, confirmed = false, state = null)
         }
-        "指令已下发，请在车辆上确认执行结果"
+        // 解锁枪锁止销 / 起停充电都是机械动作，车端确认比锁车慢得多（实测 3~8 秒），
+        // 用普通指令那 4 次（约 2 秒）必然问不到，永远落到「指令已下发…」。
+        for (attempt in 0 until ControlResultPollingPolicy.chargeGunMaxAttempts) {
+            Thread.sleep(ControlResultPollingPolicy.delayBeforeAttempt(attempt))
+            // 单次查询失败不该让整条指令失败，继续问下一轮
+            val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull() ?: continue
+            // data=0 是「车端还在执行」，此时网关虽然 result=0 也不能算完成，继续问
+            val confirmed = ChargingControlRules.queryConfirmed(
+                result = resp.opt("result"),
+                code = resp.opt("code"),
+                data = resp.opt("data"),
+            )
+            if (confirmed) return@withContext ChargingControlRules.resultMessage(commandName, true, null)
+        }
+        // 没拿到确认回执：回读一次车况，用真实充电状态给结论，别再拿「已下发」糊过去
+        val state = runCatching { ChargeStatus.state(api.getVehicleState()) }.getOrNull()
+        ChargingControlRules.resultMessage(commandName, confirmed = false, state = state)
     }
 
     /** 读取车端已保存的定时空调计划。 */

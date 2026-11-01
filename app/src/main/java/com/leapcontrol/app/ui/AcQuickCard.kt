@@ -26,9 +26,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leapcontrol.app.AcSwitchIntent
 import com.leapcontrol.app.R
 
 /**
@@ -74,6 +72,13 @@ import com.leapcontrol.app.R
 fun AcQuickCard(
     status: CarStatus?,
     busy: Boolean,
+    /**
+     * 本地意图：用户刚点下的目标状态，null 表示以车况为准。
+     *
+     * 车端 acSwitch 上报滞后 2~5 秒，只靠 [status] 显示的话点下去界面不动，
+     * 用户会以为没生效而反复点（见 [com.leapcontrol.app.AcSwitchIntent]）。
+     */
+    pendingOn: Boolean? = null,
     /** 点电源开关：参数是「目标状态」与「要下发的设定温度」。关闭时温度会被忽略。 */
     onToggle: (Boolean, Int) -> Unit,
     /**
@@ -89,9 +94,9 @@ fun AcQuickCard(
 ) {
     val C = LocalAppColors.current
 
-    // 上一次点击的意图：只在指令进行中（busy）用来先点亮，指令结束就不再参考
-    var lastIntentOn by remember { mutableStateOf(false) }
-    val acOn = status?.acOn == true || (busy && lastIntentOn)
+    // 显示状态：意图优先。以前是「busy 期间才点亮」，指令一结束就弹回旧车况，
+    // 车端还没上报时等于刚点亮又熄灭，用户只会再点一次
+    val acOn = AcSwitchIntent.shown(status?.acOn, pendingOn)
 
     val indoor = normalizeTemp(status?.interiorTemp)
 
@@ -227,10 +232,7 @@ fun AcQuickCard(
                 angle = fanAngle,
                 size = POWER_SIZE * k,
                 iconSize = POWER_ICON * k,
-                onClick = {
-                    lastIntentOn = !acOn
-                    onToggle(!acOn, target)
-                },
+                onClick = { onToggle(!acOn, target) },
             )
         }
     }
@@ -240,7 +242,10 @@ fun AcQuickCard(
  * 电源开关：圆形底 + 四叶风扇，空调开启时淡绿底、主题色图标并持续旋转。
  *
  * 这是空调唯一的「下发」入口：关→开时会把界面上的设定温度一起带下去。
- * busy 期间不可点，图标半透明表示指令在途。
+ *
+ * **指令在途时不再禁用这颗按钮**：以前 busy 一锁就是十几秒（空调回执最长 20 秒），
+ * 用户点第二下完全没反馈，只会以为按坏了。现在点击一律放行，重复/反向的意图由
+ * [AcSwitchIntent] 在上层合并，按钮只靠图标变淡提示「正在执行」。
  *
  * 首页空调条与全屏空调页共用（后者传更大的 size）。
  */
@@ -259,7 +264,7 @@ internal fun AcPowerButton(
             .size(size)
             .clip(CircleShape)
             .background(if (acOn) C.accent.copy(alpha = 0.16f) else fanCircleBg(C.isDark))
-            .clickable(enabled = !busy, onClick = onClick),
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(

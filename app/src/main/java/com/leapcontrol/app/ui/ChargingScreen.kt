@@ -96,10 +96,12 @@ fun ChargingScreen(
     val chargeState = status?.chargeState
     val charging = chargeState == 1 || (chargeState == null && status?.charging == true)
     val charged = chargeState == 2
-    // 插着枪才显示「解锁充电枪 / 开始充电」——没插枪时这两颗按钮点了也是空转
-    val gunConnected = when {
+    // 插着枪才显示「解锁充电枪 / 开始充电」——没插枪时这两颗按钮点了也是空转。
+    // 车况的 chargeState 只有 0（未插枪）才算没插；预约等待 4 / 暂停 6 都还插着枪。
+    // 另外交流/直流输入信号也是「插着枪」的直接证据，免得某些车型 chargeState 给 0 时按钮整排消失。
+    val gunConnected = status?.chargeCableConnected == true || when {
         chargeState != null -> chargeState != 0
-        else -> status?.chargeCableConnected == true
+        else -> false
     }
 
     // 功率 / 剩余时间：充电中才有意义，其余状态明确写「未充电」「已充满」，
