@@ -633,7 +633,7 @@ fun InsuranceSheet(
  * 与「记一笔」那层保持同一套观感（圆角 26dp、顶部标题 + 取消、点外部关闭）。
  */
 @Composable
-private fun SheetShell(
+internal fun SheetShell(
     title: String,
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,

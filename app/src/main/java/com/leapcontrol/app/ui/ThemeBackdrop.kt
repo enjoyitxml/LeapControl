@@ -27,11 +27,18 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import kotlin.math.floor
+import kotlin.math.roundToInt
 
 /**
  * 场景画面覆盖的高度：从屏幕顶端（含状态栏）到空调控件上沿。
@@ -41,7 +48,9 @@ import kotlin.math.floor
  */
 internal val SCENE_HEIGHT = 508.dp
 
-/** 动态场景的循环周期：慢一点才有氛围，快了像故障。 */
+/**
+ * 动态场景的循环周期：慢一点才有氛围，快了像故障。
+ */
 private const val SCENE_CYCLE_MS = 24_000f
 
 /**
@@ -89,15 +98,24 @@ fun ThemeBackdrop(
     // 配色只跟主题有关，别在每帧绘制时重新构造
     val palette = remember(theme) { theme.palette() }
     val scene = theme.scene
+    val density = LocalDensity.current
+    // 静态场景的烘焙缓存：画一遍存成位图，之后每次绘制只是一次贴图。
+    // key 里带上 veilBrush，换了主题 / 雾色就会重烘一张。
+    val bake = remember(theme, dark, veilBrush) { SceneBake() }
+    /**
+     * 能不能烘焙。
+     *
+     * 只有「场景自身不动」的主题才烘：它每一帧画出来都完全一样，提前画好没有任何视觉差异。
+     * 动态主题必须每帧按相位重画，烘焙反而会把画面钉死，所以仍然走实时绘制。
+     */
+    val bakeable = !theme.animated
 
     Spacer(
         modifier = modifier
             .fillMaxWidth()
             .height(sceneHeight)
             .drawWithCache {
-                // 下面这几样每帧都要用，但只在尺寸变化时才需要重建
-                val layerPaint = Paint()
-                val layerBounds = Rect(0f, 0f, size.width, size.height)
+                // 淡出蒙层只在尺寸变化时重建一次，别每帧 new 一个 Brush
                 val fadeBrush = Brush.verticalGradient(
                     0.00f to Color.White,
                     0.30f to Color.White,
@@ -106,17 +124,96 @@ fun ThemeBackdrop(
                     0.90f to Color.White.copy(alpha = 0.06f),
                     1.00f to Color.Transparent,
                 )
-                onDrawBehind {
-                    drawIntoCanvas { canvas ->
-                        canvas.saveLayer(layerBounds, layerPaint)
-                        paintScene(scene, phase.value, palette)
-                        if (veilBrush != null) drawRect(brush = veilBrush)
-                        drawRect(brush = fadeBrush, blendMode = BlendMode.DstIn)
-                        canvas.restore()
+                // ---- 静态主题：烘焙成位图 ----
+                // 为什么非要这么做：原来这一层靠 `canvas.saveLayer(...) + DstIn` 做淡出，
+                // 而 saveLayer 在 GPU 上**每一帧都要开一块离屏缓冲**（508dp 全宽，约 6MB），
+                // 画完再混合回主画布。即使画面一动不动、即使 Content 层被图层缓存住，
+                // 这条指令照样每帧执行 —— 首页上下滑动时它和滚动抢的就是这份显存带宽。
+                // 烘焙之后，滑动期间这一层只剩一次纹理采样，没有离屏、没有混合来回。
+                val baked: ImageBitmap? = if (bakeable && !bake.failed) {
+                    val w = size.width.roundToInt().coerceAtLeast(1)
+                    val h = size.height.roundToInt().coerceAtLeast(1)
+                    if (!bake.matches(w, h)) {
+                        // 烘焙失败（极端尺寸 / 显存不够）不能连累 App：标记失败，
+                        // 这个组合退回下面的实时绘制路径，代价只是回到优化前的性能。
+                        bake.image = try {
+                            renderSceneBitmap(w, h, density) {
+                                paintScene(scene, STATIC_PHASE, palette)
+                                if (veilBrush != null) drawRect(brush = veilBrush)
+                                drawRect(brush = fadeBrush, blendMode = BlendMode.DstIn)
+                            }
+                        } catch (t: Throwable) {
+                            null
+                        }
+                        if (bake.image == null) {
+                            bake.failed = true
+                        } else {
+                            bake.width = w
+                            bake.height = h
+                        }
+                    }
+                    bake.image
+                } else {
+                    null
+                }
+
+                if (baked != null) {
+                    onDrawBehind {
+                        drawImage(
+                            image = baked,
+                            dstSize = IntSize(baked.width, baked.height),
+                        )
+                    }
+                } else {
+                    val layerPaint = Paint()
+                    val layerBounds = Rect(0f, 0f, size.width, size.height)
+                    onDrawBehind {
+                        drawIntoCanvas { canvas ->
+                            canvas.saveLayer(layerBounds, layerPaint)
+                            paintScene(scene, phase.value, palette)
+                            if (veilBrush != null) drawRect(brush = veilBrush)
+                            drawRect(brush = fadeBrush, blendMode = BlendMode.DstIn)
+                            canvas.restore()
+                        }
                     }
                 }
             },
     )
+}
+
+/** 静态场景的烘焙缓存：尺寸没变就一直复用同一张图。 */
+private class SceneBake {
+    var image: ImageBitmap? = null
+    var width = 0
+    var height = 0
+
+    /** 烘过一次失败就不再重试，直接走实时绘制，免得每帧都抛一次异常。 */
+    var failed = false
+
+    fun matches(w: Int, h: Int): Boolean = image != null && width == w && height == h
+}
+
+/**
+ * 把一段 [DrawScope] 绘制烘焙成一张 ARGB_8888 位图。
+ *
+ * 位图本身就是一块透明的离屏画布，所以 `DstIn` 淡出可以直接叠在上面，
+ * 不需要再套一层 `saveLayer` —— 这也是烘焙能省掉每帧离屏分配的原因。
+ */
+private fun renderSceneBitmap(
+    width: Int,
+    height: Int,
+    density: Density,
+    draw: DrawScope.() -> Unit,
+): ImageBitmap {
+    val bitmap = ImageBitmap(width, height)
+    val canvas = androidx.compose.ui.graphics.Canvas(bitmap)
+    CanvasDrawScope().draw(
+        density = density,
+        layoutDirection = LayoutDirection.Ltr,
+        canvas = canvas,
+        size = androidx.compose.ui.geometry.Size(width.toFloat(), height.toFloat()),
+    ) { draw() }
+    return bitmap
 }
 
 /**
@@ -210,12 +307,8 @@ fun ThemeSwatch(
  * @param current 当前相位
  * @param deltaNanos 距上次绘制的纳秒数；非正数（时钟异常）时原样返回，不推进
  */
-internal fun advanceScenePhase(current: Float, deltaNanos: Long): Float {
-    if (deltaNanos <= 0L) return current
-    val next = current + deltaNanos / (SCENE_CYCLE_MS * 1_000_000f)
-    // 取小数部分落到 [0,1)：手动 floor，避免 % 对负数出意外
-    return next - floor(next)
-}
+internal fun advanceScenePhase(current: Float, deltaNanos: Long): Float =
+    advanceLoopPhase(current, deltaNanos, SCENE_CYCLE_MS.toInt())
 
 /**
  * 场景动画进度。

@@ -427,6 +427,13 @@ data class JournalData(
     /** 最近一次用总里程差分推算出的「当天里程」，用来判断是否需要补写。 */
     val odometerKm: Double? = null,
     val odometerDay: String? = null,
+    /**
+     * 上次充电的起点（见 [ChargeCycle]）。null = 还没记过。
+     *
+     * 这是**观测出来的**派生数据，不是用户记的账，所以不进 [isEmpty]：
+     * 只有一条起点、没有任何账单的账本，仍然算「空账本」。
+     */
+    val chargeAnchor: ChargeAnchor? = null,
     /** 心愿单：想去还没去的城市。打卡成功会自动从这里移除。 */
     val wishes: List<CityWish> = emptyList(),
     /** 保养计划：填了才提醒，null = 没设置。 */
@@ -491,6 +498,7 @@ data class JournalData(
         insurance?.let { put("insurance", it.toJson()) }
         odometerKm?.let { put("odometerKm", it) }
         odometerDay?.let { put("odometerDay", it) }
+        chargeAnchor?.let { put("chargeAnchor", it.toJson()) }
     }
 
     companion object {
@@ -535,6 +543,7 @@ data class JournalData(
                 dailyKm = daily,
                 odometerKm = raw.opt("odometerKm")?.toString()?.toDoubleOrNull(),
                 odometerDay = raw.optString("odometerDay").takeIf { it.isNotBlank() },
+                chargeAnchor = ChargeAnchor.fromJson(raw.optJSONObject("chargeAnchor")),
                 // 心愿单按加入时间正序：先想去的排前面，像一张「要去的清单」
                 wishes = wishes.sortedBy { it.added },
                 maintenance = MaintenancePlan.fromJson(raw.optJSONObject("maintenance")),

@@ -1,5 +1,6 @@
 package com.leapcontrol.app.ui
 
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -120,6 +122,8 @@ fun SettingsScreen(
     val powerOverride by runtime.powerTypeOverride
     // 排查「滑动卡不卡」用的：能区分「掉帧」和「屏幕本来就只有 60Hz」两件事
     val frameStatsOn by runtime.frameStatsVisible
+    // 滑动性能日志开关：开着时每次首页滑动都会落一份逐帧日志，供排查掉帧
+    val perfLogOn by runtime.perfLogEnabled
     // 官方图标那套带商标风险，默认不暴露，解锁开关在「高级设置」里
     val iconSwitcherOn by runtime.iconSwitcherVisible
 
@@ -495,6 +499,29 @@ fun SettingsScreen(
                 checked = frameStatsOn,
                 onCheckedChange = { runtime.setFrameStatsVisible(it) },
             )
+            Spacer(Modifier.height(10.dp))
+            SwitchRow(
+                label = "记录滑动性能日志",
+                desc = "开启后每次首页上下滑动都会落一份逐帧日志（帧间隔/掉帧/主线程/GPU耗时），用于定位掉帧",
+                checked = perfLogOn,
+                onCheckedChange = { runtime.setPerfLogEnabled(it) },
+            )
+            if (perfLogOn) {
+                val logCount = PerfLogger.listLogs().size
+                ClickRow(
+                    title = "导出性能日志",
+                    desc = if (logCount == 0) "暂无日志，先回首页滑动几下再回来导出" else "已采集 $logCount 份，点此分享最近一份",
+                    icon = Icons.Default.Share,
+                    onClick = {
+                        val latest = PerfLogger.listLogs().firstOrNull()
+                        if (latest != null && PerfLogger.share(context, latest)) {
+                            message = "已拉起分享面板"
+                        } else {
+                            message = "暂无日志或分享失败"
+                        }
+                    },
+                )
+            }
         }
 
         message?.let {
@@ -1372,4 +1399,17 @@ fun ClauseList(items: List<String>) {
 
 /** 当前版本号（取自构建配置，避免与 build.gradle.kts 脱节）。 */
 fun appVersionText(): String = "v${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）"
+
+/**
+ * 这个包是什么时候装上的（系统记录的 lastUpdateTime）。
+ *
+ * 版本号在开发期不涨（同一版反复覆盖安装），光看 v1.0.3 分不出手上是不是刚打出来的那个包。
+ * 安装时间能直接回答「我到底装上了没有」，比对着电脑看 APK 生成时间靠谱。
+ */
+fun installTimeText(context: Context): String = runCatching {
+    val info = context.packageManager.getPackageInfo(context.packageName, 0)
+    if (info.lastUpdateTime <= 0L) return@runCatching "未知"
+    java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
+        .format(java.util.Date(info.lastUpdateTime))
+}.getOrDefault("未知")
 

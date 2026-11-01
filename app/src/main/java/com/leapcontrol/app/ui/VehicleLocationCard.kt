@@ -560,8 +560,16 @@ internal fun rememberVehiclePlace(
     // -1 起手：首帧两个计数都是 0，不该被当成「用户刚按过刷新」
     val manualGate = remember { intArrayOf(-1, -1) }
 
+    // 起手值不能写死 Loading。首页是 `when(tab)` 切页，离开时整棵子树被丢掉、回来是新建的，
+    // 所有 remember 都归零 —— 若从 Loading 起手，卡片会先亮一帧「加载中」占位，等磁盘缓存
+    // 读完才换成地图，用户看到的就是「每次切回首页闪一下」。这里取进程内上一次的结果当首帧；
+    // 车真挪了窝才退回 Loading（[fitsCoords]），不拿旧图假装新位置。
+    val seeded = remember {
+        VehiclePlaceMemory.get(full, dark)?.takeIf { it.fitsCoords(hasCoords, latitude, longitude) }
+    }
+
     val ui by produceState<VehiclePlaceUi>(
-        initialValue = VehiclePlaceUi.Loading,
+        initialValue = seeded ?: VehiclePlaceUi.Loading,
         hasCoords,
         hasKey,
         full,
@@ -569,6 +577,12 @@ internal fun rememberVehiclePlace(
         refreshKey,
         dark,
     ) {
+        // 每次出结果都写回内存：下一次切回来，首帧就是它
+        fun publish(next: VehiclePlaceUi) {
+            value = next
+            VehiclePlaceMemory.put(full, dark, next)
+        }
+
         val manualRefresh = (manualGate[0] in 0 until retry) || (manualGate[1] in 0 until refreshKey)
         manualGate[0] = retry
         manualGate[1] = refreshKey
@@ -576,28 +590,56 @@ internal fun rememberVehiclePlace(
             // 这一帧没拿到可信坐标（车机休眠 / 还没上报 / 报了 0,0）：先别急着说「没有位置」。
             // 熄火后位置本来就应该冻结在熄火点，本地缓存里那个点就是答案 ——
             // 用 cachedAt 把「这是上次记的」说清楚，不假装是刚刚的。
+            //
+            // 内存里已经有一份完整的就直接用：车停在地库、熄火后是这个状态，也正是
+            // 翻来翻去最容易看到卡片闪一下的时候，没必要为一次「重新读同一份磁盘缓存」再等一帧
+            val memory = seeded as? VehiclePlaceUi.Ready
+            if (!manualRefresh && memory != null && memory.map != null && memory.address != null) {
+                // 车况这一帧没有坐标 → 屏幕上这个点是「上次记下的」，必须把这件事说出来。
+                // 只改展示值、不回写内存：内存那份保持它自己的原始语义（见 VehiclePlaceMemory）
+                val cachedAt = memory.cachedAt ?: seenAt.takeIf { it > 0L } ?: reportedAt.takeIf { it > 0L }
+                value = if (cachedAt != null) memory.copy(cachedAt = cachedAt) else memory
+                return@produceState
+            }
             val cached = withContext(Dispatchers.IO) { VehicleLocationStore.load(context) }
             val cachedMap = if (cached != null) {
                 withContext(Dispatchers.IO) { VehicleLocationStore.loadMap(context, full = full, dark = dark) }
             } else {
                 null
             }
-            value = if (cached != null) {
-                VehiclePlaceUi.Ready(
-                    map = cachedMap,
-                    address = cached.address,
-                    latitude = cached.latitude,
-                    longitude = cached.longitude,
-                    // 缓存里如果记着「这条坐标从什么时候起没变」，用它；没有才退回落盘时刻
-                    cachedAt = cached.seenAt.takeIf { it > 0L } ?: cached.reportedAt,
-                )
-            } else {
-                VehiclePlaceUi.NoLocation
-            }
+            publish(
+                if (cached != null) {
+                    VehiclePlaceUi.Ready(
+                        map = cachedMap,
+                        address = cached.address,
+                        latitude = cached.latitude,
+                        longitude = cached.longitude,
+                        // 缓存里如果记着「这条坐标从什么时候起没变」，用它；没有才退回落盘时刻
+                        cachedAt = cached.seenAt.takeIf { it > 0L } ?: cached.reportedAt,
+                    )
+                } else {
+                    VehiclePlaceUi.NoLocation
+                },
+            )
             return@produceState
         }
         val lat = latitude ?: return@produceState
         val lng = longitude ?: return@produceState
+
+        // 车没挪窝、图与地址都齐、用户也没按刷新 → 内存里这份已经是终态。
+        // 一次磁盘读、一次网络请求都不做：切回首页是「零成本恢复」，不是「重新加载一遍」。
+        // 手动刷新时必须往下走，那是用户主动要「再取一次」的意思。
+        if (!manualRefresh) {
+            val memory = seeded as? VehiclePlaceUi.Ready
+            if (memory != null && memory.map != null && memory.address != null &&
+                VehicleLocationRules.distanceKm(memory.latitude, memory.longitude, lat, lng) <=
+                VehicleLocationRules.SAME_SPOT_RADIUS_KM
+            ) {
+                // 车况这一帧带着坐标 → 这不是「上次记录」，清掉那个标记（内存那份保持不动）
+                value = if (memory.cachedAt == null) memory else memory.copy(cachedAt = null)
+                return@produceState
+            }
+        }
 
         val cached = withContext(Dispatchers.IO) { VehicleLocationStore.load(context) }
         val sameSpot = VehicleLocationRules.sameSpot(cached, lat, lng)
@@ -612,12 +654,12 @@ internal fun rememberVehiclePlace(
         }
 
         if (sameSpot) {
-            value = VehiclePlaceUi.Ready(cachedMap, cached?.address, lat, lng)
+            publish(VehiclePlaceUi.Ready(cachedMap, cached?.address, lat, lng))
             // 图 + 地址都齐了：这就是终态，不再联网
             if (cachedMap != null && cached?.address != null) return@produceState
         }
         if (!hasKey) {
-            value = VehiclePlaceUi.NoKey
+            publish(VehiclePlaceUi.NoKey)
             return@produceState
         }
 
@@ -660,11 +702,13 @@ internal fun rememberVehiclePlace(
             )
         }
 
-        value = if (fetched == null && cachedMap == null && address == null) {
-            VehiclePlaceUi.Failed
-        } else {
-            VehiclePlaceUi.Ready(fetched ?: cachedMap, address, lat, lng)
-        }
+        publish(
+            if (fetched == null && cachedMap == null && address == null) {
+                VehiclePlaceUi.Failed
+            } else {
+                VehiclePlaceUi.Ready(fetched ?: cachedMap, address, lat, lng)
+            },
+        )
     }
     return ui
 }
@@ -741,8 +785,15 @@ internal fun rememberParkingPhoto(
             savedAt = ParkingPhotoStore.savedAt(context),
         )
     }
-    val thumb by produceState<Bitmap?>(null, version.intValue) {
-        value = withContext(Dispatchers.IO) { ParkingPhotoStore.load(context, thumbSize) }
+    // 同 [rememberVehiclePlace]：切回首页时整棵子树重建，若从 null 起手，右上角这个按钮
+    // 会先画一帧相机图标再变成照片 —— 同一张卡上第二处「闪」。起手值取进程内上次解码的那张。
+    val thumb by produceState<Bitmap?>(
+        initialValue = remember(thumbSize) { ParkingThumbMemory.get(thumbSize) },
+        version.intValue,
+    ) {
+        val loaded = withContext(Dispatchers.IO) { ParkingPhotoStore.load(context, thumbSize) }
+        ParkingThumbMemory.put(thumbSize, loaded)
+        value = loaded
     }
 
     return remember(slot, thumb) {

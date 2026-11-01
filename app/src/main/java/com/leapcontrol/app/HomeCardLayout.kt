@@ -13,6 +13,12 @@ package com.leapcontrol.app
 enum class HomeCardId(val title: String, val subtitle: String) {
     AC("空调", "设定温度与开关"),
     TIRE_TRIP("胎压 · 行程", "四轮胎压与近 7 天里程"),
+
+    // 自上次充电后**真实行驶**的里程（不是续航掉了多少）。
+    // 默认排在「周能耗分布」上方：都是「停车后回头看」的能耗类信息，一上一下顺着读。
+    // 数据来自零记里的充电起点（[com.leapcontrol.app.journal.ChargeCycle]），所以零记关掉时收起。
+    CHARGE_CYCLE("充电里程", "上次充电后真实行驶了多少公里"),
+
     COMPOSITION("周能耗分布", "上周行车 / 空调 / 其他占比"),
     RANK("近 6 周能耗", "百公里能耗趋势与全国排行"),
     HEALTH("车辆健康", "电池温度电压电流与耗电监测"),
@@ -51,8 +57,10 @@ object HomeCardLayout {
      *
      * 版本 7 **没有新增卡片**，只是调整了默认顺序（空调、位置卡提到最前）。
      * 升版本号是为了让从没排过卡的老设备跟着新默认走（见 [PREVIOUS_DEFAULT] 的判定）。
+     *
+     * 版本 8 新增 [HomeCardId.CHARGE_CYCLE]（充电里程），默认位置在「周能耗分布」上方。
      */
-    const val VERSION = 7
+    const val VERSION = 8
 
     /**
      * 默认顺序，按「上车前 → 上车时 → 开车中 → 停车后」的使用节奏排：
@@ -61,22 +69,24 @@ object HomeCardLayout {
      *  2. **车辆位置与目的地**：找车 / 发目的地，和空调一样是「到车前」的动作，紧随其后；
      *  3. **胎压 · 行程**：上车扫一眼，安全类里最该看的一项；
      *  4. **车辆健康**：电池温度 / 电压 / 电流，与胎压同属「看一眼就放心」的监测卡，连在一起；
-     *  5. **周能耗分布**：停车后才看的分析信息，占比一眼就懂；
-     *  6. **近 6 周能耗**：同一组能耗数据的时间趋势，跟上一张连着读；
-     *  7. **相伴**：提车天数 / 累计里程，长期回顾，放最后不碍事。
+     *  5. **充电里程**：上次充电后真实跑了多少，和下面的周能耗是同一类「回来复盘」的数据；
+     *  6. **周能耗分布**：停车后才看的分析信息，占比一眼就懂；
+     *  7. **近 6 周能耗**：同一组能耗数据的时间趋势，跟上一张连着读；
+     *  8. **相伴**：提车天数 / 累计里程，长期回顾，放最后不碍事。
      */
     val DEFAULT: List<HomeCardId> = listOf(
         HomeCardId.AC,
         HomeCardId.LOCATION,
         HomeCardId.TIRE_TRIP,
         HomeCardId.HEALTH,
+        HomeCardId.CHARGE_CYCLE,
         HomeCardId.COMPOSITION,
         HomeCardId.RANK,
         HomeCardId.OWNERSHIP,
     )
 
     /**
-     * 上一版（v6）的默认顺序，**只用来判断「这个用户到底有没有自己排过卡」**。
+     * 上一版（v7）的默认顺序，**只用来判断「这个用户到底有没有自己排过卡」**。
      *
      * 为什么要它：`AppRuntime` 启动时会把 `parse` 的结果连同版本号一起写回 prefs，
      * 所以装过一次旧版的人，prefs 里都躺着一份「当时的默认顺序」——它和「用户亲手拖出来的顺序」
@@ -88,11 +98,11 @@ object HomeCardLayout {
      */
     private val PREVIOUS_DEFAULT: List<HomeCardId> = listOf(
         HomeCardId.AC,
+        HomeCardId.LOCATION,
         HomeCardId.TIRE_TRIP,
+        HomeCardId.HEALTH,
         HomeCardId.COMPOSITION,
         HomeCardId.RANK,
-        HomeCardId.HEALTH,
-        HomeCardId.LOCATION,
         HomeCardId.OWNERSHIP,
     )
 
@@ -111,6 +121,7 @@ object HomeCardLayout {
     private val ADDED_IN: Map<Int, List<HomeCardId>> = mapOf(
         2 to listOf(HomeCardId.HEALTH),
         6 to listOf(HomeCardId.LOCATION),
+        8 to listOf(HomeCardId.CHARGE_CYCLE),
     )
 
     /**
@@ -157,7 +168,10 @@ object HomeCardLayout {
      * 「去设置」的空壳，点开还得进零记的设置弹层 —— 所以跟着一起收起。
      */
     fun usesJournal(card: HomeCardId): Boolean =
-        card == HomeCardId.INSURANCE || card == HomeCardId.MAINTENANCE
+        card == HomeCardId.INSURANCE ||
+            card == HomeCardId.MAINTENANCE ||
+            // 充电里程的起点存在零记的 journal.json 里，零记关掉时没有数据可显示
+            card == HomeCardId.CHARGE_CYCLE
 
     /**
      * 零记关闭时要隐藏的卡片。

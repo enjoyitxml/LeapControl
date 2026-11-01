@@ -33,6 +33,7 @@ import com.leapcontrol.app.FridgeMode
 import com.leapcontrol.app.FridgeStyle
 import com.leapcontrol.app.LeapmotorApi
 import com.leapcontrol.app.MileageEnergyParser
+import com.leapcontrol.app.OwnershipStats
 import com.leapcontrol.app.ParkingPhotoStore
 import com.leapcontrol.app.MileageEnergySummary
 import com.leapcontrol.app.ScheduledAcPlan
@@ -113,6 +114,15 @@ private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
  * 800ms 是能明显缩短整体耗时的同时又不丢指令的折中值。
  */
 private const val POWER_DRAIN_GAP_MS = 800L
+
+/**
+ * 车况里的充电状态（信号 1149）。
+ *
+ * 只在「正在充 / 已充满」这两种状态下才去记「自上次充电后」的起点（见 ChargeCycle）：
+ * 充电时车停着，这时的表显里程就是准确起点。别的状态与起点无关，直接跳过。
+ */
+private const val CHARGE_STATE_CHARGING = 1
+private const val CHARGE_STATE_DONE = 2
 
 /**
  * 单个车轮的胎压状态。
@@ -447,6 +457,27 @@ class AppRuntime(context: Context) {
     }
 
     /**
+     * 是否开启「滑动性能日志」采集（设置 → 显示）。
+     *
+     * 默认关闭。开着的时候，每次首页上下滑动都会在 filesDir/perf/ 下留一份
+     * 逐帧性能日志（帧间隔 / 滚动速度 / 掉帧 / 主线程耗时 / GPU 耗时），
+     * 供排查滑动掉帧用。平时关着零开销。
+     */
+    private val _perfLogEnabled = mutableStateOf(namingPrefs.getBoolean("perf_log_enabled", false))
+    val perfLogEnabled: State<Boolean> get() = _perfLogEnabled
+
+    init {
+        // 进程重启后把 prefs 里的开关同步到单例（PerfLogger 是进程级单例，不持久化）
+        PerfLogger.enabled = _perfLogEnabled.value
+    }
+
+    fun setPerfLogEnabled(enabled: Boolean) {
+        _perfLogEnabled.value = enabled
+        namingPrefs.edit().putBoolean("perf_log_enabled", enabled).apply()
+        PerfLogger.enabled = enabled
+    }
+
+    /**
      * 首页卡片顺序 / 显隐（编辑态长按拖动、删除、添加后持久化在这里）。
      *
      * 放在 namingPrefs：跟着本机走、登出不丢。存储内容就是 [HomeCardId] 名字的逗号串，
@@ -715,6 +746,9 @@ class AppRuntime(context: Context) {
                 // 位置缓存 + 坐标锚点一起清。车位照片**不清**：那是用户自己拍的实物记录，
                 // 换车时删掉属于丢用户数据；照片卡本身写着「拍摄于 x 前」，看得出生效时间
                 VehicleLocationStore.clear(appContext)
+                // 内存里那份也要清：留着的话，换车后第一次进首页会先亮上一辆车的地图（见 VehiclePlaceMemory）
+                VehiclePlaceMemory.clear()
+                ParkingThumbMemory.clear()
                 resetLocationAnchor()
             }
         }
@@ -738,9 +772,12 @@ class AppRuntime(context: Context) {
         // 停车位置缓存必须一起清：那个目录里存着车停在哪、旁边是什么地址，
         // 换账号后还留着，等于把上一位车主的行踪给了下一个人
         VehicleLocationStore.clear(appContext)
+        // 内存里那份同理，而且要一起清：否则退出后重新登录，首页会先亮别人的位置（见 VehiclePlaceMemory）
+        VehiclePlaceMemory.clear()
         resetLocationAnchor()
         // 停车位照片同理，而且它更直接：照片里常能看到车牌、车位号、甚至车库门牌
         ParkingPhotoStore.clear(appContext)
+        ParkingThumbMemory.clear()
     }
 
     // ---------------- 车辆配置识别（冰箱 / 天窗 / 哨兵 / 座椅等） ----------------
@@ -992,6 +1029,19 @@ class AppRuntime(context: Context) {
         // 结果通过 statusFlow 下发：首页直接读到新值，不需要 UI 自己再 setState
         _status.value = status
         _lastUpdated.value = System.currentTimeMillis()
+        // 顺便喂一次「自上次充电后行驶里程」的观测（见 ChargeCycle）：
+        // 车端没有充电历史接口，只能在拿到车况时「看见」充电 —— 充电时车停着，
+        // 此刻的表显里程就是准确起点。平时不充电时这里整个跳过，零开销；
+        // 记账失败也绝不能影响车况刷新，所以整段兜在 runCatching 里。
+        if (status.chargeState == CHARGE_STATE_CHARGING || status.chargeState == CHARGE_STATE_DONE) {
+            runCatching {
+                journal.observeChargeCycle(
+                    chargeState = status.chargeState,
+                    soc = status.soc,
+                    totalKm = OwnershipStats.kmFromText(status.totalMileage),
+                )
+            }
+        }
         // 同步给控制中心磁贴：用户在车里手动关掉的空调 / 后备箱，
         // 靠的就是这条新鲜报文把磁贴的高亮改回来（磁贴展开时直接读这里，不再发请求）
         StatusSnapshot.put(status, _lastUpdated.value)
@@ -1506,6 +1556,8 @@ class AppRuntime(context: Context) {
         // 缓存里的地图是按旧坐标画的，留着会让人以为开关没生效：
         // 位置缓存一清，下次进页面必然重拉
         runCatching { VehicleLocationStore.clear(appContext) }
+        // 内存里那张同样不能留，否则这一版看到的还是纠偏前的位置
+        VehiclePlaceMemory.clear()
     }
 
     // ---- 位置的「稳定起点」----

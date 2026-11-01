@@ -3,12 +3,7 @@ package com.leapcontrol.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -87,6 +82,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -115,6 +112,7 @@ import java.util.Locale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -168,6 +166,12 @@ private const val SHOW_HOME_MODULES = false
 /** 控车指令下发后，车端上报车况的滞后补偿时间（再拉一次车况让状态收敛）。 */
 private const val AC_SETTLE_DELAY_MS = 3_000L
 
+/** 充电中脉冲环扩散一圈的时长。 */
+private const val PULSE_CYCLE_MS = 2000
+
+/** 充电图标心跳往返一次（760ms 去 + 760ms 回）。 */
+private const val BEAT_CYCLE_MS = 1520
+
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -198,6 +202,9 @@ fun HomeScreen(
 ) {
     // 配色由 MainScreen 通过 LocalAppColors 下发（跟随系统 / 浅色 / 深色）
     val C = LocalAppColors.current
+    // 调试探针：每次重组后自增一次（只写普通 Int，不触发任何重组）。
+    // 帧率浮层会把它换算成「每秒重组多少次」，用来区分掉帧是重组造成的还是绘制造成的。
+    SideEffect { RecomposeMeter.mark() }
     MaterialTheme(
         colorScheme = if (C.isDark) {
             androidx.compose.material3.darkColorScheme(primary = C.accent, background = C.bgTop)
@@ -240,6 +247,8 @@ fun HomeScreen(
         val journalOn by runtime.journalEnabled
         var showInsuranceSheet by remember { mutableStateOf(false) }
         var showMaintenanceSheet by remember { mutableStateOf(false) }
+        // 充电里程卡的说明弹层（含「从现在起算」）
+        var showChargeSheet by remember { mutableStateOf(false) }
         // 目的地搜索弹层（首页「车辆位置与目的地」卡里的「发送目的地」）
         var showDestination by remember { mutableStateOf(false) }
         // 行驶里程 / 能耗（独立接口，拿不到就静默保持上一次结果）
@@ -466,10 +475,62 @@ fun HomeScreen(
                 .distinctUntilChanged()
                 .collect { onCarModelGoneChange(it) }
         }
+        // 滑动状态同时留在本地一份（给卡片的动画用），并照旧向上汇报。
+        // 本函数**从不读它的 value**，只把 State 传下去；读 value 的地方在帧回调里，
+        // 所以滑动开始/结束不会让首页重组（那一下正好是手指按下的时候）。
+        val scrollingState = remember { mutableStateOf(false) }
         LaunchedEffect(homeScrollState) {
             snapshotFlow { homeScrollState.isScrollInProgress }
                 .distinctUntilChanged()
-                .collect { onScrollingChange(it) }
+                .collect {
+                    scrollingState.value = it
+                    onScrollingChange(it)
+                    // 滑动期间临时关掉 Compose 的无障碍语义树刷新 —— 这是首页掉帧的真凶，
+                    // 详见 AccessibilityQuiet 的注释（每帧重算几百个节点的 boundsInScreen）。
+                    // 手指抬起当帧就恢复，静止时读屏功能完全不受影响。
+                    if (it) AccessibilityQuiet.begin(coachContext) else AccessibilityQuiet.end()
+                    // 性能日志：只在开启时，滑动开始/结束各打一个标记
+                    if (PerfLogger.enabled) {
+                        if (it) PerfLogger.onScrollStart(coachContext)
+                        else PerfLogger.onScrollEnd()
+                    }
+                }
+        }
+        // 保险：万一在滑行最猛的时候被切页/销毁，别把无障碍静音状态留下
+        DisposableEffect(Unit) {
+            onDispose { AccessibilityQuiet.end() }
+        }
+        // 性能日志：滑动期间每帧记录滚动偏移 + 帧间隔 + 实时刷新率 + doFrame 延迟。
+        //
+        // 采样用原生 Choreographer.postFrameCallback。关键点（踩过的坑）：
+        //   · 不能依赖 isScrollInProgress 做开关（fling 收尾/手指抬起时它会在 true/false 抖动，
+        //     反复「停→启」会漏采中间的 VSYNC，采出「8.3ms 整数倍」的假掉帧）；
+        //   · 帧间隔用 System.nanoTime() 实测，绝不用 frameTimeNanos 之差（后者可能同一帧被回调两次）；
+        //   · 用一个 @Volatile 的「正在采样」标记防止同一帧重复注册回调。
+        // 改为：滚动一旦开始，就持续采样固定窗口（3 秒），中途不因 isScrollInProgress 抖动而停。
+        LaunchedEffect(homeScrollState) {
+            if (!PerfLogger.enabled) return@LaunchedEffect
+            snapshotFlow { homeScrollState.isScrollInProgress }
+                .distinctUntilChanged()
+                .collect { inProgress ->
+                    if (inProgress && !PerfLogger.samplingNow) {
+                        PerfLogger.samplingNow = true
+                        PerfLogger.onScrollStartFrameWindow()
+                        val choreographer = android.view.Choreographer.getInstance()
+                        val cb = object : android.view.Choreographer.FrameCallback {
+                            override fun doFrame(frameTimeNanos: Long) {
+                                PerfLogger.onScrollFrame(homeScrollState.value.toFloat(), frameTimeNanos)
+                                if (System.nanoTime() - PerfLogger.windowStartNanos < 3_000_000_000L) {
+                                    choreographer.postFrameCallback(this)
+                                } else {
+                                    PerfLogger.samplingNow = false
+                                    PerfLogger.onScrollEnd()
+                                }
+                            }
+                        }
+                        choreographer.postFrameCallback(cb)
+                    }
+                }
         }
 
         // 进入首页时拉取一次官方车模图（本地有缓存则直接用）。
@@ -1354,6 +1415,9 @@ fun HomeScreen(
             }
 
             // ---- 可滚动内容区（续航 / 充电中心 / 车模 / 快捷控车 / 模块）----
+            // 【对照实验已出结论】上一版把这个 PullToRefreshBox 换成普通 Box 做干净对照，
+            // 实测仍然卡（perf_1793543893952：CPU 1.6ms / GPU 3.7ms / 重组 0，帧间隔却 19.6ms），
+            // 说明嵌套滚动层不是元凶，功能必须还原 —— 下拉刷新不能为了排查性能而牺牲。
             androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                 isRefreshing = refreshing,
                 onRefresh = { placeEpoch++; refresh(force = true, silent = false) },
@@ -1368,9 +1432,11 @@ fun HomeScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    // padding 放在 verticalScroll 之前（外侧）：水平留白不参与滚动内容的
+                    // 重绘/重录，滚动时只平移里面的内容，减少每帧要重放的绘制命令范围。
+                    .padding(horizontal = 22.dp)
                     .verticalScroll(homeScrollState)
-                    .heightIn(min = pageHeight)
-                    .padding(horizontal = 22.dp),
+                    .heightIn(min = pageHeight),
             ) {
 
             // ---- 续航区：左半（大字续航 + 电/油里程行），右半（车辆状态面板）----
@@ -1416,7 +1482,10 @@ fun HomeScreen(
                         // 充电中：总续航右侧的充电头脉冲入口（只在充电时出现），点进充电中心
                         if (chargingNow) {
                             Spacer(Modifier.width(6.dp))
-                            ChargingPulseEntry(onClick = { showChargingCenter = true })
+                            ChargingPulseEntry(
+                                paused = scrollingState,
+                                onClick = { showChargingCenter = true },
+                            )
                         }
                     }
                     Spacer(Modifier.height(6.dp))
@@ -1521,6 +1590,14 @@ fun HomeScreen(
                             // 车模底部在「滚动内容」（父 Column）坐标系里的 y：
                             // 这是固定布局位置，不随滚动偏移变化，正好和 homeScrollState.value
                             // 处于同一坐标空间，可直接比较判断是否滑出视口。
+                            //
+                            // 但这个回调在滚动时**每一帧都会来**（内容整体平移，全局坐标一直在变），
+                            // 而车模在内容里的位置此刻根本不会变 —— 每帧白做一次矩阵换算。
+                            // 所以只在「还没量到」或「停在顶部」时校正：用户都是从顶部开始滑的，
+                            // 那一刻取到的值一定准，滑到中间也不会再用到别的值。
+                            if (carModelBottomY > 0f && homeScrollState.value != 0) {
+                                return@onGloballyPositioned
+                            }
                             coords.parentLayoutCoordinates?.let { parent ->
                                 carModelBottomY = parent.localBoundingBoxOf(coords).bottom
                             }
@@ -1531,12 +1608,11 @@ fun HomeScreen(
                         bitmap = carBitmap!!.asImageBitmap(),
                         contentDescription = "车模",
                         contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                        // 千像素级的透明位图，滚动时父级每帧重绘都会重做一次缩放采样。
-                        // 单独提一层 graphicsLayer 之后，滚动只更新这块的平移矩阵，
-                        // 位图本身不再重绘 —— 这是首页上下滑时最实的一笔开销。
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer(),
+                            .graphicsLayer {
+                                compositingStrategy = CompositingStrategy.Offscreen
+                            },
                     )
                     // 快捷换壁纸：小白点放在车模右上角，正好落在车顶右侧的空画面上。
                     // 车模上的点换的是「主题壁纸」，相伴卡上的点换的是「相伴卡背景」，两者互不影响。
@@ -1624,6 +1700,8 @@ fun HomeScreen(
                         // （风量 / 循环 / 温度都是整组下发）。电源按钮不看这个值，点了就放行。
                         busy = controlling != null,
                         pendingOn = acSwitchIntent,
+                        // 滑动期间风扇停转：滚动时把帧预算留给滚动本身，停手立刻恢复
+                        paused = scrollingState,
                         target = acTargetTemp,
                         onStep = { stepAcTemp(it) },
                         onToggle = { turnOn, temp ->
@@ -1647,6 +1725,16 @@ fun HomeScreen(
                             modifier = Modifier.weight(1f),
                         )
                     }
+
+                    // 充电里程：自上次充电后**真实行驶**的公里数（表显总里程前后相减，
+                    // 不是「续航掉了多少」）。起点由 AppRuntime 在拿到车况时观测并写进零记，
+                    // 这里只负责显示；点开是说明 + 「从现在起算」。
+                    HomeCardId.CHARGE_CYCLE -> HomeChargeCycleCard(
+                        anchor = journalData.chargeAnchor,
+                        currentKm = OwnershipStats.kmFromText(currentStatus?.totalMileage),
+                        soc = currentStatus?.soc,
+                        onClick = { showChargeSheet = true },
+                    )
 
                     // 周能耗分布：上周总能耗 + 一条三色比例带 + 三项明细（行车 / 空调 / 其他）
                     HomeCardId.COMPOSITION -> WeeklyEnergyCompositionCard(
@@ -1912,6 +2000,22 @@ fun HomeScreen(
                     runtime.journal.setInsurance(plan)
                     showInsuranceSheet = false
                     actionMessage = if (plan == null) "已关闭保险提醒" else "保险提醒已保存"
+                },
+            )
+        }
+
+        // ---- 充电里程说明弹层：讲清这个数字怎么来的，并提供「从现在起算」 ----
+        if (showChargeSheet) {
+            ChargeCycleSheet(
+                anchor = journalData.chargeAnchor,
+                currentKm = OwnershipStats.kmFromText(status?.totalMileage),
+                onDismiss = { showChargeSheet = false },
+                onRestart = {
+                    val km = OwnershipStats.kmFromText(status?.totalMileage)
+                    val ok = runtime.journal.restartChargeCycle(totalKm = km, soc = status?.soc)
+                    showChargeSheet = false
+                    actionMessage =
+                        if (ok) "已从当前里程重新起算" else "读不到当前总里程，请先刷新车况"
                 },
             )
         }
@@ -2971,29 +3075,27 @@ private fun StatusItem(iconRes: Int, label: String, alert: Boolean) {
  *   不引入新色相，深色浅色主题下都不用另调；
  * - 点击直接进充电中心（就是首页那颗胶囊的同一目标页）。
  *
+ * 两个进度值都用 [rememberLoopProgress]，**不在组合期解包**：以前 `phase` / `beat`
+ * 一变化这个函数就重组一次（连带 clickable 的 modifier 重建），充电时首页每帧多一次重组，
+ * 滑动起来更明显。现在只在 [Canvas] 的绘制 lambda 与 graphicsLayer 里读。
+ *
  * 不做涟漪：这里是个 40dp 的透明热点，方形涟漪会在续航区盖出一块背景。
  */
 @Composable
-private fun ChargingPulseEntry(onClick: () -> Unit) {
+private fun ChargingPulseEntry(paused: State<Boolean>, onClick: () -> Unit) {
     val green = Color(0xFF2FCC71)
     val glow = Color(0xFF46E58C)
-    val transition = rememberInfiniteTransition(label = "chargePulse")
     // 两圈环错相半个周期：读起来是"电流一下一下往外推"，而不是单点呼吸
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing)),
-        label = "chargePulsePhase",
+    val phase = rememberLoopProgress(
+        cycleMs = PULSE_CYCLE_MS,
+        enabled = true,
+        paused = paused,
     )
-    // 图标本体的轻微心跳，与环分开走，避免整块一起涨缩
-    val beat by transition.animateFloat(
-        initialValue = 0.94f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(
-            tween(760, easing = FastOutSlowInEasing),
-            RepeatMode.Reverse,
-        ),
-        label = "chargePulseBeat",
+    // 图标本体的轻微心跳，与环分开走，避免整块一起涨缩（往返一次 = 2 × 760ms）
+    val beatPhase = rememberLoopProgress(
+        cycleMs = BEAT_CYCLE_MS,
+        enabled = true,
+        paused = paused,
     )
     Box(
         modifier = Modifier
@@ -3022,9 +3124,10 @@ private fun ChargingPulseEntry(onClick: () -> Unit) {
                 radius = haloR,
                 center = c,
             )
-            // 向外扩散的脉冲环
+            // 向外扩散的脉冲环（进度在绘制阶段读，不引起重组）
+            val start = phase.value
             repeat(2) { i ->
-                val p = (phase + i * 0.5f) % 1f
+                val p = (start + i * 0.5f) % 1f
                 drawCircle(
                     color = green.copy(alpha = (1f - p) * 0.55f),
                     radius = baseR + (maxR - baseR) * p,
@@ -3040,6 +3143,8 @@ private fun ChargingPulseEntry(onClick: () -> Unit) {
             modifier = Modifier
                 .size(19.dp)
                 .graphicsLayer {
+                    // 0.94 ↔ 1.06 的往返心跳：余弦曲线两端缓、中间顺，比线性像「一口气」
+                    val beat = 0.94f + 0.12f * breathCurve(beatPhase.value)
                     scaleX = beat
                     scaleY = beat
                     alpha = (0.80f + (beat - 0.94f) * 3.6f).coerceIn(0f, 1f)

@@ -24,16 +24,19 @@ enum class JournalCardId(
 /**
  * 零记卡片顺序 / 显隐的纯逻辑（读写都走这里，便于单测）。
  *
- * 与首页不同的地方：这里没有「新增卡片自动补进老用户列表」的机制 ——
- * 零记一共就五张卡，[DEFAULT] 里全都有，不存在「新版本又多出一张」的情况。
- * 但**仍然保留版本号**：哪天真加了第六张卡，可以按首页那套 [HomeCardLayout]
- * 的补入逻辑扩展，不必再改存储格式。
+ * 补卡机制与首页 [com.leapcontrol.app.HomeCardLayout] 同一套：
+ * **存的正好等于上一版默认 = 从没动过 → 跟着新默认走；差一项就视为自定义，只把新卡插进去。**
+ * 不这么做的话，排过卡的老用户永远看不到新卡（他保存的列表里没有这张）。
  */
 object JournalCardLayout {
 
+    /**
+     * 存储协议版本。**新增卡片时 +1 并把新卡登记到 [ADDED_IN]**，
+     * 否则已经保存过顺序的老用户永远看不到新卡。
+     */
     const val VERSION = 1
 
-    /** 默认顺序 = 之前写死的呈现顺序：两张提醒在上，其次目标、成本、足迹。 */
+    /** 默认顺序：两张提醒在最上（不记就会忘），其次是目标、花费、足迹。 */
     val DEFAULT: List<JournalCardId> = listOf(
         JournalCardId.INSURANCE,
         JournalCardId.MAINTENANCE,
@@ -43,18 +46,43 @@ object JournalCardLayout {
     )
 
     /**
+     * 上一版的默认顺序，**只用来判断「这个用户到底有没有自己排过卡」**。
+     *
+     * 零记启动时会把 parse 的结果写回 prefs，于是老用户手里躺着一份「当时的默认顺序」——
+     * 它和「用户亲手拖出来的顺序」在存储上长得一模一样，只能靠内容比对区分。
+     *
+     * 目前没有待补的新卡（版本 1），因此与 [DEFAULT] 相同；加卡时把它改成加卡前的默认即可。
+     */
+    private val PREVIOUS_DEFAULT: List<JournalCardId> = DEFAULT
+
+    /** 每个版本新增的卡片（键是引入它的版本号）。加卡时在这里登记。 */
+    private val ADDED_IN: Map<Int, List<JournalCardId>> = emptyMap()
+
+    /**
      * 解析已保存的顺序。
      *
      * - `null`（从没保存过）→ [DEFAULT]；
      * - 空串（用户把卡片全删了）→ 空列表，不要偷偷把卡片变回来；
-     * - 非法 / 重复 id 过滤掉，重复只保留第一次出现；降级安装遇到的未知 id 直接忽略。
+     * - 非法 / 重复 id 过滤掉，重复只保留第一次出现；降级安装遇到的未知 id 直接忽略；
+     * - [savedVersion] 小于 [VERSION] 时，把这段时间新增、而用户列表里没有的卡补进去，
+     *   插在「默认顺序里它前面那张卡」的后面。传 [VERSION] 表示不做补入（默认值）。
      */
-    fun parse(raw: String?): List<JournalCardId> {
+    fun parse(raw: String?, savedVersion: Int = VERSION): List<JournalCardId> {
         if (raw == null) return DEFAULT
-        if (raw.isBlank()) return emptyList()
-        return raw.split(',')
-            .mapNotNull { token -> JournalCardId.entries.firstOrNull { it.name == token.trim() } }
-            .distinct()
+        val saved = if (raw.isBlank()) {
+            emptyList()
+        } else {
+            raw.split(',')
+                .mapNotNull { token -> JournalCardId.entries.firstOrNull { it.name == token.trim() } }
+                .distinct()
+        }
+        if (savedVersion >= VERSION) return saved
+        // 空串是「用户亲手把卡片全删了」，不是「还没见过新卡」：不补。
+        if (raw.isBlank()) return saved
+        // 从没动过的列表直接换成新默认；动过的原样保留，只把新卡插进去。
+        // 不能无条件 return DEFAULT —— 用户删掉的卡会被"顺便"补回来。
+        val base = if (saved == PREVIOUS_DEFAULT) DEFAULT else saved
+        return mergeNewCards(base, savedVersion)
     }
 
     fun serialize(cards: List<JournalCardId>): String =
@@ -63,4 +91,33 @@ object JournalCardLayout {
     /** 还没显示出来的卡片（编辑态里的「添加卡片」用它）。 */
     fun hidden(cards: List<JournalCardId>): List<JournalCardId> =
         JournalCardId.entries.filter { it !in cards }
+
+    /** 把 (savedVersion, VERSION] 之间新增的卡片补进用户列表。 */
+    private fun mergeNewCards(saved: List<JournalCardId>, savedVersion: Int): List<JournalCardId> {
+        var list = saved
+        for (version in (savedVersion + 1)..VERSION) {
+            ADDED_IN[version].orEmpty().forEach { card ->
+                if (card !in list) list = insertByDefaultOrder(list, card)
+            }
+        }
+        return list
+    }
+
+    /**
+     * 按 [DEFAULT] 里的相对位置插入：找默认顺序中排在它前面、且用户列表里也有的卡，
+     * 插到那张卡后面；一张都没有就放最前（用户把前面的卡全删了的情况）。
+     */
+    private fun insertByDefaultOrder(list: List<JournalCardId>, card: JournalCardId): List<JournalCardId> {
+        val index = DEFAULT.indexOf(card)
+        if (index < 0) return list
+        for (i in index - 1 downTo 0) {
+            val at = list.indexOf(DEFAULT[i])
+            if (at >= 0) {
+                val out = list.toMutableList()
+                out.add(at + 1, card)
+                return out
+            }
+        }
+        return listOf(card) + list
+    }
 }

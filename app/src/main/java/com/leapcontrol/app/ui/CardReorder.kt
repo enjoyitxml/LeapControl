@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -218,7 +219,9 @@ fun <T : Any> ReorderableCardArea(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .onGloballyPositioned { areaTop.value = it.positionInWindow().y },
+            // 只有拖拽时才需要这个值（自动滚动判断拖到了没拖到了边缘），
+            // 平时滚动时不要做坐标换算：这个回调在滚动中每帧都会来。
+            .onGloballyPositioned { if (dragging != null) areaTop.value = it.positionInWindow().y },
         // 卡间距必须交给 Column 统一管，**不能**每张卡前面塞一个 Spacer。
         // 之前就是那么写的（`key(id) { if (index > 0) Spacer(gap) ... }`），
         // 结果 Spacer 落在 key 组里、跟着卡片一起被移动：拖动排序提交新顺序后，
@@ -258,11 +261,13 @@ fun <T : Any> ReorderableCardArea(
                                 shadowElevation = with(density) { 18.dp.toPx() }
                             }
                         }
-                        .onGloballyPositioned { coords ->
-                            // 只在高度真的变了才写：滚动时这个回调每帧都会来，
-                            // 而 heights 是 snapshot state map，每次写都会让读它的
-                            // 组合（下面算让位位移的地方）失效 → 整列卡片每帧重组。
-                            val h = coords.size.height
+                        // 高度只用 `onSizeChanged` 读，**不要用 onGloballyPositioned**：
+                        // 后者在滚动时每一帧都会回调（内容是整体平移的，全局坐标一直在变），
+                        // 于是每张卡每帧都要过一次 JNI 坐标换算 —— 首页八张卡就是每帧八次，
+                        // 而这些卡的实际高度在整个滑动过程中一次都没变。
+                        // onSizeChanged 只在尺寸真的变化时回调，和滚动完全无关。
+                        .onSizeChanged { coords ->
+                            val h = coords.height
                             if (heights[id] != h) heights[id] = h
                         },
                 ) {

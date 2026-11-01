@@ -1,9 +1,5 @@
 package com.leapcontrol.app.ui
 
-import android.graphics.SurfaceTexture
-import android.media.MediaPlayer
-import android.view.Surface
-import android.view.TextureView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,7 +28,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -42,11 +37,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -93,8 +88,12 @@ fun LoginScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // ---- 背景：星空视频循环播放（固定深色观感，不分深浅色模式）----
-        VideoBackdrop(modifier = Modifier.matchParentSize())
+        // ---- 背景：手绘星空（纯静态，一次绘制）----
+        // 原来这里是一段循环播放的星空视频（MediaPlayer + TextureView + res/raw 里的 mp4）。
+        // 视频背景这个方向已经明确放弃、以后不再提供：解码器占内存、TextureView 是独立图层
+        // 会多一次合成、登录页还常被当成后台常驻页面重绘。改成直接复用主题里已经定稿的
+        // 「浩瀚星空」场景，观感一致、零解码、零资源体积。
+        StarryBackdrop(modifier = Modifier.matchParentSize())
 
         Column(
             modifier = Modifier
@@ -294,68 +293,31 @@ fun LoginScreen(
 }
 
 /**
- * 登录页背景视频：星空 loop，循环播放、静音、按 cover（裁满屏）方式缩放。
- * 视频放在 res/raw/login_bg_video.mp4（1440×2560，3.9s，173KB）。
+ * 登录页背景：静态星空（复用主题「浩瀚星空」的场景画法）。
+ *
+ * 为什么要换掉视频：视频背景这条线已经删除且不再提供。用 MediaPlayer + TextureView
+ * 放一段 173KB 的 mp4，代价是解码器常驻、独立合成图层、每帧都要解码上屏；
+ * 而登录页又恰恰是「没登录时唯一一屏」，冷启动时和首屏渲染抢资源。
+ * 现在改成一次绘制就完事：夜色渐变打底 → 场景画笔补星点与月晕 → 底部压暗保证白字可读。
  */
 @Composable
-private fun VideoBackdrop(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    var player by remember { mutableStateOf<MediaPlayer?>(null) }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            player?.release()
-            player = null
-        }
-    }
-
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            TextureView(ctx).apply {
-                var videoW = 0f
-                var videoH = 0f
-
-                /** 按 cover 方式把视频缩放到铺满视图（多出的部分被裁掉）。 */
-                fun applyCoverScale(w: Int, h: Int) {
-                    if (videoW <= 0f || videoH <= 0f || w <= 0 || h <= 0) return
-                    val viewRatio = w / h.toFloat()
-                    val videoRatio = videoW / videoH
-                    if (videoRatio > viewRatio) {
-                        scaleX = videoRatio / viewRatio
-                        scaleY = 1f
-                    } else {
-                        scaleX = 1f
-                        scaleY = viewRatio / videoRatio
-                    }
-                }
-
-                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                    override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
-                        val mp = MediaPlayer.create(ctx, R.raw.login_bg_video) ?: return
-                        videoW = mp.videoWidth.toFloat()
-                        videoH = mp.videoHeight.toFloat()
-                        mp.isLooping = true
-                        mp.setVolume(0f, 0f) // 背景视频保持静音
-                        mp.setSurface(Surface(st))
-                        mp.start()
-                        player = mp
-                        applyCoverScale(w, h)
-                    }
-
-                    override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
-                        applyCoverScale(w, h)
-                    }
-
-                    override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
-                        player?.release()
-                        player = null
-                        return true
-                    }
-
-                    override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
-                }
-            }
+private fun StarryBackdrop(modifier: Modifier = Modifier) {
+    val theme = SeasonThemes.STARRY
+    val palette = remember { theme.palette() }
+    Spacer(
+        modifier = modifier.drawBehind {
+            // 1) 夜色底：直接用主题自带的深色渐变，和首页夜间主题同一套色
+            drawRect(Brush.verticalGradient(theme.gradient))
+            // 2) 星点 + 月晕（t = 0：静态相位，不闪不抖）
+            paintScene(SceneKind.STARRY, 0f, palette)
+            // 3) 底部压暗：输入框是白色半透明底，没有这一层在星点上会发糊
+            drawRect(
+                Brush.verticalGradient(
+                    0.00f to Color.Transparent,
+                    0.55f to Color.Black.copy(alpha = 0.20f),
+                    1.00f to Color.Black.copy(alpha = 0.46f),
+                ),
+            )
         },
     )
 }

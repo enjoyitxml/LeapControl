@@ -14,7 +14,14 @@ class MainActivity : ComponentActivity() {
         CrashGuard.install(applicationContext)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        DisplayRefresh.apply(window)
+        // 注意：这里**不再**主动申请/切换显示模式刷新率。
+        //
+        // 早先的 DisplayRefresh.apply() 会用 preferredDisplayModeId「硬切显示模式」，
+        // 每次 onResume / onWindowFocusChanged 都会重新执行一次，导致系统在滑动过程中
+        // 反复做「显示模式切换 → VSYNC 时钟重同步」，这就是首页滑动掉帧的真正元凶：
+        // 渲染很轻（CPU 1ms / GPU 3ms）、重组为 0，掉帧却严重，因为每帧节奏被模式切换打断。
+        // 用户已经在系统里把刷新率设成「固定 120Hz」，系统会自行给足高刷，
+        // App 什么都不用做 —— 反复请求反而和系统打架。
         setContent {
             LeapControlTheme {
                 LeapControlApp()
@@ -25,23 +32,9 @@ class MainActivity : ComponentActivity() {
     /** 冷启动与从后台切回都走 onResume，统一触发一次车况刷新。 */
     override fun onResume() {
         super.onResume()
-        // 从后台回来时窗口的显示模式可能已被系统重置，每次回前台都重新申请一遍
-        DisplayRefresh.apply(window)
         ForegroundSignal.emitResume()
         // 回到前台时让控制中心磁贴刷新一次文案与激活态
         QuickTiles.refreshAll(this)
-    }
-
-    /**
-     * 拿到焦点时再申请一次刷新率。
-     *
-     * 分屏、小窗、下拉通知栏、被别的应用短暂压住之后，系统会把显示模式打回默认档；
-     * onResume 不一定每次都来，onWindowFocusChanged 却几乎必来，补这一处能减少
-     * 「用着用着就掉回 60 帧」的体感。
-     */
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) DisplayRefresh.apply(window)
     }
 
     /** 进入后台：暂停动态背景，避免不可见时继续解码耗电。 */

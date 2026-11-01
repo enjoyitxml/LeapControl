@@ -755,6 +755,9 @@ fun AboutScreen(
             InfoRow(label = "客户端", value = "零控 LeapControl")
             Spacer(Modifier.height(10.dp))
             InfoRow(label = "版本", value = appVersionText())
+            Spacer(Modifier.height(10.dp))
+            // 开发期版本号不涨，安装时间才是「这个包是不是刚打的」的唯一凭据
+            InfoRow(label = "安装", value = installTimeText(LocalContext.current))
             Spacer(Modifier.height(12.dp))
             androidx.compose.material3.Text(
                 "零控是车主自发开发的非官方客户端，与零跑汽车官方无关。"

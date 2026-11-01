@@ -45,11 +45,26 @@ class JournalCardLayoutTest {
         assertEquals(order, JournalCardLayout.parse(JournalCardLayout.serialize(order)))
     }
 
-    /** 老版本存的是「半屏并排」的顺序串，升级后必须还能原样读出来。 */
+    /**
+     * 老版本存的是「半屏并排」的顺序串，升级后必须还能原样读出来。
+     *
+     * 注意这里**不等于** [JournalCardLayout.DEFAULT]：v2 的默认顺序里多了「充电续航」，
+     * 而传默认的 savedVersion 表示「不做补卡」，读到的就是这份串本身。
+     * 补卡的判定（老用户看到新卡）在 `ChargeCycleTest` 里。
+     */
     @Test
     fun `旧版半屏顺序串仍可解析`() {
         val legacy = "INSURANCE,MAINTENANCE,GOAL,COST,FOOTPRINT"
-        assertEquals(JournalCardLayout.DEFAULT, JournalCardLayout.parse(legacy))
+        assertEquals(
+            listOf(
+                JournalCardId.INSURANCE,
+                JournalCardId.MAINTENANCE,
+                JournalCardId.GOAL,
+                JournalCardId.COST,
+                JournalCardId.FOOTPRINT,
+            ),
+            JournalCardLayout.parse(legacy),
+        )
     }
 
     @Test

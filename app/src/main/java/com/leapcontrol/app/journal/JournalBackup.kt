@@ -153,6 +153,10 @@ object JournalBackup {
             insurance = local.insurance ?: incoming.insurance,
             odometerKm = local.odometerKm ?: incoming.odometerKm,
             odometerDay = local.odometerDay ?: incoming.odometerDay,
+            // 充电起点取「更新的那次」而不是本机优先：它是观测出来的派生数据，
+            // 谁记的时间更近，谁的起点就更接近最近一次充电（在另一台手机上充过电也一样）
+            chargeAnchor = listOfNotNull(local.chargeAnchor, incoming.chargeAnchor)
+                .maxByOrNull { it.at },
             costs = unionById(local.costs, incoming.costs) { it.id }.sortedByDescending { it.date },
             checkins = unionById(local.checkins, incoming.checkins) { it.id }.sortedByDescending { it.date },
             wishes = unionById(local.wishes, incoming.wishes) { it.id }.sortedBy { it.added },

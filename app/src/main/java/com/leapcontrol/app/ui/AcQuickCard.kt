@@ -1,10 +1,5 @@
 package com.leapcontrol.app.ui
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,14 +20,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -90,6 +87,11 @@ fun AcQuickCard(
     onStep: (Int) -> Unit,
     /** 点卡片空白处：进入全屏空调页。 */
     onOpen: () -> Unit = {},
+    /**
+     * 首页是否正在滑动。传 State 而不是 Boolean：暂停状态变化时不能让这条卡片
+     * （以及它外面的首页）重组，值只在帧回调里读。滑动期间风扇停转，停手立即恢复。
+     */
+    paused: State<Boolean>? = null,
     modifier: Modifier = Modifier,
 ) {
     val C = LocalAppColors.current
@@ -100,19 +102,24 @@ fun AcQuickCard(
 
     val indoor = normalizeTemp(status?.interiorTemp)
 
-    // 只有开机状态才挂无限旋转动画，关着的时候不空转
-    val fanAngle = if (acOn) {
-        val transition = rememberInfiniteTransition(label = "ac-fan")
-        val angle by transition.animateFloat(
-            initialValue = 0f,
-            targetValue = 360f,
-            animationSpec = infiniteRepeatable(tween(durationMillis = 1500, easing = LinearEasing)),
-            label = "ac-fan-angle",
-        )
-        angle
-    } else {
-        0f
-    }
+    /**
+     * 风扇旋转进度（0~1 循环），只在开空调时推进。
+     *
+     * 刻意**不在组合期解包**：以前用 `rememberInfiniteTransition` + `by`，角度一变整条
+     * 空调卡片就重组一次，而卡片外层是 [BoxWithConstraints]（SubcomposeLayout），
+     * 等于每帧重新 subcompose + measure —— 首页滑动时这就是实打实的抢帧。
+     * 现在值直接交给 [AcPowerButton] 的 graphicsLayer，在绘制阶段读，不重组也不测量。
+     */
+    val fanProgress = rememberLoopProgress(
+        cycleMs = FAN_CYCLE_MS,
+        enabled = acOn,
+        intervalNs = FRAME_INTERVAL_NS,
+        paused = paused,
+    )
+    // 关掉空调时回正（和以前一样停在 0°）：进度是跨开关保留的，不归零的话
+    // 风扇会停在关机那一刻的角度，四叶的朝向和原来的「正十字」不一致
+    val idleProgress = remember { mutableFloatStateOf(0f) }
+    val shownProgress = if (acOn) fanProgress else idleProgress
 
     BoxWithConstraints(
         modifier = modifier
@@ -229,7 +236,7 @@ fun AcQuickCard(
             AcPowerButton(
                 acOn = acOn,
                 busy = busy,
-                angle = fanAngle,
+                progress = shownProgress,
                 size = POWER_SIZE * k,
                 iconSize = POWER_ICON * k,
                 onClick = { onToggle(!acOn, target) },
@@ -253,7 +260,8 @@ fun AcQuickCard(
 internal fun AcPowerButton(
     acOn: Boolean,
     busy: Boolean,
-    angle: Float,
+    /** 旋转进度 0~1（一圈）。只在下面的 graphicsLayer 里读，不参与组合。 */
+    progress: State<Float>,
     size: Dp,
     iconSize: Dp,
     onClick: () -> Unit,
@@ -278,7 +286,9 @@ internal fun AcPowerButton(
             },
             modifier = Modifier
                 .size(iconSize)
-                .rotate(angle),
+                // graphicsLayer 的 lambda 属于绘制阶段：每帧只更新一次旋转变换，
+                // 不会让卡片重组，也不会重新测量（以前 .rotate(angle) 是组合期读值）
+                .graphicsLayer { rotationZ = progress.value * 360f },
         )
     }
 }

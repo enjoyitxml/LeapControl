@@ -8,6 +8,8 @@ class LeapApplication : Application() {
     override fun onCreate() {
         CrashGuard.install(this)
         super.onCreate()
+        // 性能日志采集器的落盘目录（filesDir），越早注入越好
+        com.leapcontrol.app.ui.PerfLogger.inject(this)
         // 桌面图标：升级安装会把 activity-alias 的 enabled 状态重置回清单默认值，
         // 所以每次启动按用户上次的选择校准一次，保证图标不会自己跳回默认。
         runCatching {

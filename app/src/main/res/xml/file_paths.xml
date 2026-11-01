@@ -13,4 +13,7 @@
     <files-path
         name="parking"
         path="parking/" />
+    <files-path
+        name="perf"
+        path="perf/" />
 </paths>

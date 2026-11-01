@@ -386,7 +386,12 @@ class JournalRuntime(
      * 不给每个 VIN 各存一份：卡片顺序是「个人习惯」，换车不该重置排版；
      * 而账单、打卡这些是车辆自己的账，必须按 VIN 隔离。
      */
-    private val _cardOrder = mutableStateOf(JournalCardLayout.parse(prefs.getString(KEY_CARD_ORDER, null)))
+    private val _cardOrder = mutableStateOf(
+        JournalCardLayout.parse(
+            prefs.getString(KEY_CARD_ORDER, null),
+            prefs.getInt(KEY_CARD_ORDER_VERSION, 0),
+        ),
+    )
     val cardOrder: State<List<JournalCardId>> get() = _cardOrder
 
     private var loadedVin: String? = null
@@ -469,7 +474,54 @@ class JournalRuntime(
         val safe = cards.distinct()
         if (safe == _cardOrder.value) return
         _cardOrder.value = safe
-        prefs.edit().putString(KEY_CARD_ORDER, JournalCardLayout.serialize(safe)).apply()
+        prefs.edit()
+            .putString(KEY_CARD_ORDER, JournalCardLayout.serialize(safe))
+            // 存下版本号：从这一刻起，以后新增的卡片不再自动补进这份列表 ——
+            // 用户是看着这份列表删的，删掉的新卡不该在下次启动又冒出来
+            .putInt(KEY_CARD_ORDER_VERSION, JournalCardLayout.VERSION)
+            .apply()
+    }
+
+    // ---------------- 充电起点（「自上次充电后行驶里程」） ----------------
+
+    /**
+     * 观测一次车况，必要时更新「上次充电的起点」（判定见 [ChargeCycle.observe]）。
+     *
+     * 由 [com.leapcontrol.app.ui.AppRuntime] 在**每次拿到车况后**调用 —— 那正是唯一能
+     * 「看见充电」的时机：车端没有充电历史接口，错过就真没了。这里只负责落盘，
+     * 同一次充电不会重复写（判定会返回 null）。
+     */
+    fun observeChargeCycle(
+        chargeState: Int?,
+        soc: Int?,
+        totalKm: Double?,
+        now: Long = System.currentTimeMillis(),
+    ) {
+        mutate { data ->
+            val next = ChargeCycle.observe(data.chargeAnchor, chargeState, soc, totalKm, now)
+                ?: return@mutate data
+            data.copy(chargeAnchor = next)
+        }
+    }
+
+    /**
+     * 用户手动「从现在起算」。
+     *
+     * 存在的理由：整夜慢充、充完直接开走、期间一次没打开过 App —— 这次充电就看不见，
+     * 起点会停在更早那次，卡上的数字只会偏大。与其让用户盯着一个越来越离谱的数，
+     * 不如给一个能把起点拉回当下的按钮。
+     *
+     * @return 当前里程不可用（读不到）时返回 false，调用方据此提示。
+     */
+    fun restartChargeCycle(
+        totalKm: Double?,
+        soc: Int?,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (!ChargeCycle.isUsableKm(totalKm)) return false
+        val km = totalKm ?: return false
+        mutate { it.copy(chargeAnchor = ChargeAnchor(km = km, at = now, soc = soc, manual = true)) }
+        return true
     }
 
     private fun mutate(block: (JournalData) -> JournalData) {
@@ -787,10 +839,14 @@ class JournalRuntime(
         var cardOrderRestored = false
         val backupOrder = payload.cardOrder
         if (!backupOrder.isNullOrBlank() && prefs.getString(KEY_CARD_ORDER, null).isNullOrBlank()) {
-            val cards = JournalCardLayout.parse(backupOrder)
+            // 版本传 0：备份里的顺序可能来自旧版本，缺的卡要按默认相对位置补回来
+            val cards = JournalCardLayout.parse(backupOrder, savedVersion = 0)
             if (cards.isNotEmpty()) {
                 _cardOrder.value = cards
-                prefs.edit().putString(KEY_CARD_ORDER, JournalCardLayout.serialize(cards)).apply()
+                prefs.edit()
+                    .putString(KEY_CARD_ORDER, JournalCardLayout.serialize(cards))
+                    .putInt(KEY_CARD_ORDER_VERSION, JournalCardLayout.VERSION)
+                    .apply()
                 cardOrderRestored = true
             }
         }
@@ -859,6 +915,15 @@ data class DailyKm(
 
 /** 概览页卡片顺序的存储键（与账单数据分开：这是排版偏好，不按 VIN 隔离）。 */
 private const val KEY_CARD_ORDER = "card_order"
+
+/**
+ * 卡片顺序对应的协议版本。
+ *
+ * 没有它就没法区分「用户亲手删掉了新卡」和「用户还没见过新卡」：
+ * 两种情况下 prefs 里的列表都不含新卡。存了版本号，只有版本落后者才补卡。
+ * 键值是 0 表示「从没有过这个概念」，也就是 v1 之前的老数据。
+ */
+private const val KEY_CARD_ORDER_VERSION = "card_order_version"
 
 /** 主数据文件名：固定名，与 VIN 无关。 */
 private const val MAIN_NAME = "journal.json"

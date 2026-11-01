@@ -510,19 +510,11 @@ fun MainScreen(
             }
 
             // ---- 实时帧率浮层（设置里可关，默认不显示）----
-            // 放在 Scaffold 之后：要盖在内容与 Dock 之上，才看得到真实出帧情况
-            val frameStats = rememberFrameStats(frameStatsVisible)
-            if (frameStatsVisible) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    FrameStatsBadge(
-                        stats = frameStats,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .statusBarsPadding()
-                            .padding(top = 6.dp, end = 14.dp),
-                    )
-                }
-            }
+            // 放在 Scaffold 之后：要盖在内容与 Dock 之上，才看得到真实出帧情况。
+            // 采样到的数字只在浮层内部读（FrameStatsOverlay 自己是一个独立作用域），
+            // 不在这里解包 —— 否则每 500ms 一次刷新会把整页（含首页）重组一遍，
+            // 等于探针自己在制造卡顿。
+            FrameStatsOverlay(enabled = frameStatsVisible)
 
             // ---- 版本更新提醒弹窗（覆盖全局，最高层级）----
             // 最小化时不画弹窗，改由下面的悬浮条接管（下载协程不受影响，继续跑）

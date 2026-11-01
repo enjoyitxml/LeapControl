@@ -1,10 +1,5 @@
 package com.leapcontrol.app.ui
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +24,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -129,19 +125,16 @@ fun AcScreen(
     var steeringLevel by remember(remoteSteering) { mutableStateOf(remoteSteering) }
     var mirrorLevel by remember(remoteMirror) { mutableStateOf(remoteMirror) }
 
-    // 空调开启时才挂无限旋转动画，关着的时候不空转
-    val fanAngle = if (acOn) {
-        val transition = rememberInfiniteTransition(label = "ac-screen-fan")
-        val angle by transition.animateFloat(
-            initialValue = 0f,
-            targetValue = 360f,
-            animationSpec = infiniteRepeatable(tween(durationMillis = 1500, easing = LinearEasing)),
-            label = "ac-screen-fan-angle",
-        )
-        angle
-    } else {
-        0f
-    }
+    // 空调开启时才推进旋转；值只在 AcPowerButton 的 graphicsLayer 里读，
+    // 不在组合期解包 —— 否则这一整页每帧重组一次（和首页空调条同一个问题）
+    val fanProgress = rememberLoopProgress(
+        cycleMs = FAN_CYCLE_MS,
+        enabled = acOn,
+        intervalNs = FRAME_INTERVAL_NS,
+    )
+    // 关掉空调时回正，和以前停在 0° 的表现一致
+    val idleProgress = remember { mutableFloatStateOf(0f) }
+    val shownProgress = if (acOn) fanProgress else idleProgress
 
     /** 生成一条「只改一项」的空调指令名，其余字段沿用页面上的当前值。 */
     fun adjustName(
@@ -266,7 +259,7 @@ fun AcScreen(
                 AcPowerButton(
                     acOn = acOn,
                     busy = busy,
-                    angle = fanAngle,
+                    progress = shownProgress,
                     size = 46.dp,
                     iconSize = 26.dp,
                     onClick = { onPower(!acOn) },
