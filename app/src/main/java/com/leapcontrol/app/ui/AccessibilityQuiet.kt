@@ -116,6 +116,22 @@ object AccessibilityQuiet {
         }
     }
 
+    /**
+     * 把「找 Compose 无障碍委托 + 反射扫字段」这一步提前做掉。
+     *
+     * 第一次 [begin] 之前什么都没缓存，它要在 UI 线程上走一遍视图树找到 AndroidComposeView，
+     * 再反射遍历它的字段（顺带触发一堆类加载），这一段放在第一帧滑动上就是「一上手先顿一下」。
+     * 而结果本来就可以复用 —— 所以在进页面、还没人滑动的时候先做一次，滑动时只剩字段读写。
+     *
+     * 只解析、不静音：不改变任何状态，失败也只是把原因记进 [lastError]，
+     * 下次 [begin] 会重新找（[resolveDelegate] 在 delegate 为 null 时不会走缓存）。
+     */
+    fun warmUp(context: android.content.Context?) {
+        if (muted) return
+        val window = context?.findActivity()?.window ?: return
+        resolveDelegate(window)
+    }
+
     /** 结束静音：把原来的服务列表原样放回去。失败也要尽力，绝不能把无障碍永久关掉。 */
     fun end() {
         if (!muted) return

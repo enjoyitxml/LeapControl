@@ -92,6 +92,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -498,6 +499,17 @@ fun HomeScreen(
         // 保险：万一在滑行最猛的时候被切页/销毁，别把无障碍静音状态留下
         DisposableEffect(Unit) {
             onDispose { AccessibilityQuiet.end() }
+        }
+        // 无障碍静音的「反射查找」预热。
+        //
+        // 第一次 begin() 要在 UI 线程上走一遍视图树找到 AndroidComposeView、再反射扫它的字段
+        // （顺带触发一批类加载），而它偏偏发生在第一次滑动起步的那一帧 ——
+        // 手感上就是「一上手先顿一下」。这里在进页面后的头两帧把它做掉：
+        // 那会儿没人滑动，就算花掉十几毫秒也看不出来；之后每次滑动只剩字段读写。
+        LaunchedEffect(Unit) {
+            withFrameNanos { }
+            withFrameNanos { }
+            AccessibilityQuiet.warmUp(coachContext)
         }
         // 性能日志：滑动期间每帧记录滚动偏移 + 帧间隔 + 实时刷新率 + doFrame 延迟。
         //

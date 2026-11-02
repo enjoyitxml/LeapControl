@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
@@ -38,6 +39,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 /**
@@ -109,79 +112,85 @@ fun ThemeBackdrop(
      *
      * 动态场景平时不能烘（相位一直在推进，烘了画面就钉死了）。但**滑动 / 不在前台时
      * `animate` 为 false，相位已经停住**，此刻画面同样是静止的 —— 这时候就该烘：
-     * 否则用户一滑动，下面 [`else`] 那条实时路径每帧都要开一块 508dp 全宽的离屏缓冲
-     * （约 6MB）再重画整幅场景，和滚动抢的正是这份显存带宽。
-     * 恢复动画时 `animate` 变回 true，本值自动变回 false，重新走实时绘制。
+     * 否则用户一滑动，实时路径每帧都要开一块 508dp 全宽的离屏缓冲（约 6MB）再重画整幅场景，
+     * 和滚动抢的正是这份显存带宽。恢复动画时 `animate` 变回 true，本值自动变回 false，
+     * 重新走实时绘制。
      */
     val bakeable = !theme.animated || !animate
+
+    // 当前测量到的尺寸：只在布局真的变了时写一次，滚动期间一动不动。
+    var measured by remember { mutableStateOf(IntSize.Zero) }
+    // 烘焙结果。在**绘制阶段**读它 —— 变的是「画什么」，不牵动组合与布局。
+    var bakedImage by remember(theme, dark, veilBrush) { mutableStateOf<ImageBitmap?>(null) }
+
+    /*
+     * 烘焙放后台线程做，绝不占 UI 线程的任何一帧。
+     *
+     * 这一步以前写在 drawWithCache 的绘制块里。问题是「能不能烘」要到绘制时才知道
+     * （`animate` 是组合期快照），于是**第一次滑动的那一帧**得把整幅场景 CPU 光栅化一遍
+     * （508dp 全宽，渐变 + 雾化 + 蒙层），实测就是「一上手先顿一下、之后才顺」——
+     * 而那一帧恰好是手指刚按下去的时候，最不能卡。
+     *
+     * 现在：这一帧照常用实时路径画（和优化前一样，不额外多花），同时后台把图烘出来，
+     * 下一帧开始换成贴图，之后整个滑动期间这一层只剩一次纹理采样。
+     *
+     * 相位只在 `animate == false` 时停住，所以这里读到的一定是「冻结的那一帧」；
+     * 滑过一次再滑，相位还是同一个值，直接命中缓存，不会重复烘。
+     */
+    LaunchedEffect(bakeable, measured, bake) {
+        if (!bakeable || bake.failed) return@LaunchedEffect
+        val w = measured.width
+        val h = measured.height
+        if (w <= 0 || h <= 0) return@LaunchedEffect
+        val frozen = phase.value
+        if (bake.matches(w, h, frozen)) {
+            if (bakedImage !== bake.image) bakedImage = bake.image
+            return@LaunchedEffect
+        }
+        val img = runCatching {
+            withContext(Dispatchers.Default) {
+                renderSceneBitmap(w, h, density) {
+                    paintScene(scene, frozen, palette)
+                    if (veilBrush != null) drawRect(brush = veilBrush)
+                    drawRect(brush = SCENE_FADE_BRUSH, blendMode = BlendMode.DstIn)
+                }
+            }
+        }.getOrNull()
+        if (img == null) {
+            // 烘不出来（极端尺寸 / 显存不够）不能连累 App：标一次失败，以后都走实时绘制
+            bake.failed = true
+            return@LaunchedEffect
+        }
+        bake.image = img
+        bake.width = w
+        bake.height = h
+        bake.phase = frozen
+        bakedImage = img
+    }
 
     Spacer(
         modifier = modifier
             .fillMaxWidth()
             .height(sceneHeight)
+            .onSizeChanged { if (it != measured) measured = it }
             .drawWithCache {
-                // 淡出蒙层只在尺寸变化时重建一次，别每帧 new 一个 Brush
-                val fadeBrush = Brush.verticalGradient(
-                    0.00f to Color.White,
-                    0.30f to Color.White,
-                    0.52f to Color.White.copy(alpha = 0.60f),
-                    0.74f to Color.White.copy(alpha = 0.22f),
-                    0.90f to Color.White.copy(alpha = 0.06f),
-                    1.00f to Color.Transparent,
-                )
-                // ---- 静态主题：烘焙成位图 ----
-                // 为什么非要这么做：原来这一层靠 `canvas.saveLayer(...) + DstIn` 做淡出，
-                // 而 saveLayer 在 GPU 上**每一帧都要开一块离屏缓冲**（508dp 全宽，约 6MB），
-                // 画完再混合回主画布。即使画面一动不动、即使 Content 层被图层缓存住，
-                // 这条指令照样每帧执行 —— 首页上下滑动时它和滚动抢的就是这份显存带宽。
-                // 烘焙之后，滑动期间这一层只剩一次纹理采样，没有离屏、没有混合来回。
-                val baked: ImageBitmap? = if (bakeable && !bake.failed) {
-                    val w = size.width.roundToInt().coerceAtLeast(1)
-                    val h = size.height.roundToInt().coerceAtLeast(1)
-                    // 静态主题的相位本来就是常量；动态主题这里读到的是「停住的那一帧」。
-                    // 只在本分支读，animate=true 时根本不会进来，不会拖累动画路径。
-                    val frozenPhase = phase.value
-                    if (!bake.matches(w, h, frozenPhase)) {
-                        // 烘焙失败（极端尺寸 / 显存不够）不能连累 App：标记失败，
-                        // 这个组合退回下面的实时绘制路径，代价只是回到优化前的性能。
-                        bake.image = try {
-                            renderSceneBitmap(w, h, density) {
-                                paintScene(scene, frozenPhase, palette)
-                                if (veilBrush != null) drawRect(brush = veilBrush)
-                                drawRect(brush = fadeBrush, blendMode = BlendMode.DstIn)
-                            }
-                        } catch (t: Throwable) {
-                            null
-                        }
-                        if (bake.image == null) {
-                            bake.failed = true
-                        } else {
-                            bake.width = w
-                            bake.height = h
-                            bake.phase = frozenPhase
-                        }
-                    }
-                    bake.image
-                } else {
-                    null
-                }
-
-                if (baked != null) {
-                    onDrawBehind {
-                        drawImage(
-                            image = baked,
-                            dstSize = IntSize(baked.width, baked.height),
-                        )
-                    }
-                } else {
-                    val layerPaint = Paint()
-                    val layerBounds = Rect(0f, 0f, size.width, size.height)
-                    onDrawBehind {
+                // 实时路径要用的东西只在尺寸变化时建一次，别每帧 new
+                val layerPaint = Paint()
+                val layerBounds = Rect(0f, 0f, size.width, size.height)
+                onDrawBehind {
+                    val baked = bakedImage
+                    // 尺寸对不上（刚转过屏）就先走实时路径，等后台烘好再换过来
+                    if (baked != null && bakeable &&
+                        baked.width == size.width.roundToInt() &&
+                        baked.height == size.height.roundToInt()
+                    ) {
+                        drawImage(image = baked, dstSize = IntSize(baked.width, baked.height))
+                    } else {
                         drawIntoCanvas { canvas ->
                             canvas.saveLayer(layerBounds, layerPaint)
                             paintScene(scene, phase.value, palette)
                             if (veilBrush != null) drawRect(brush = veilBrush)
-                            drawRect(brush = fadeBrush, blendMode = BlendMode.DstIn)
+                            drawRect(brush = SCENE_FADE_BRUSH, blendMode = BlendMode.DstIn)
                             canvas.restore()
                         }
                     }
@@ -189,6 +198,21 @@ fun ThemeBackdrop(
             },
     )
 }
+
+/**
+ * 场景底边的淡出蒙层。
+ *
+ * 渐变按比例铺，与像素尺寸无关，所以整个 App 建一份就够 —— 以前每个组合（甚至每次
+ * 缓存失效）都要重造一遍 Brush 和里面的 6 个 Color。
+ */
+private val SCENE_FADE_BRUSH = Brush.verticalGradient(
+    0.00f to Color.White,
+    0.30f to Color.White,
+    0.52f to Color.White.copy(alpha = 0.60f),
+    0.74f to Color.White.copy(alpha = 0.22f),
+    0.90f to Color.White.copy(alpha = 0.06f),
+    1.00f to Color.Transparent,
+)
 
 /** 静态场景的烘焙缓存：尺寸与相位都没变就一直复用同一张图。 */
 private class SceneBake {
