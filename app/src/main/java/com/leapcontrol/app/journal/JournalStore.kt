@@ -488,8 +488,10 @@ class JournalRuntime(
      * 观测一次车况，必要时更新「上次充电的起点」（判定见 [ChargeCycle.observe]）。
      *
      * 由 [com.leapcontrol.app.ui.AppRuntime] 在**每次拿到车况后**调用 —— 那正是唯一能
-     * 「看见充电」的时机：车端没有充电历史接口，错过就真没了。这里只负责落盘，
-     * 同一次充电不会重复写（判定会返回 null）。
+     * 「看见充电」的时机：车端没有充电历史接口，错过就真没了。
+     *
+     * **不充电时也必须调**：给上一次充电盖「已结束」的戳（见 `ChargeAnchor.ended`），
+     * 下次插枪才好无条件重置。没变化时 [ChargeCycle.observe] 返回 null，一次盘都不写。
      */
     fun observeChargeCycle(
         chargeState: Int?,

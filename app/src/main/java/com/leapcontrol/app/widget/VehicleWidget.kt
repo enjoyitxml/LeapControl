@@ -46,6 +46,10 @@ import java.util.Locale
  * 桌面把卡片拉宽 / 压扁后，系统只给 min/max width/height 这一组 dp 值，RemoteViews 不会自动缩放字号，
  * 所以 [buildViews] 按实际尺寸重设一遍字号（[applyTextScale]）；图标交给 match_parent + fitCenter 自己缩。
  *
+ * ## 全量 vs 增量
+ * 见 [render] 的 `partial` 参数：**结构没变就别整块重绘**。沉浸样式的壁纸是一张用户自选的原图，
+ * 每次全量都要让桌面进程重新解码一遍，刷新车况 / 点按键时会明显闪一下。
+ *
  * ## 数据从哪来
  * 小组件与 App 同进程。车况先用磁盘缓存预填（冷启动也能立刻有内容），
  * 再由 [VehicleWidgetProvider] 在添加 / 点按键时后台刷新。
@@ -123,6 +127,9 @@ object VehicleWidget {
      */
     private const val HORN_ICON_LIFT = 1.5f
 
+    /** 按键格的通用留白基数（dp）。 */
+    private const val BASE_ICON_PAD = 5.5f
+
     /** 版式基准：320×150dp（4 列 2 行在 400dp 级屏幕上的常见实际尺寸）。 */
     private const val BASE_WIDTH_DP = 320f
     private const val BASE_HEIGHT_DP = 150f
@@ -146,10 +153,33 @@ object VehicleWidget {
     /** 补图节流记在哪个 prefs 里（与控车按键的 `widget_action_state` 分开）。 */
     private const val PREFS_CAR = "widget_car_state"
 
+    /**
+     * 上一次**全量**渲染时的深浅模式。
+     *
+     * 增量更新不动背景色，所以系统切深浅色时必须强制回全量 —— 否则会留下一张
+     * 浅色底配浅色字的卡（背景是深色的旧值，文字是新算的白色）。
+     * 同时它还兜住「进程刚起来、卡片还没全量画过」这一帧：null ≠ 当前值，自然走全量。
+     */
+    @Volatile
+    private var lastFullNight: Boolean? = null
+
     // ---------------- 对外入口 ----------------
 
-    /** 用内存 / 磁盘里已有的数据立刻重画一次（不发网络请求）。 */
-    fun render(context: Context, runtime: AppRuntime? = null, busy: String? = null) {
+    /**
+     * 用内存 / 磁盘里已有的数据立刻重画一次（不发网络请求）。
+     *
+     * @param partial true = 只把**会变的东西**推给桌面（状态文案、续航数字、进度条、
+     *   按键高亮、车模），不动背景 / 壁纸 / 字号 / 内边距 / 点击区。
+     *   高频路径（每次刷新车况、点按键时的「正在上锁…」）必须走这条：
+     *   全量重绘在沉浸样式下会让桌面进程把用户那张壁纸重新解码一遍，卡片会明显闪一下。
+     *   首次添加、改尺寸、换版式 / 换壁纸 / 换车模这些**结构变了**的场合仍走全量。
+     */
+    fun render(
+        context: Context,
+        runtime: AppRuntime? = null,
+        busy: String? = null,
+        partial: Boolean = false,
+    ) {
         val manager = AppWidgetManager.getInstance(context) ?: return
         val ids = manager.getAppWidgetIds(
             ComponentName(context, VehicleWidgetProvider::class.java),
@@ -166,20 +196,46 @@ object VehicleWidget {
         // 内存没有就翻磁盘那份（[WidgetCarImage]）—— 冷进程第一帧全靠它，
         // 只认内存的话车模会时有时无：开过 App 之后有、被系统回收之后就没了。
         val car = cachedCar(context, vin)
+        // 增量更新不碰背景，所以三种情况必须退回全量：
+        // ① 调用方要的就是全量；② 系统深浅色变了（背景色在静态部分）；
+        // ③ 这个进程里还没全量画过（`lastFullNight == null`），桌面上可能是一张空卡。
+        val night = WidgetStyle.isNight(context)
+        val usePartial = partial && lastFullNight == night
         ids.forEach { id ->
             val (widthDp, heightDp) = widgetSize(manager, id)
-            val views = buildViews(
-                context = context,
-                status = status,
-                updatedAt = updatedAt,
-                busy = busy,
-                signedIn = signedIn,
-                title = title,
-                car = car,
-                widthDp = widthDp,
-                heightDp = heightDp,
-            )
-            runCatching { manager.updateAppWidget(id, views) }
+            runCatching {
+                if (usePartial) {
+                    manager.partiallyUpdateAppWidget(
+                        id,
+                        buildPartialViews(
+                            context = context,
+                            status = status,
+                            updatedAt = updatedAt,
+                            busy = busy,
+                            signedIn = signedIn,
+                            title = title,
+                            car = car,
+                            heightDp = heightDp,
+                        ),
+                    )
+                } else {
+                    manager.updateAppWidget(
+                        id,
+                        buildViews(
+                            context = context,
+                            status = status,
+                            updatedAt = updatedAt,
+                            busy = busy,
+                            signedIn = signedIn,
+                            title = title,
+                            car = car,
+                            widthDp = widthDp,
+                            heightDp = heightDp,
+                        ),
+                    )
+                    lastFullNight = night
+                }
+            }
         }
 
         // 磁盘里也没有（第一次装、或者刚换登录账号）：后台补一张，补到就再画一遍。
@@ -263,6 +319,67 @@ object VehicleWidget {
 
     // ---------------- RemoteViews 组装 ----------------
 
+    /** 一次渲染用的配色：浅色 / 深色 / 沉浸三套，全量与增量共用。 */
+    private data class Palette(
+        val ink: Int,
+        val sub: Int,
+        val warn: Int,
+        val active: Int,
+        val ev: Int,
+        val fuel: Int,
+    )
+
+    private fun paletteFor(context: Context): Palette {
+        val night = WidgetStyle.isNight(context)
+        val glass = WidgetStyle.style(context) == WidgetStyle.STYLE_D
+        return Palette(
+            ink = when {
+                glass -> INK_GLASS
+                night -> INK_DARK
+                else -> INK_LIGHT
+            },
+            sub = when {
+                glass -> SUB_GLASS
+                night -> SUB_DARK
+                else -> SUB_LIGHT
+            },
+            warn = when {
+                glass -> WARN_GLASS
+                night -> WARN_DARK
+                else -> WARN_LIGHT
+            },
+            active = when {
+                glass -> ACCENT_GLASS
+                night -> ACCENT_DARK
+                else -> ACCENT_LIGHT
+            },
+            // 续航那两行的小图标跟首页同色：电绿、油蓝。沉浸样式压在照片上，
+            // 原色会被背景吃掉，所以单独提亮一档。
+            ev = when {
+                glass -> EV_GLASS
+                night -> EV_DARK
+                else -> EV_LIGHT
+            },
+            fuel = when {
+                glass -> FUEL_GLASS
+                night -> FUEL_DARK
+                else -> FUEL_LIGHT
+            },
+        )
+    }
+
+    /** 五个按键的静态部分（格子底色、图标资源、留白、点击）在这两种样式下不一样。 */
+    private fun cellBackgroundRes(context: Context): Int = when {
+        WidgetStyle.style(context) == WidgetStyle.STYLE_D -> R.drawable.widget_cell_d
+        WidgetStyle.isNight(context) -> R.drawable.widget_cell_a_dark
+        else -> R.drawable.widget_cell_a
+    }
+
+    /**
+     * **全量**：外壳 + 内边距 + 字号 + 所有内容。
+     *
+     * 只在结构真的变了的时候用：首次添加、改卡片尺寸、换版式、换壁纸、换车模。
+     */
     internal fun buildViews(
         context: Context,
         status: CarStatus?,
@@ -277,44 +394,11 @@ object VehicleWidget {
         val style = WidgetStyle.style(context)
         val night = WidgetStyle.isNight(context)
         val glass = style == WidgetStyle.STYLE_D
+        val p = paletteFor(context)
 
         val layout = if (glass) R.layout.widget_d else R.layout.widget_a
         val views = RemoteViews(context.packageName, layout)
         val density = context.resources.displayMetrics.density
-        val scale = textScale(widthDp, heightDp)
-
-        val ink = when {
-            glass -> INK_GLASS
-            night -> INK_DARK
-            else -> INK_LIGHT
-        }
-        val sub = when {
-            glass -> SUB_GLASS
-            night -> SUB_DARK
-            else -> SUB_LIGHT
-        }
-        val warn = when {
-            glass -> WARN_GLASS
-            night -> WARN_DARK
-            else -> WARN_LIGHT
-        }
-        val active = when {
-            glass -> ACCENT_GLASS
-            night -> ACCENT_DARK
-            else -> ACCENT_LIGHT
-        }
-        // 续航那两行的小图标跟首页同色：电绿、油蓝。沉浸样式压在照片上，
-        // 原色会被背景吃掉，所以单独提亮一档。
-        val evColor = when {
-            glass -> EV_GLASS
-            night -> EV_DARK
-            else -> EV_LIGHT
-        }
-        val fuelColor = when {
-            glass -> FUEL_GLASS
-            night -> FUEL_DARK
-            else -> FUEL_LIGHT
-        }
 
         // ---- 外壳 ----
         // 沉浸样式的底必须是深色：万一图片没画上（桌面不认 URI），白字还得有底可压。
@@ -332,13 +416,87 @@ object VehicleWidget {
                 views.setImageViewResource(R.id.wg_bg, R.drawable.widget_d_fallback)
         }
 
-        // ---- 车标 + 车名 ----
+        // ---- 车标 ----
         // 车名前固定放零跑官方 V 标（用户明确要一直显示，不再按「高级设置」是否解锁切方向盘）。
         // 它是纯白图形，浅色卡上必须染色，否则白字白底看不见。
         views.setImageViewResource(R.id.wg_logo, R.drawable.ic_leap_logo)
-        views.setInt(R.id.wg_logo, "setColorFilter", ink)
+        views.setInt(R.id.wg_logo, "setColorFilter", p.ink)
+
+        // ---- 五个按键：静态部分 ----
+        // 五个格子的图标不按同一套留白：空调那个压缩机符号笔画密，撑满会比邻居看着大一圈，
+        // 多留一档边收小；鸣笛的喇叭是横长形，少留一点边才不至于显小，另外整体顶高一点点。
+        val cellBg = cellBackgroundRes(context)
+        bindCellShell(views, R.id.wg_cell_unlock, R.id.wg_icon_unlock, R.drawable.ic_qc_unlock,
+            broadcast(context, ACTION_UNLOCK, RC_UNLOCK), cellBg, BASE_ICON_PAD, density)
+        bindCellShell(views, R.id.wg_cell_lock, R.id.wg_icon_lock, R.drawable.ic_qc_lock,
+            broadcast(context, ACTION_LOCK, RC_LOCK), cellBg, BASE_ICON_PAD, density)
+        bindCellShell(views, R.id.wg_cell_ac, R.id.wg_icon_ac, R.drawable.ic_qc_ac,
+            broadcast(context, ACTION_TOGGLE_AC, RC_AC), cellBg, BASE_ICON_PAD + AC_ICON_SHRINK, density)
+        bindCellShell(views, R.id.wg_cell_trunk, R.id.wg_icon_trunk, R.drawable.ic_qc_trunk,
+            broadcast(context, ACTION_TOGGLE_TRUNK, RC_TRUNK), cellBg, BASE_ICON_PAD, density)
+        bindCellShell(views, R.id.wg_cell_horn, R.id.wg_icon_horn, R.drawable.ic_qc_horn,
+            broadcast(context, ACTION_HORN, RC_HORN), cellBg,
+            (BASE_ICON_PAD - HORN_ICON_GROW).coerceAtLeast(0f), density,
+            liftDp = HORN_ICON_LIFT)
+
+        // 点文字区 / 车模都打开 App（车模不再兼做「换背景」按钮，那是设置页的事）
+        openAppIntent(context)?.let {
+            views.setOnClickPendingIntent(R.id.wg_info, it)
+            views.setOnClickPendingIntent(R.id.wg_car_box, it)
+        }
+
+        // ---- 所有会变的内容 ----
+        bindLive(views, context, p, status, updatedAt, busy, signedIn, title, car, heightDp)
+
+        // 字号跟尺寸走，是结构属性：只在全量里设
+        applyTextScale(views = views, scale = textScale(widthDp, heightDp))
+        return views
+    }
+
+    /**
+     * **增量**：只含会变的那几项。
+     *
+     * 走 [AppWidgetManager.partiallyUpdateAppWidget]，桌面只应用这些动作：
+     * 背景、壁纸、字号、留白、点击区一律不碰 —— 这正是免掉「刷新时闪一下」的关键。
+     */
+    internal fun buildPartialViews(
+        context: Context,
+        status: CarStatus?,
+        updatedAt: Long,
+        busy: String?,
+        signedIn: Boolean,
+        title: String = "我的零跑",
+        car: Bitmap? = null,
+        heightDp: Int = 150,
+    ): RemoteViews {
+        val glass = WidgetStyle.style(context) == WidgetStyle.STYLE_D
+        val layout = if (glass) R.layout.widget_d else R.layout.widget_a
+        val views = RemoteViews(context.packageName, layout)
+        bindLive(views, context, paletteFor(context), status, updatedAt, busy, signedIn, title, car, heightDp)
+        return views
+    }
+
+    /**
+     * 全量与增量共用的「会变的内容」：状态文案、续航数字与进度条、车模、按键高亮。
+     *
+     * 往这里加东西是安全的（两条路径都会生效）；**别把背景 / 字号 / 内边距 / 点击写进来**，
+     * 它们属于 [buildViews] 的静态部分，增量更新里重复设置没有意义。
+     */
+    private fun bindLive(
+        views: RemoteViews,
+        context: Context,
+        p: Palette,
+        status: CarStatus?,
+        updatedAt: Long,
+        busy: String?,
+        signedIn: Boolean,
+        title: String,
+        car: Bitmap?,
+        heightDp: Int,
+    ) {
+        // ---- 车标 + 车名 ----
         views.setTextViewText(R.id.wg_title, title.ifBlank { "我的零跑" })
-        views.setTextColor(R.id.wg_title, ink)
+        views.setTextColor(R.id.wg_title, p.ink)
 
         // ---- 状态 / 更新时间（卡片右上角）----
         val clock = if (updatedAt > 0L) {
@@ -351,31 +509,31 @@ object VehicleWidget {
         when {
             busy != null -> {
                 stateText = busy
-                stateColor = active
+                stateColor = p.active
             }
             !signedIn -> {
                 stateText = "点此登录"
-                stateColor = sub
+                stateColor = p.sub
             }
             status == null -> {
                 stateText = "正在同步…"
-                stateColor = sub
+                stateColor = p.sub
             }
             status.charging == true -> {
                 stateText = "充电中" + clock?.let { " · $it" }.orEmpty()
-                stateColor = active
+                stateColor = p.active
             }
             status.locked == false -> {
                 stateText = "未锁车" + clock?.let { " · $it" }.orEmpty()
-                stateColor = warn
+                stateColor = p.warn
             }
             clock != null -> {
                 stateText = "$clock 更新"
-                stateColor = sub
+                stateColor = p.sub
             }
             else -> {
                 stateText = "尚未同步"
-                stateColor = sub
+                stateColor = p.sub
             }
         }
         views.setTextViewText(R.id.wg_time, stateText)
@@ -389,11 +547,11 @@ object VehicleWidget {
         val fuelSoc = status?.fuelSoc?.coerceIn(0, 100)
         val evRangeText = kmText(if (reev) status?.electricRange else status?.range)
         val fuelRangeText = kmText(status?.fuelRange)
-        views.setInt(R.id.wg_ev_icon, "setColorFilter", evColor)
+        views.setInt(R.id.wg_ev_icon, "setColorFilter", p.ev)
         views.setTextViewText(R.id.wg_ev_value, evRangeText)
-        views.setTextColor(R.id.wg_ev_value, ink)
+        views.setTextColor(R.id.wg_ev_value, p.ink)
         views.setTextViewText(R.id.wg_ev_pct, soc?.let { "$it%" } ?: "--")
-        views.setTextColor(R.id.wg_ev_pct, ink)
+        views.setTextColor(R.id.wg_ev_pct, p.ink)
         // 条刻度 = 电量 / 油量水位：拿不到「满电续航」标称值（不同电池版本不一样），不编假刻度。
         // 电绿油蓝这两套颜色写在布局引用的 progressDrawable 里（widget_bar_ev / widget_bar_fuel），
         // 运行时**不去换 drawable** —— ProgressBar 没有 setProgressDrawable(int) 这个签名，
@@ -404,11 +562,11 @@ object VehicleWidget {
         // 纯电车型本来就只有一行，降级之后结构不变，不会突然换一套版式。
         if (reev && heightDp >= 120) {
             views.setViewVisibility(R.id.wg_fuel_row, View.VISIBLE)
-            views.setInt(R.id.wg_fuel_icon, "setColorFilter", fuelColor)
+            views.setInt(R.id.wg_fuel_icon, "setColorFilter", p.fuel)
             views.setTextViewText(R.id.wg_fuel_value, fuelRangeText)
-            views.setTextColor(R.id.wg_fuel_value, ink)
+            views.setTextColor(R.id.wg_fuel_value, p.ink)
             views.setTextViewText(R.id.wg_fuel_pct, fuelSoc?.let { "$it%" } ?: "--")
-            views.setTextColor(R.id.wg_fuel_pct, ink)
+            views.setTextColor(R.id.wg_fuel_pct, p.ink)
             views.setProgressBar(R.id.wg_fuel_bar, 100, fuelSoc ?: 0, false)
         } else {
             views.setViewVisibility(R.id.wg_fuel_row, View.GONE)
@@ -422,7 +580,7 @@ object VehicleWidget {
             views.setViewVisibility(R.id.wg_car, View.GONE)
         }
 
-        // ---- 五个按键 ----
+        // ---- 五个按键的高亮 ----
         // 高亮规则：正在生效的状态才亮 —— 车门解锁时「解锁」亮、尾门开着时「后备箱」亮、
         // 空调开着时「空调」亮。上锁 / 鸣笛没有「开着」这一态，永远常态色（鸣笛是瞬时指令）。
         val unlocked = status?.locked == false
@@ -434,47 +592,20 @@ object VehicleWidget {
         val trunkOpen = status?.trunkOpen
             ?: QuickTiles.byId("trunk")?.let { QuickTiles.isOn(context, it) }
             ?: false
-        val cellBg = when {
-            glass -> R.drawable.widget_cell_d
-            night -> R.drawable.widget_cell_a_dark
-            else -> R.drawable.widget_cell_a
-        }
-        // 五个格子的图标不按同一套留白：空调那个压缩机符号笔画密，撑满会比邻居看着大一圈，
-        // 多留一档边收小；鸣笛的喇叭是横长形，少留一点边才不至于显小，另外整体顶高一点点。
-        val basePad = 5.5f
-        bindCell(views, R.id.wg_cell_unlock, R.id.wg_icon_unlock, R.drawable.ic_qc_unlock,
-            broadcast(context, ACTION_UNLOCK, RC_UNLOCK),
-            if (unlocked) active else ink, cellBg, basePad, density)
-        bindCell(views, R.id.wg_cell_lock, R.id.wg_icon_lock, R.drawable.ic_qc_lock,
-            broadcast(context, ACTION_LOCK, RC_LOCK), ink, cellBg, basePad, density)
-        bindCell(views, R.id.wg_cell_ac, R.id.wg_icon_ac, R.drawable.ic_qc_ac,
-            broadcast(context, ACTION_TOGGLE_AC, RC_AC),
-            if (acOn) active else ink, cellBg, basePad + AC_ICON_SHRINK, density)
-        bindCell(views, R.id.wg_cell_trunk, R.id.wg_icon_trunk, R.drawable.ic_qc_trunk,
-            broadcast(context, ACTION_TOGGLE_TRUNK, RC_TRUNK),
-            if (trunkOpen) active else ink, cellBg, basePad, density)
-        bindCell(views, R.id.wg_cell_horn, R.id.wg_icon_horn, R.drawable.ic_qc_horn,
-            broadcast(context, ACTION_HORN, RC_HORN), ink, cellBg,
-            (basePad - HORN_ICON_GROW).coerceAtLeast(0f), density,
-            liftDp = HORN_ICON_LIFT)
-
-        // 点文字区 / 车模都打开 App（车模不再兼做「换背景」按钮，那是设置页的事）
-        openAppIntent(context)?.let {
-            views.setOnClickPendingIntent(R.id.wg_info, it)
-            views.setOnClickPendingIntent(R.id.wg_car_box, it)
-        }
-
-        applyTextScale(views = views, scale = scale)
-        return views
+        tintIcon(views, R.id.wg_icon_unlock, if (unlocked) p.active else p.ink)
+        tintIcon(views, R.id.wg_icon_lock, p.ink)
+        tintIcon(views, R.id.wg_icon_ac, if (acOn) p.active else p.ink)
+        tintIcon(views, R.id.wg_icon_trunk, if (trunkOpen) p.active else p.ink)
+        tintIcon(views, R.id.wg_icon_horn, p.ink)
     }
 
-    private fun bindCell(
+    /** 按键格的静态部分：底色、图标资源、留白、点击。 */
+    private fun bindCellShell(
         views: RemoteViews,
         container: Int,
         icon: Int,
         iconRes: Int,
         pendingIntent: PendingIntent,
-        tint: Int,
         cellBg: Int,
         paddingDp: Float,
         density: Float,
@@ -482,14 +613,18 @@ object VehicleWidget {
     ) {
         views.setInt(container, "setBackgroundResource", cellBg)
         views.setImageViewResource(icon, iconRes)
-        // setColorFilter(int) 是 ImageView 的公开方法：SRC_ATOP 只换颜色、保留抗锯齿透明度，
-        // 线稿图标才不会发糊（setImageViewTintList 要 API 31+，这里得兼容到 26）。
-        views.setInt(icon, "setColorFilter", tint)
         // setViewPadding 收的是 px，不是 dp。下边多留 = 图形整体上移。
         val p = (paddingDp * density).toInt()
         val lift = (liftDp * density).toInt()
         views.setViewPadding(icon, p, (p - lift).coerceAtLeast(0), p, p + lift)
         views.setOnClickPendingIntent(container, pendingIntent)
+    }
+
+    /** 按键图标的高亮色（会随车况变，所以归在 [bindLive] 里）。 */
+    private fun tintIcon(views: RemoteViews, icon: Int, tint: Int) {
+        // setColorFilter(int) 是 ImageView 的公开方法：SRC_ATOP 只换颜色、保留抗锯齿透明度，
+        // 线稿图标才不会发糊（setImageViewTintList 要 API 31+，这里得兼容到 26）。
+        views.setInt(icon, "setColorFilter", tint)
     }
 
     /**

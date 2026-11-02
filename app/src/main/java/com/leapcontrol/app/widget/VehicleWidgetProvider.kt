@@ -125,7 +125,9 @@ class VehicleWidgetProvider : AppWidgetProvider() {
             return
         }
 
-        VehicleWidget.render(context, runtime, busy = labelOf(command))
+        // partial：卡片结构没变，只换状态文案。全量重绘会让整张卡（含壁纸）重画一遍，
+        // 一次点击要来回闪两三次。
+        VehicleWidget.render(context, runtime, busy = labelOf(command), partial = true)
 
         // resultWaitMs = 0：整条广播链路只有 10 秒预算，而等车端回执最长要 20 秒
         // （control 里是 Thread.sleep 轮询，没有可中断的挂起点，外面套 withTimeout 也掐不住）。
@@ -136,7 +138,7 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         }
         if (outcome.getOrNull() == null) {
             // 没发出去就别改本地开合态，也别让卡片停在「正在上锁…」
-            VehicleWidget.render(context, runtime)
+            VehicleWidget.render(context, runtime, partial = true)
             toast(context, failureText(outcome.exceptionOrNull()))
             return
         }
@@ -151,7 +153,7 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         // 回读车况：锁车 / 空调 / 后备箱信号真的变了才算生效
         runCatching { withTimeoutOrNull(STATUS_REFRESH_MS) { runtime.refreshStatus() } }
         runCatching { withTimeoutOrNull(CAR_IMAGE_MS) { VehicleWidget.ensureCar(context, runtime) } }
-        VehicleWidget.render(context, runtime)
+        VehicleWidget.render(context, runtime, partial = true)
         toast(context, resultMessage(action, runtime.statusFlow.value, wantOn))
     }
 
@@ -228,7 +230,8 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         val runtime = runCatching { AppRuntime(context) }.getOrNull() ?: return
         runCatching { withTimeoutOrNull(6_000) { runtime.refreshStatus() } }
         runCatching { withTimeoutOrNull(3_000) { VehicleWidget.ensureCar(context, runtime) } }
-        runCatching { VehicleWidget.render(context, runtime) }
+        // partial：桌面定时更新只改数字/状态，别把整张卡连同壁纸重画一遍
+        runCatching { VehicleWidget.render(context, runtime, partial = true) }
     }
 
     private fun toast(context: Context, text: String) {

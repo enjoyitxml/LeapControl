@@ -98,22 +98,26 @@ object ChargeStatus {
 
     /**
      * 判断当前是否已插上充电枪（包括交流慢充枪、直流快充枪、或处于充电工况中）。
+     *
+     * `1` 充电中 / `2` 充满 / `4` 预约等待 / `5` 直流充电中 / `6` 暂停 都算插着枪
+     * （与上游一致）；只有 `0` 未插枪和 `3` 故障不算 —— 否则车端一进入预约等待、
+     * 或手动停充后停在 `6`，整排「解锁充电枪 / 开始充电」按钮就会消失。
      */
     fun isGunConnected(status: JSONObject?): Boolean {
         if (status == null) return false
         val ac = boolean(status.opt("acInputSlowCharge")) == true
         val dc = boolean(status.opt("dcInputFastCharge")) == true
-        val s = state(status)
-        return ac || dc || s == 1 || s == 2
+        return ac || dc || state(status)?.let { it in GUN_CONNECTED_STATES } == true
     }
 
     fun isGunConnected(values: Map<String, Any?>?): Boolean {
         if (values == null) return false
         val ac = boolean(values["acInputSlowCharge"]) == true
         val dc = boolean(values["dcInputFastCharge"]) == true
-        val s = state(values)
-        return ac || dc || s == 1 || s == 2
+        return ac || dc || state(values)?.let { it in GUN_CONNECTED_STATES } == true
     }
+
+    private val GUN_CONNECTED_STATES = setOf(1, 2, 4, 5, 6)
 
     private fun type(value: Any?): String? = when (boolean(value)) {
         true -> "直流快充"

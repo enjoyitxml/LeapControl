@@ -74,12 +74,13 @@ class ChargingControlRulesTest {
 
     @Test
     fun `停止充电以离开充电中为准`() {
-        listOf(0, 2, 4, 5, 6).forEach { state ->
+        listOf(0, 2, 4, 6).forEach { state ->
             assertTrue("chargeState=$state 应算已停止", ChargingControlRules.stopConfirmed(state))
         }
-        // 1 仍在充电、3 是故障、null 是没读到 —— 都不能报「已停止」
+        // 1 仍在充电、3 是故障、5 不能证明已停、null 是没读到 —— 都不能报「已停止」
         assertFalse(ChargingControlRules.stopConfirmed(1))
         assertFalse(ChargingControlRules.stopConfirmed(ChargingControlRules.STATE_FAULT))
+        assertFalse(ChargingControlRules.stopConfirmed(5))
         assertFalse(ChargingControlRules.stopConfirmed(null))
     }
 
@@ -90,15 +91,28 @@ class ChargingControlRulesTest {
         assertFalse(ChargingControlRules.startConfirmed(null))
     }
 
+    @Test
+    fun `车况验收目标与指令一一对应`() {
+        assertTrue(ChargingControlRules.telemetryMatches("stopCharging", 0))
+        assertTrue(ChargingControlRules.telemetryMatches("stopCharging", 6))
+        assertFalse(ChargingControlRules.telemetryMatches("stopCharging", 1))
+
+        assertTrue(ChargingControlRules.telemetryMatches("startCharging", 1))
+        assertFalse(ChargingControlRules.telemetryMatches("startCharging", 0))
+
+        // 解锁枪没有可验证的车况信号
+        assertFalse(ChargingControlRules.telemetryMatches("unlockCharger", 0))
+        assertFalse(ChargingControlRules.telemetryMatches("unlockCharger", 1))
+    }
+
     // ---------------- 文案 ----------------
 
     @Test
     fun `停止充电没被执行时要说实话`() {
-        assertEquals("停止充电成功", ChargingControlRules.resultMessage("stopCharging", true, null))
+        assertEquals("已停止充电", ChargingControlRules.resultMessage("stopCharging", true, null))
         assertEquals("已停止充电", ChargingControlRules.resultMessage("stopCharging", false, 0))
-        assertEquals(
-            "停止充电未被执行，车辆仍在充电",
-            ChargingControlRules.resultMessage("stopCharging", false, 1),
+        assertTrue(
+            ChargingControlRules.resultMessage("stopCharging", false, 1).contains("车辆仍在充电"),
         )
         assertTrue(
             ChargingControlRules.resultMessage("stopCharging", false, null).contains("待确认"),

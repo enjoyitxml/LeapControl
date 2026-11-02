@@ -1029,7 +1029,13 @@ fun HomeScreen(
                 // 记下具体是哪一条，充电中心页据此把对应按钮变成「解锁中 / 启动中 / 停止中」：
                 // 这两条指令的回执窗口有 10 秒，按钮纯禁用会像点空了
                 chargeGunAction = action
-                actionMessage = null
+                // 起停充电最长要等十几秒（OBC 断电 + 车况上报），这段必须有可见反馈：
+                // 只把按钮改成「正在停止…」不够显眼，用户会以为点空了、接着再点。
+                actionMessage = when (action) {
+                    "unlock" -> "正在解锁充电枪…"
+                    "start" -> "正在启动充电…"
+                    else -> "正在停止充电…"
+                }
                 try {
                     val msg = when (action) {
                         "unlock" -> runtime.unlockCharger()

@@ -74,6 +74,7 @@ import com.leapcontrol.app.toStatusPowerType
 import com.leapcontrol.app.VehicleSignals
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -114,15 +115,6 @@ private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
  * 800ms 是能明显缩短整体耗时的同时又不丢指令的折中值。
  */
 private const val POWER_DRAIN_GAP_MS = 800L
-
-/**
- * 车况里的充电状态（信号 1149）。
- *
- * 只在「正在充 / 已充满」这两种状态下才去记「自上次充电后」的起点（见 ChargeCycle）：
- * 充电时车停着，这时的表显里程就是准确起点。别的状态与起点无关，直接跳过。
- */
-private const val CHARGE_STATE_CHARGING = 1
-private const val CHARGE_STATE_DONE = 2
 
 /**
  * 单个车轮的胎压状态。
@@ -1055,23 +1047,26 @@ class AppRuntime(context: Context) {
         _lastUpdated.value = System.currentTimeMillis()
         // 顺便喂一次「自上次充电后行驶里程」的观测（见 ChargeCycle）：
         // 车端没有充电历史接口，只能在拿到车况时「看见」充电 —— 充电时车停着，
-        // 此刻的表显里程就是准确起点。平时不充电时这里整个跳过，零开销；
-        // 记账失败也绝不能影响车况刷新，所以整段兜在 runCatching 里。
-        if (status.chargeState == CHARGE_STATE_CHARGING || status.chargeState == CHARGE_STATE_DONE) {
-            runCatching {
-                journal.observeChargeCycle(
-                    chargeState = status.chargeState,
-                    soc = status.soc,
-                    totalKm = OwnershipStats.kmFromText(status.totalMileage),
-                )
-            }
+        // 此刻的表显里程就是准确起点。
+        // **不充电时也要喂**：那一下会给上一次充电盖「已结束」的戳，是下次能正确重置的
+        // 前提。不充电且已有戳时判定返回 null，不写盘。记账失败也绝不能影响车况刷新。
+        runCatching {
+            journal.observeChargeCycle(
+                chargeState = status.chargeState,
+                soc = status.soc,
+                totalKm = OwnershipStats.kmFromText(status.totalMileage),
+            )
         }
         // 同步给控制中心磁贴：用户在车里手动关掉的空调 / 后备箱，
         // 靠的就是这条新鲜报文把磁贴的高亮改回来（磁贴展开时直接读这里，不再发请求）
         StatusSnapshot.put(status, _lastUpdated.value)
         // 桌面小组件跟磁贴同一份数据：有卡片挂在桌面上就顺手重画一帧。
         // 没有卡片时 render 第一行就返回，等于零开销；失败也绝不能影响车况刷新。
-        runCatching { com.leapcontrol.app.widget.VehicleWidget.render(appContext, this@AppRuntime) }
+        // partial：这里只换了数字和状态，背景 / 壁纸 / 字号都没变 —— 走全量会让
+        // 沉浸样式在桌面进程里把用户那张壁纸重新解码一遍，卡片会闪一下。
+        runCatching {
+            com.leapcontrol.app.widget.VehicleWidget.render(appContext, this@AppRuntime, partial = true)
+        }
         status
     }
 
@@ -2511,27 +2506,101 @@ class AppRuntime(context: Context) {
         val api = LeapmotorApi(session)
         val cmd = Commands.build(commandName)
         val result = withNetworkRetry { api.sendControl(cmd, pin) }
-        // 没有回执号就无处追问，直接按「已受理」返回，不要空转满 10 秒
-        if (!result.hasPollingId()) {
+
+        // 解锁枪锁止销没有可验证的车况信号，只能等回执。
+        // 这两条是机械动作，车端确认比锁车慢得多（实测 3~8 秒），
+        // 用普通指令那 4 次（约 2 秒）必然问不到，永远落到「指令已下发…」。
+        if (commandName == "unlockCharger") {
+            if (!result.hasPollingId()) {
+                return@withContext ChargingControlRules.resultMessage(commandName, confirmed = false, state = null)
+            }
+            for (attempt in 0 until ControlResultPollingPolicy.chargeGunMaxAttempts) {
+                Thread.sleep(ControlResultPollingPolicy.delayBeforeAttempt(attempt))
+                // 单次查询失败不该让整条指令失败，继续问下一轮
+                val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull() ?: continue
+                val confirmed = ChargingControlRules.queryConfirmed(
+                    result = resp.opt("result"),
+                    code = resp.opt("code"),
+                    data = resp.opt("data"),
+                )
+                if (confirmed) return@withContext ChargingControlRules.resultMessage(commandName, true, null)
+            }
             return@withContext ChargingControlRules.resultMessage(commandName, confirmed = false, state = null)
         }
-        // 解锁枪锁止销 / 起停充电都是机械动作，车端确认比锁车慢得多（实测 3~8 秒），
-        // 用普通指令那 4 次（约 2 秒）必然问不到，永远落到「指令已下发…」。
-        for (attempt in 0 until ControlResultPollingPolicy.chargeGunMaxAttempts) {
-            Thread.sleep(ControlResultPollingPolicy.delayBeforeAttempt(attempt))
-            // 单次查询失败不该让整条指令失败，继续问下一轮
-            val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull() ?: continue
-            // data=0 是「车端还在执行」，此时网关虽然 result=0 也不能算完成，继续问
-            val confirmed = ChargingControlRules.queryConfirmed(
-                result = resp.opt("result"),
-                code = resp.opt("code"),
-                data = resp.opt("data"),
-            )
-            if (confirmed) return@withContext ChargingControlRules.resultMessage(commandName, true, null)
+
+        // 起停充电：**回执和车况一起看**。
+        //
+        // 只问回执是不够的 —— 车端 OBC 断电、再把 chargeState 报上去要十几秒，
+        // 这段时间 `data` 一直是 0。老实现问满 10 秒就放弃、只回读一次车况，
+        // 于是明明车已经停了，界面还是「停止充电未被执行，车辆仍在充电」，
+        // 用户看到的就是「点了没反应」（2026-11-02 反馈）。
+        // 现在每轮问一次回执、隔一轮回读一次车况（顺带把 statusFlow 刷成车端真值，
+        // 页面上的大字 SOC / 按钮文案跟着变），车况一翻篇就立刻按成功返回。
+        var queryConfirmed = false
+        var lastState: Int? = null
+        var telemetryError: Exception? = null
+        for (round in 0 until ChargingControlRules.CONFIRM_ROUNDS) {
+            Thread.sleep(ChargingControlRules.CONFIRM_INTERVAL_MS)
+            if (!queryConfirmed && result.hasPollingId()) {
+                val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull()
+                if (resp != null) {
+                    queryConfirmed = ChargingControlRules.queryConfirmed(
+                        result = resp.opt("result"),
+                        code = resp.opt("code"),
+                        data = resp.opt("data"),
+                    )
+                }
+            }
+            // 车况别每轮都拉：16 秒里问 4 次足够，别为一次停止充电连打 8 个请求
+            if (round % 2 == 1 || round == ChargingControlRules.CONFIRM_ROUNDS - 1) {
+                val state = try {
+                    readChargeState(api)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    telemetryError = e
+                    null
+                }
+                if (state != null) {
+                    lastState = state
+                    if (ChargingControlRules.telemetryMatches(commandName, state)) {
+                        return@withContext ChargingControlRules.resultMessage(commandName, true, state)
+                    }
+                }
+            }
         }
-        // 没拿到确认回执：回读一次车况，用真实充电状态给结论，别再拿「已下发」糊过去
-        val state = runCatching { ChargeStatus.state(api.getVehicleState()) }.getOrNull()
-        ChargingControlRules.resultMessage(commandName, confirmed = false, state = state)
+        // 一次车况都没读到时，别把「读不到」伪装成「没生效」
+        if (lastState == null && telemetryError != null) {
+            return@withContext "指令已发送，车况刷新失败，执行结果待确认"
+        }
+        // 回执到了但车况一直没翻篇（车辆仍在充电）也要说实话，不能拿「待确认」糊过去
+        ChargingControlRules.resultMessage(commandName, confirmed = false, state = lastState)
+    }
+
+    /**
+     * 起停充电期间回读一次车况：把最新值推进 [statusFlow]，让页面上的
+     * 电量 / 按钮文案跟着车端走；返回 `chargeState` 供验收判断。
+     *
+     * 刻意不复用 [refreshStatus]：那条路还要写零记、重画桌面小组件，
+     * 一次停止充电里连跑四五遍纯属浪费，外层拿到结果后本来就会正常刷新一次。
+     */
+    private fun readChargeState(api: LeapmotorApi): Int? {
+        val st = withNetworkRetry { api.getVehicleState() }
+        val status = buildStatus(st)
+        cacheStatus(session.selectedVin, st)
+        _status.value = status
+        _lastUpdated.value = System.currentTimeMillis()
+        StatusSnapshot.put(status, _lastUpdated.value)
+        // 起停充电这几秒正好是充电状态翻篇的时刻（1 → 6/0），顺手喂一次观测：
+        // 给这次充电盖上「已结束」的戳，下次插枪就能干净地重置起点（见 ChargeCycle）。
+        runCatching {
+            journal.observeChargeCycle(
+                chargeState = status.chargeState,
+                soc = status.soc,
+                totalKm = OwnershipStats.kmFromText(status.totalMileage),
+            )
+        }
+        return status.chargeState
     }
 
     /** 读取车端已保存的定时空调计划。 */
