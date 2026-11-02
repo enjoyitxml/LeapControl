@@ -105,10 +105,15 @@ fun ThemeBackdrop(
     /**
      * 能不能烘焙。
      *
-     * 只有「场景自身不动」的主题才烘：它每一帧画出来都完全一样，提前画好没有任何视觉差异。
-     * 动态主题必须每帧按相位重画，烘焙反而会把画面钉死，所以仍然走实时绘制。
+     * 静态场景每一帧画出来都完全一样，提前画好没有任何视觉差异，恒可烘。
+     *
+     * 动态场景平时不能烘（相位一直在推进，烘了画面就钉死了）。但**滑动 / 不在前台时
+     * `animate` 为 false，相位已经停住**，此刻画面同样是静止的 —— 这时候就该烘：
+     * 否则用户一滑动，下面 [`else`] 那条实时路径每帧都要开一块 508dp 全宽的离屏缓冲
+     * （约 6MB）再重画整幅场景，和滚动抢的正是这份显存带宽。
+     * 恢复动画时 `animate` 变回 true，本值自动变回 false，重新走实时绘制。
      */
-    val bakeable = !theme.animated
+    val bakeable = !theme.animated || !animate
 
     Spacer(
         modifier = modifier
@@ -133,12 +138,15 @@ fun ThemeBackdrop(
                 val baked: ImageBitmap? = if (bakeable && !bake.failed) {
                     val w = size.width.roundToInt().coerceAtLeast(1)
                     val h = size.height.roundToInt().coerceAtLeast(1)
-                    if (!bake.matches(w, h)) {
+                    // 静态主题的相位本来就是常量；动态主题这里读到的是「停住的那一帧」。
+                    // 只在本分支读，animate=true 时根本不会进来，不会拖累动画路径。
+                    val frozenPhase = phase.value
+                    if (!bake.matches(w, h, frozenPhase)) {
                         // 烘焙失败（极端尺寸 / 显存不够）不能连累 App：标记失败，
                         // 这个组合退回下面的实时绘制路径，代价只是回到优化前的性能。
                         bake.image = try {
                             renderSceneBitmap(w, h, density) {
-                                paintScene(scene, STATIC_PHASE, palette)
+                                paintScene(scene, frozenPhase, palette)
                                 if (veilBrush != null) drawRect(brush = veilBrush)
                                 drawRect(brush = fadeBrush, blendMode = BlendMode.DstIn)
                             }
@@ -150,6 +158,7 @@ fun ThemeBackdrop(
                         } else {
                             bake.width = w
                             bake.height = h
+                            bake.phase = frozenPhase
                         }
                     }
                     bake.image
@@ -181,16 +190,25 @@ fun ThemeBackdrop(
     )
 }
 
-/** 静态场景的烘焙缓存：尺寸没变就一直复用同一张图。 */
+/** 静态场景的烘焙缓存：尺寸与相位都没变就一直复用同一张图。 */
 private class SceneBake {
     var image: ImageBitmap? = null
     var width = 0
     var height = 0
 
+    /**
+     * 烘焙时用的场景相位。
+     *
+     * 动态主题在滑动时冻结在某一帧上烘焙，下次停在别的相位就得重烘一张 ——
+     * 所以相位必须参与比对，不能只比尺寸，否则会把上一帧的画面留在屏幕上。
+     */
+    var phase = Float.NaN
+
     /** 烘过一次失败就不再重试，直接走实时绘制，免得每帧都抛一次异常。 */
     var failed = false
 
-    fun matches(w: Int, h: Int): Boolean = image != null && width == w && height == h
+    fun matches(w: Int, h: Int, p: Float): Boolean =
+        image != null && width == w && height == h && phase == p
 }
 
 /**

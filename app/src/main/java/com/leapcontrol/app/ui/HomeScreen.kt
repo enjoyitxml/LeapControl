@@ -112,7 +112,6 @@ import java.util.Locale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -1610,9 +1609,15 @@ fun HomeScreen(
                         contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer {
-                                compositingStrategy = CompositingStrategy.Offscreen
-                            },
+                            // 千像素级的透明位图，滚动时父级每帧重绘都会重做一次缩放采样。
+                            // 单独提一层 graphicsLayer 之后，滚动只更新这块的平移矩阵，
+                            // 位图本身不再重绘 —— 这是首页上下滑时最实的一笔开销。
+                            //
+                            // 【别改成 CompositingStrategy.Offscreen】那会强制走离屏缓冲：
+                            // 每次失效都要先把整张图重新画进一块独立纹理再合成回去，
+                            // 比不加这层还贵，正好把这层原本要省的开销又赔了进去。
+                            // 这里没有 alpha / BlendMode 的合成需求，Auto 就是最优解。
+                            .graphicsLayer(),
                     )
                     // 快捷换壁纸：小白点放在车模右上角，正好落在车顶右侧的空画面上。
                     // 车模上的点换的是「主题壁纸」，相伴卡上的点换的是「相伴卡背景」，两者互不影响。

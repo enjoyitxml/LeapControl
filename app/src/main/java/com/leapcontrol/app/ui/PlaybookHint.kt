@@ -118,15 +118,18 @@ fun PlaybookCoachMark(
         val bubbleY = (cy + with(density) { 52.dp.toPx() }).roundToInt()
 
         val transition = rememberInfiniteTransition(label = "playbookHint")
+        // 这两个值**不能**用 by 解包：无限动画每帧都在变，解包后每帧都会让整个提示浮层
+        // 重组一次（连带下面 clickable / shadow / border 的 modifier 全部重建）。
+        // 保持成 State，只在 graphicsLayer 里读 —— 动画就只走重绘，不进组合。
         // 呼吸波纹：从图标外沿散开、淡出，1.5 秒一轮
-        val pulse by transition.animateFloat(
+        val pulse = transition.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(tween(1500, easing = LinearEasing), RepeatMode.Restart),
             label = "pulse",
         )
         // 点击手势：上下来回，回程更快一点，像真的在「点」
-        val bob by transition.animateFloat(
+        val bob = transition.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
@@ -155,10 +158,11 @@ fun PlaybookCoachMark(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        val s = 1f + pulse * 0.62f
+                        val p = pulse.value
+                        val s = 1f + p * 0.62f
                         scaleX = s
                         scaleY = s
-                        alpha = (1f - pulse) * 0.45f
+                        alpha = (1f - p) * 0.45f
                     }
                     .border(1.4.dp, C.accent, CircleShape),
             )
@@ -170,9 +174,12 @@ fun PlaybookCoachMark(
                 .offset {
                     IntOffset(
                         (cx + handDx - handPx / 2).roundToInt(),
-                        (cy + handDy - handPx / 2 - bob * bobPx).roundToInt(),
+                        (cy + handDy - handPx / 2).roundToInt(),
                     )
                 }
+                // 上下跳动放在图层平移里（不是 offset）：offset 变一次就要重新 layout，
+                // 而图层平移只重绘 —— 这个手势每 720ms 走一轮，差别是实打实的。
+                .graphicsLayer { translationY = -bob.value * bobPx }
                 .size(28.dp),
             contentAlignment = Alignment.Center,
         ) {
