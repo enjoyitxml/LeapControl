@@ -457,6 +457,25 @@ class AppRuntime(context: Context) {
     }
 
     /**
+     * 零记「灵感球」停在哪个位置（个性化 → 灵感球）。
+     *
+     * 默认右下角：那块地方是拇指最容易够到的，也不压住卡片正文。
+     * 想要对称、或者习惯左手的人可以在个性化里改成居中 / 左下。
+     * 读出来是 Int（[OrbPosition]），存进 prefs，切完即时生效，不用重启。
+     */
+    private val _orbPosition = mutableStateOf(
+        namingPrefs.getInt("journal_orb_pos", OrbPosition.RIGHT)
+            .takeIf { OrbPosition.isValid(it) } ?: OrbPosition.RIGHT,
+    )
+    val orbPosition: State<Int> get() = _orbPosition
+
+    fun setOrbPosition(position: Int) {
+        if (!OrbPosition.isValid(position) || _orbPosition.value == position) return
+        _orbPosition.value = position
+        namingPrefs.edit().putInt("journal_orb_pos", position).apply()
+    }
+
+    /**
      * 是否开启「滑动性能日志」采集（设置 → 显示）。
      *
      * 默认关闭。开着的时候，每次首页上下滑动都会在 filesDir/perf/ 下留一份
@@ -750,6 +769,8 @@ class AppRuntime(context: Context) {
                 VehiclePlaceMemory.clear()
                 ParkingThumbMemory.clear()
                 resetLocationAnchor()
+                // 小组件里的车模也要换掉：留着的话桌面上还是上一辆车的图
+                com.leapcontrol.app.widget.VehicleWidget.clearCarCache()
             }
         }
         // 换车后能力要重新按 VIN 加载，不能直接沿用上一辆的结果
@@ -778,6 +799,9 @@ class AppRuntime(context: Context) {
         // 停车位照片同理，而且它更直接：照片里常能看到车牌、车位号、甚至车库门牌
         ParkingPhotoStore.clear(appContext)
         ParkingThumbMemory.clear()
+        // 桌面小组件也要立刻变成「点此登录」，别把上一辆车的车况留在锁屏外
+        com.leapcontrol.app.widget.VehicleWidget.clearCarCache()
+        runCatching { com.leapcontrol.app.widget.VehicleWidget.render(appContext) }
     }
 
     // ---------------- 车辆配置识别（冰箱 / 天窗 / 哨兵 / 座椅等） ----------------
@@ -1045,6 +1069,9 @@ class AppRuntime(context: Context) {
         // 同步给控制中心磁贴：用户在车里手动关掉的空调 / 后备箱，
         // 靠的就是这条新鲜报文把磁贴的高亮改回来（磁贴展开时直接读这里，不再发请求）
         StatusSnapshot.put(status, _lastUpdated.value)
+        // 桌面小组件跟磁贴同一份数据：有卡片挂在桌面上就顺手重画一帧。
+        // 没有卡片时 render 第一行就返回，等于零开销；失败也绝不能影响车况刷新。
+        runCatching { com.leapcontrol.app.widget.VehicleWidget.render(appContext, this@AppRuntime) }
         status
     }
 
@@ -2229,8 +2256,15 @@ class AppRuntime(context: Context) {
     /**
      * 执行控车指令（commandName 如 "lock"/"unlock"/"acOn"/"acOff"/"horn"）。
      * [presetAcTemperature] 非空时改为按指定温度下发空调指令（Commands.buildAc）。
+     * [resultWaitMs] 等车端执行结果的窗口；传 0 表示**发出去就返回**，不等回执。
+     *   给有广播时间预算的调用方（桌面小组件，整条链路只有 10 秒）用 ——
+     *   等回执最长 20 秒，等下去只会在车端还没回话时被系统把进程掐掉。
      */
-    suspend fun control(commandName: String, presetAcTemperature: Int? = null): String = withContext(Dispatchers.IO) {
+    suspend fun control(
+        commandName: String,
+        presetAcTemperature: Int? = null,
+        resultWaitMs: Long? = null,
+    ): String = withContext(Dispatchers.IO) {
         val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
         val api = LeapmotorApi(session)
         val command = if (presetAcTemperature != null) {
@@ -2239,13 +2273,16 @@ class AppRuntime(context: Context) {
             Commands.build(commandName)
         }
         val result = withNetworkRetry { api.sendControl(command, pin) }
+        // 不等回执的调用方：指令已经到网关，剩下的交给调用方回读车况判断
+        if (resultWaitMs == 0L) return@withContext "${command.label}指令已下发"
         // 轮询执行结果：车端 T-Box 唤醒 + 执行通常需要数秒，官方抓包协议允许最长 24 秒。
         // 之前只等约 2 秒就在车辆真正执行前放弃，返回的「已下发」无法反映真实结果，
         // 也让用户无法判断到底是「车没收到」还是「收到了没执行」。
         //
         // 空调单独用短窗口：它就在首页第一屏，等 20 秒等于把开关按死在「在途」，
         // 超时后走下面的回读车况兜底，结论一样拿得到。
-        val windowMs = if (command.cmdid == "170") AC_RESULT_MAX_WAIT_MS else CONTROL_RESULT_MAX_WAIT_MS
+        val windowMs = resultWaitMs
+            ?: if (command.cmdid == "170") AC_RESULT_MAX_WAIT_MS else CONTROL_RESULT_MAX_WAIT_MS
         val deadline = System.currentTimeMillis() + windowMs
         var attempt = 0
         var lastCode: String? = null

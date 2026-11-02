@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 沉浸样式的纯电续航条：绿提亮一档（#3DD68C）+ 半透明白轨道。
+     原色压在照片上会被背景带灰，同色系提亮最稳，不至于换成白色丢了「电=绿」的语义。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape android:shape="rectangle">
+            <corners android:radius="3.5dp" />
+            <solid android:color="#4DFFFFFF" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape android:shape="rectangle">
+                <corners android:radius="3.5dp" />
+                <solid android:color="#3DD68C" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>

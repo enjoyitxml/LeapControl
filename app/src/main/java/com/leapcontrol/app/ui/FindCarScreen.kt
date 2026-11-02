@@ -145,6 +145,10 @@ fun FindCarScreen(
     // 坐标纠偏开关：整页刷新后要跟着重组，所以自己持一份，不每次去读 prefs
     var shiftOn by remember { mutableStateOf(runtime.coordinateShiftEnabled()) }
     var showShift by remember { mutableStateOf(false) }
+    // 右上角「?」：高德 Key 的申请与填写。放在这一页而不是首页卡上，
+    // 是因为「地图空白 / 地址只有经纬度」的现场就在这里 —— 用户正卡在这一步，
+    // 再让他退回设置里找「车辆位置与目的地」是没有道理的。
+    var showKeyHelp by remember { mutableStateOf(false) }
 
     // 停车位照片：和首页卡共用同一套存储与拍照流程，这一页只是把图放大到 1400 好认
     val photo = rememberParkingPhoto(onMessage, thumbSize = 1400)
@@ -162,7 +166,26 @@ fun FindCarScreen(
             .navigationBarsPadding()
             .padding(horizontal = 20.dp),
     ) {
-        ScreenTopBar("车辆位置", onBack)
+        ScreenTopBar("车辆位置", onBack) {
+            // 没配 Key 时按钮走主题色，配好了退回中性色 —— 它是「帮助」而不是「提醒」，
+            // 只在真正卡住的时候才该抢注意力
+            val needsKey = !runtime.hasAmapKey()
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(if (needsKey) C.accent.copy(alpha = 0.16f) else C.iconBg)
+                    .clickable { showKeyHelp = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "?",
+                    color = if (needsKey) C.accent else C.textSecondary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
         Spacer(Modifier.height(10.dp))
 
         // ---- 地图 ----
@@ -245,7 +268,7 @@ fun FindCarScreen(
             Text(
                 text = when (ui) {
                     VehiclePlaceUi.NoLocation -> "车机还没上报过位置，下次上车启动一次后再看"
-                    VehiclePlaceUi.NoKey -> "还没配置高德 Key，配好后这里会显示中文地址与地图"
+                    VehiclePlaceUi.NoKey -> "还没配高德 Key：点右上角「?」看两分钟教程，填完就有地图和地址"
                     VehiclePlaceUi.Failed -> "地址和地图都没取到，检查网络后点右上角刷新"
                     else -> when {
                         fromCache && age != null -> "上次记录的位置 · 更新于 $age"
@@ -454,6 +477,10 @@ fun FindCarScreen(
             },
         )
     }
+    // 右上角「?」：高德 Key 的申请教程 + 当场填写
+    if (showKeyHelp) {
+        AmapKeyDialog(runtime = runtime, onDismiss = { showKeyHelp = false })
+    }
 }
 
 /**
@@ -499,7 +526,7 @@ private fun FindCarPlaceholder(ui: VehiclePlaceUi) {
     val (title, desc) = when (ui) {
         VehiclePlaceUi.Loading -> "正在获取位置" to "通常一秒内完成"
         VehiclePlaceUi.NoLocation -> "没有可用的车辆位置" to "上车启动一次车机后就会有"
-        VehiclePlaceUi.NoKey -> "未配置高德 Key" to "点下面「发送目的地」按引导填一次即可"
+        VehiclePlaceUi.NoKey -> "未配置高德 Key" to "点右上角「?」，按教程申请后粘进来就有地图"
         VehiclePlaceUi.Failed -> "地图没加载出来" to "检查网络后点右上角刷新"
         // 走到这里说明「地址有了、图没取到」：再写「正在获取」会让人一直干等
         is VehiclePlaceUi.Ready -> "地图没画出来" to "点右上角刷新重试，地址是准的"

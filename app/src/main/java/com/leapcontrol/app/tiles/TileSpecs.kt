@@ -75,6 +75,9 @@ object QuickTiles {
     fun isAdded(context: Context, spec: TileSpec): Boolean =
         prefsOf(context).getBoolean("added_${spec.id}", false)
 
+    /** 按 id 取定义（桌面小组件要复用它记的开合态，见 widget/VehicleWidgetProvider）。 */
+    fun byId(id: String): TileSpec? = ALL.firstOrNull { it.id == id }
+
     fun markAdded(context: Context, spec: TileSpec, added: Boolean) {
         prefsOf(context).edit().putBoolean("added_${spec.id}", added).apply()
     }

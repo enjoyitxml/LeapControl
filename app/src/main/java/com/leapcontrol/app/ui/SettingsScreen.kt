@@ -1,6 +1,7 @@
 package com.leapcontrol.app.ui
 
 import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -54,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -386,6 +388,8 @@ fun SettingsScreen(
             Text(
                 "首页那张卡上的地图、地址与「发送目的地」都要高德的关键字搜索与静态地图，\n" +
                     "用的是你自己的 Key（免费额度足够日常使用）。\n" +
+                    "配好之后：位置卡上显示车辆周围的实况地图和中文地址，搜到目的地还能一键发到车机。\n" +
+                    "不想从设置里进也行 —— 找车页右上角那颗「?」是同一个入口。\n" +
                     "卡片右上角拍停车位照片不需要 Key，也不联网。",
                 color = C.textSecondary,
                 fontSize = 11.sp,
@@ -585,51 +589,7 @@ fun SettingsScreen(
 
     // ---- 高德 Web Key ----
     if (showAmapKey) {
-        var keyInput by remember { mutableStateOf(runtime.amapKey()) }
-        AlertDialog(
-            onDismissRequest = { showAmapKey = false },
-            containerColor = C.panelBg,
-            title = { Text("高德 Web Key", color = C.textPrimary) },
-            text = {
-                // 教程比输入框长得多，不给滚动时矮屏上「保存」会被顶出弹窗
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    Text(
-                        "首页「车辆位置与目的地」卡要用高德的关键字搜索与静态地图，\n" +
-                            "都是它自己的接口，所以要你填一个自己的 Key。",
-                        color = C.textSecondary,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    AmapKeyGuide(onOpenConsole = { runtime.openExternal(AmapConsoleUrl) })
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = keyInput,
-                        onValueChange = { keyInput = it.trim() },
-                        singleLine = true,
-                        placeholder = {
-                            Text("粘贴 32 位 Web 服务 Key", color = C.textSecondary, fontSize = 13.sp)
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = C.textPrimary,
-                            unfocusedTextColor = C.textPrimary,
-                            cursorColor = C.accent,
-                            focusedBorderColor = C.accent,
-                            unfocusedBorderColor = C.border,
-                        ),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    runtime.setAmapKey(keyInput)
-                    showAmapKey = false
-                }) { Text("保存", color = C.accent) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAmapKey = false }) { Text("取消", color = C.textSecondary) }
-            },
-        )
+        AmapKeyDialog(runtime = runtime, onDismiss = { showAmapKey = false })
     }
 
     // ---- 动力类型（增程 / 纯电） ----
@@ -1215,6 +1175,8 @@ private fun KeyGuideCard(
     onOpenConsole: () -> Unit,
     benefitTitle: String = "",
     benefits: List<String> = emptyList(),
+    /** 末尾一句「卡住了怎么办」，没有就不占位。 */
+    note: String? = null,
 ) {
     val C = LocalAppColors.current
     Column(
@@ -1307,6 +1269,15 @@ private fun KeyGuideCard(
             Spacer(Modifier.width(6.dp))
             Text(text = "点击打开", color = C.textSecondary, fontSize = 10.sp)
         }
+        if (note != null) {
+            Spacer(Modifier.height(7.dp))
+            Text(
+                text = note,
+                color = C.textSecondary.copy(alpha = 0.9f),
+                fontSize = 10.5.sp,
+                lineHeight = 15.sp,
+            )
+        }
     }
 }
 
@@ -1330,24 +1301,33 @@ private const val AmapConsoleUrlText = "console.amap.com\n/dev/key/app"
 /**
  * 申请高德 Web Key 的四步。
  *
+ * 第 1 步先说「用电脑」：控制台在手机上能打开，但注册、实名认证要填一长串资料，
+ * 在手机浏览器里来回缩放很容易中途放弃。所以教程的第一句就是把人往电脑上引。
+ *
  * 第 3 步必须点明「Web 服务」：平台默认给的选项里 Android 平台最常见，
  * 但那个要绑包名和 SHA1，填进零控只会报 `INVALID_USER_DOMAIN` / 无权限，是最容易踩的坑。
  */
 private val AmapKeySteps = listOf(
-    "打开控制台用手机号或支付宝登录，顺手把个人实名认证做完 —— 免费额度要认证后才发放。",
-    "「应用管理 → 我的应用 → 创建新应用」，名字随意，类型选「出行」即可。",
-    "进入该应用点「添加 Key」，服务平台必须选「Web 服务」（选 Android 要绑包名和 SHA1，填了用不了）。",
-    "提交后得到一串 32 位 Key，复制它，粘到下面的输入框保存。",
+    "建议用电脑打开（手机也能开，但注册要填资料，电脑上顺手得多）。手机号或支付宝登录，" +
+        "顺手把个人实名认证做完 —— 免费额度要认证之后才发放。",
+    "左侧「应用管理 → 我的应用 → 创建新应用」。名字随便写，类型选「出行」就行。",
+    "进这个应用，点「添加 Key」。服务平台**必须选「Web 服务」**：" +
+        "选「Android」要绑包名和签名指纹，填进零控一定用不了。",
+    "提交后会得到一串 32 位字符，那就是 Key。复制它，粘到下面的输入框里保存。",
 )
 
-/** 「申请之后能干嘛」：用户最关心的其实是这一步，顺手把账号同步的前提讲清楚。 */
+/** 「配好之后能干嘛」：用户最关心的是这一步，顺手把账号同步的前提讲清楚。 */
 private val AmapKeyBenefits = listOf(
-    "首页「车辆位置与目的地」卡可以按关键字搜全国的地点、停车场、充电站，输入几个字就有结果",
-    "选中后一键发到车机 —— 手机与车机登录同一个高德账号，上车自动提示继续导航",
-    "同一张卡上还能看到车停在哪、一键导航过去，位置来自车机最后一次上报",
-    "也可以直接在手机高德里开始导航，比上车再逐字输地址省事得多",
-    "Web 服务每天有免费调用量，按日常搜索次数用不到上限，不需要付费",
+    "找车页会画出车辆周围的实况地图，配上中文地址 —— 车停在哪条街，一眼就看到",
+    "地址下面两个按钮：一个带你去车那儿（步行 / 骑行 / 驾车随你选），一个把目的地交给车",
+    "发目的地时按关键字搜全国的地点、停车场、充电站，输入几个字就出结果",
+    "手机和车机登录同一个高德账号，选好目的地再上车，车机会自动提示继续导航",
+    "Web 服务每天都有免费额度，按日常搜索次数根本用不到上限，不需要花钱",
 )
+
+/** 教程末尾那句「卡住了怎么办」：把最常见的两个卡点直接摆出来。 */
+private const val AmapKeyNote =
+    "配好之后地图仍是空白？进找车页点右上角刷新一次；还不行就检查 Key 是否选成了「Web 服务」类型。"
 
 /** 高德 Web Key 的申请教程（设置里与首页卡片弹层共用）。 */
 @Composable
@@ -1357,8 +1337,95 @@ fun AmapKeyGuide(onOpenConsole: () -> Unit) {
         steps = AmapKeySteps,
         urlText = AmapConsoleUrlText,
         onOpenConsole = onOpenConsole,
-        benefitTitle = "申请之后可以",
+        benefitTitle = "配好之后可以",
         benefits = AmapKeyBenefits,
+        note = AmapKeyNote,
+    )
+}
+
+/**
+ * 高德 Web Key 的申请 / 填写弹层。
+ *
+ * 抽成公共组件是因为它有两个入口：设置里的那一行，以及**找车页右上角的「?」**。
+ * 后者出现在「地图一片空白、地址只显示经纬度」的现场，用户正卡在这一步，
+ * 再让他退回设置找半天是没道理的。
+ *
+ * 保存后不用手动触发刷新：[[com.leapcontrol.app.ui.rememberVehiclePlace]] 把
+ * `hasAmapKey()` 当成了加载 key，Key 一变它自己就会重拉地址与地图。
+ */
+@Composable
+fun AmapKeyDialog(runtime: AppRuntime, onDismiss: () -> Unit) {
+    val C = LocalAppColors.current
+    val context = LocalContext.current
+    // 输入内容必须在弹层这一层持有：它同时在 text 与 confirmButton 两个 lambda 里用到，
+    // 声明在 text 里面的话「保存」按钮看不见它
+    var keyInput by remember { mutableStateOf(runtime.amapKey()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = C.panelBg,
+        title = { Text("配置高德 Key", color = C.textPrimary) },
+        text = {
+            // 教程比输入框长得多，不给滚动时矮屏上「保存」会被顶出弹窗
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "零控自己不存地图。找车页那张地图、那句中文地址、以及按关键字搜目的地，" +
+                        "调的都是高德的两个接口，所以需要你填一个自己的 Key。",
+                    color = C.textSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Key 是一串 32 位字符，在高德开放平台免费申请，也是免费的 —— " +
+                        "填一次长期有效，填之前先看两分钟教程。",
+                    color = C.textSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
+                Spacer(Modifier.height(10.dp))
+                AmapKeyGuide(onOpenConsole = { runtime.openExternal(AmapConsoleUrl) })
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = keyInput,
+                    onValueChange = { keyInput = it.trim() },
+                    singleLine = true,
+                    label = { Text("把 32 位 Key 粘在这里", color = C.textSecondary, fontSize = 12.sp) },
+                    placeholder = {
+                        Text("例如 a1b2c3d4e5f6…", color = C.textSecondary, fontSize = 13.sp)
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = C.textPrimary,
+                        unfocusedTextColor = C.textPrimary,
+                        cursorColor = C.accent,
+                        focusedBorderColor = C.accent,
+                        unfocusedBorderColor = C.border,
+                    ),
+                )
+                if (runtime.hasAmapKey()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "已经填过一把 Key。想换就整条覆盖后保存；清空再保存则恢复默认。",
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                runtime.setAmapKey(keyInput)
+                onDismiss()
+                Toast.makeText(
+                    context,
+                    if (keyInput.isBlank()) "已清空高德 Key" else "已保存，地图和地址马上会刷新",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }) { Text("保存", color = C.accent) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消", color = C.textSecondary) }
+        },
     )
 }
 

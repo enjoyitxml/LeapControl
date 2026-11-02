@@ -352,7 +352,7 @@ fun <T : Any> ReorderableCardArea(
 
 /** 「编辑」按钮：卡区最底下的一条虚线感按钮（用细边框 + 极淡底色替代）。 */
 @Composable
-private fun EditCardsButton(onClick: () -> Unit) {
+internal fun EditCardsButton(onClick: () -> Unit) {
     val C = LocalAppColors.current
     Row(
         modifier = Modifier

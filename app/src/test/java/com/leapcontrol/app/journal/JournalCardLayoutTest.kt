@@ -24,6 +24,26 @@ class JournalCardLayoutTest {
     }
 
     @Test
+    fun `默认顺序里成本在最上面`() {
+        assertEquals(JournalCardId.COST, JournalCardLayout.DEFAULT.first())
+    }
+
+    /** 存的正好等于 v1 的旧默认 → 从没动过 → 跟着 v2 的新默认走（成本提到最上）。 */
+    @Test
+    fun `存着旧默认顺序的用户会跟着新默认换序`() {
+        val v1Default = "INSURANCE,MAINTENANCE,GOAL,COST,FOOTPRINT"
+        assertEquals(JournalCardLayout.DEFAULT, JournalCardLayout.parse(v1Default, savedVersion = 1))
+        assertEquals(JournalCardId.COST, JournalCardLayout.parse(v1Default, savedVersion = 1).first())
+    }
+
+    /** 自己排过的顺序不能被默认改版冲掉。 */
+    @Test
+    fun `自定义顺序在默认改版后原样保留`() {
+        val custom = listOf(JournalCardId.FOOTPRINT, JournalCardId.GOAL)
+        assertEquals(custom, JournalCardLayout.parse(JournalCardLayout.serialize(custom), savedVersion = 1))
+    }
+
+    @Test
     fun `空串表示用户把卡片全删了，不回退默认`() {
         assertEquals(emptyList<JournalCardId>(), JournalCardLayout.parse(""))
         assertEquals(emptyList<JournalCardId>(), JournalCardLayout.parse("   "))

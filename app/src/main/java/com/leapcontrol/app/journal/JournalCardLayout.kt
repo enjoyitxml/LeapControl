@@ -33,15 +33,18 @@ object JournalCardLayout {
     /**
      * 存储协议版本。**新增卡片时 +1 并把新卡登记到 [ADDED_IN]**，
      * 否则已经保存过顺序的老用户永远看不到新卡。
+     *
+     * 1 → 2：没有新增卡片，只是把「用车成本」提到默认第一位（用户要求）。
+     * 同样要升版本，否则老用户存着的那份「旧默认顺序」会被当成他亲手排的，改动永远不生效。
      */
-    const val VERSION = 1
+    const val VERSION = 2
 
-    /** 默认顺序：两张提醒在最上（不记就会忘），其次是目标、花费、足迹。 */
+    /** 默认顺序：本月花费最常看，放最上；两张提醒其次（不记就会忘），再是目标、足迹。 */
     val DEFAULT: List<JournalCardId> = listOf(
+        JournalCardId.COST,
         JournalCardId.INSURANCE,
         JournalCardId.MAINTENANCE,
         JournalCardId.GOAL,
-        JournalCardId.COST,
         JournalCardId.FOOTPRINT,
     )
 
@@ -51,9 +54,16 @@ object JournalCardLayout {
      * 零记启动时会把 parse 的结果写回 prefs，于是老用户手里躺着一份「当时的默认顺序」——
      * 它和「用户亲手拖出来的顺序」在存储上长得一模一样，只能靠内容比对区分。
      *
-     * 目前没有待补的新卡（版本 1），因此与 [DEFAULT] 相同；加卡时把它改成加卡前的默认即可。
+     * 所以**每次改 [DEFAULT] 都必须把「改之前的默认」搬到这里**，
+     * 否则存的正好等于旧默认的人会被判成自定义，看不到新默认。
      */
-    private val PREVIOUS_DEFAULT: List<JournalCardId> = DEFAULT
+    private val PREVIOUS_DEFAULT: List<JournalCardId> = listOf(
+        JournalCardId.INSURANCE,
+        JournalCardId.MAINTENANCE,
+        JournalCardId.GOAL,
+        JournalCardId.COST,
+        JournalCardId.FOOTPRINT,
+    )
 
     /** 每个版本新增的卡片（键是引入它的版本号）。加卡时在这里登记。 */
     private val ADDED_IN: Map<Int, List<JournalCardId>> = emptyMap()

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- D 沉浸样式的按键格：半透明白玻璃 + 一道更亮的描边。
+     压在照片上时，纯透明的格子会看不出边界，太实的格子又像贴纸。 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#33FFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#2EFFFFFF" />
+            <corners android:radius="10dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#40FFFFFF" />
+        </shape>
+    </item>
+</ripple>

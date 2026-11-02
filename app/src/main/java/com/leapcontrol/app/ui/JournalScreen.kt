@@ -43,6 +43,7 @@ import com.leapcontrol.app.journal.GoalProgress
 import com.leapcontrol.app.journal.JournalData
 import com.leapcontrol.app.journal.JournalCardId
 import com.leapcontrol.app.journal.JournalCardLayout
+import com.leapcontrol.app.journal.JournalDates
 import com.leapcontrol.app.journal.MedalGroup
 import com.leapcontrol.app.journal.MedalStats
 import com.leapcontrol.app.journal.Medals
@@ -146,8 +147,7 @@ fun JournalScreen(runtime: AppRuntime) {
                 onBack = { page = null },
             )
         }
-        return
-    }
+    } else {
 
     val goal = data.goal
     val progress = goal?.let { GoalProgress.of(it) }
@@ -167,53 +167,77 @@ fun JournalScreen(runtime: AppRuntime) {
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .verticalScroll(scrollState)
-                .padding(horizontal = 22.dp),
+                .verticalScroll(scrollState),
         ) {
-            Spacer(Modifier.height(20.dp))
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text("零记", color = C.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.height(18.dp))
+            // 顶栏：标题收小，右边只放日期。
+            // 陪伴天数已经在下面第一格里，这里不再重复一遍。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 22.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("零记", color = C.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
                 Text(
-                    goal?.let { "和${runtime.displayName()}一起的第 ${progress?.daysOwned ?: 1} 天" }
-                        ?: "记录和爱车的长期主义",
+                    JournalDates.shortLabel(JournalDates.todayStart()),
                     color = C.textSecondary,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .padding(bottom = 2.dp),
                 )
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
 
             // 数据安全提示：发生自动接续、或本机有多份数据需要认领时才出现
             recovery?.let { note ->
-                JournalRecoveryBanner(note = note, onDismiss = { journal.dismissRecovery() })
+                Box(Modifier.padding(horizontal = 22.dp)) {
+                    JournalRecoveryBanner(note = note, onDismiss = { journal.dismissRecovery() })
+                }
                 Spacer(Modifier.height(12.dp))
             }
 
-            // ---- 卡片区：顺序 / 显隐都可改，最下面是「编辑」 ----
-            ReorderableCardArea(
-                cards = order,
-                editing = editingCards,
-                onEditingChange = { editingCards = it },
-                onCardsChange = { journal.setCardOrder(it) },
-                scrollState = scrollState,
-                hidden = JournalCardLayout.hidden(order),
-                titleOf = { it.title },
-                onAdd = { journal.setCardOrder(order + it) },
-            ) { id ->
-                JournalCardById(
-                    id = id,
+            // ---- 卡片区 ----
+            // 日常是仪表盘；点「编辑」切成单列列表，长按拖动排序（见 JournalDashBoard 的说明）。
+            // 仪表盘自己管左右留白（地图那块要贴边），编辑态的列表仍由外层给 22dp。
+            if (editingCards) {
+                Box(Modifier.padding(horizontal = 22.dp)) {
+                    ReorderableCardArea(
+                        cards = order,
+                        editing = true,
+                        onEditingChange = { editingCards = it },
+                        onCardsChange = { journal.setCardOrder(it) },
+                        scrollState = scrollState,
+                        hidden = JournalCardLayout.hidden(order),
+                        titleOf = { it.title },
+                        onAdd = { journal.setCardOrder(order + it) },
+                    ) { id ->
+                        JournalCardById(
+                            id = id,
+                            data = data,
+                            progress = progress,
+                            unlockedIds = unlocked,
+                            costSummary = costSummary,
+                            totalKm = totalKm,
+                            vehicleKm = vehicleKm?.takeIf { it > 0 },
+                            modifier = Modifier.fillMaxWidth(),
+                            onGoal = { page = JournalPage.GOAL },
+                            onCost = { page = JournalPage.COST },
+                            onCheckin = { page = JournalPage.CHECKIN },
+                            onInsurance = { showInsurance = true },
+                            onMaintenance = { showMaintenance = true },
+                        )
+                    }
+                }
+            } else {
+                JournalDashBoard(
+                    cards = order,
                     data = data,
                     progress = progress,
                     unlockedIds = unlocked,
                     costSummary = costSummary,
-                    totalKm = totalKm,
                     vehicleKm = vehicleKm?.takeIf { it > 0 },
-                    modifier = Modifier.fillMaxWidth(),
+                    onEdit = { editingCards = true },
                     onGoal = { page = JournalPage.GOAL },
                     onCost = { page = JournalPage.COST },
                     onCheckin = { page = JournalPage.CHECKIN },
@@ -223,21 +247,23 @@ fun JournalScreen(runtime: AppRuntime) {
             }
 
             Spacer(Modifier.height(18.dp))
-            Text(
-                "零记的数据只存在这台手机上，不上传、不统计。",
-                color = C.textSecondary,
-                fontSize = 11.sp,
-            )
-            // 页脚留一句「可以关掉」：零记是加出来的功能，不想要的人得知道有出口，
-            // 而不是只能忍着多出来的那一格导航。开关在「设置 → 零记」。
-            // 断成两行是为了不让自动折行把「，」甩到下一行开头（Compose 不做避头尾）。
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "如果不喜欢零记功能，只想纯净的控车体验，\n可以在设置里面关闭功能，控车本该如此自由",
-                color = C.textSecondary.copy(alpha = 0.78f),
-                fontSize = 11.sp,
-                lineHeight = 17.sp,
-            )
+            Column(Modifier.padding(horizontal = 22.dp)) {
+                Text(
+                    "零记的数据只存在这台手机上，不上传、不统计。",
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                )
+                // 页脚留一句「可以关掉」：零记是加出来的功能，不想要的人得知道有出口，
+                // 而不是只能忍着多出来的那一格导航。开关在「设置 → 零记」。
+                // 断成两行是为了不让自动折行把「，」甩到下一行开头（Compose 不做避头尾）。
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "如果不喜欢零记功能，只想纯净的控车体验，\n可以在设置里面关闭功能，控车本该如此自由",
+                    color = C.textSecondary.copy(alpha = 0.78f),
+                    fontSize = 11.sp,
+                    lineHeight = 17.sp,
+                )
+            }
             Spacer(Modifier.height(OrbReservedHeight))
         }
 
@@ -245,11 +271,28 @@ fun JournalScreen(runtime: AppRuntime) {
         // 它得浮在「记一句」那片黑遮罩之上，否则那个「×」会被压成灰点。代价是球会
         // 一起压到这两个弹层头上，正好挡住输入框和「保存」。所以弹层一亮相就把球收起来。
         if (!showMaintenance && !showInsurance) {
+            // 球的位置在个性化里可改（右下 / 中间 / 左下），默认右下角。
+            // 球连同上面那句提示条是一个整体，所以横向对齐也要跟着一起换 ——
+            // 否则球跑到右边、提示条还挂在中间，看起来像两件不相干的东西。
+            val orbPos = runtime.orbPosition.value
             JournalOrb(
                 runtime = runtime,
+                align = when (orbPos) {
+                    OrbPosition.LEFT -> Alignment.Start
+                    OrbPosition.CENTER -> Alignment.CenterHorizontally
+                    else -> Alignment.End
+                },
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 10.dp),
+                    .align(
+                        when (orbPos) {
+                            OrbPosition.LEFT -> Alignment.BottomStart
+                            OrbPosition.CENTER -> Alignment.BottomCenter
+                            else -> Alignment.BottomEnd
+                        },
+                    )
+                    .padding(bottom = 14.dp)
+                    // 靠边时给 18dp：贴着屏幕边缘会显得被裁掉了
+                    .padding(horizontal = if (orbPos == OrbPosition.CENTER) 0.dp else 18.dp),
             )
         }
 
@@ -278,10 +321,17 @@ fun JournalScreen(runtime: AppRuntime) {
             )
         }
     }
+    }
 }
 
-/** 给右下角悬浮的灵感球留白：球 104 高，少一点会把页脚压在球底下。 */
-private val OrbReservedHeight = 134.dp
+/**
+ * 给底部悬浮的灵感球留白。
+ *
+ * 球这一列的高度 = 提示条约 30 + 间距 10 + 球框 84，再加上离底边的 14dp，
+ * 一共 138dp；取 140 兜住，剩 2dp 是给字体的行高误差。
+ * 位置改成居中 / 左下之后这段留白仍然需要 —— 提示条在中间时更宽，压住页脚更难看。
+ */
+private val OrbReservedHeight = 140.dp
 
 /**
  * 进零记时「车况算不算新鲜」的阈值。

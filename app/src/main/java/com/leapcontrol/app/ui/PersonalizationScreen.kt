@@ -387,6 +387,34 @@ fun PersonalizationScreen(
 
         Spacer(Modifier.height(18.dp))
 
+        // ---- 桌面小组件 ----
+        // 三套版式 + 加到桌面。沉浸样式才需要背景图，所以换图入口只在那一版下出现，
+        // 免得「选了素纸却看到换图入口、点了没反应」。
+        WidgetSettingsGroup()
+
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 灵感球 ----
+        // 只管位置，不管样子：造型（白瓷 + 主题色加号）跟着主题走，不额外给调色入口。
+        // 默认右下角 —— 拇指最容易够到，也不压住卡片的正文。
+        SettingsSection(title = "灵感球", desc = "零记页面底部那个记事的球") {
+            SettingsCard {
+                OrbPositionCards(
+                    selected = runtime.orbPosition.value,
+                    onSelect = { runtime.setOrbPosition(it) },
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "换的只是落脚点：点一下记一句、长按说话都不变。",
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
         // ---- 应用图标 ----
         // 只有「设置 → 高级设置」里解锁了才出现：官方 logo 那套带商标风险，
         // 默认就用方向盘，不把它摆在明面上。切换靠 activity-alias 换组件，重启后生效。
@@ -472,6 +500,73 @@ fun PersonalizationScreen(
                 cropKind = null
             },
         )
+    }
+}
+
+/**
+ * 灵感球位置三选一：右下 / 中间 / 左下。
+ *
+ * 每张卡里画一个迷你页面（一块圆角矩形 + 一个主题色小圆点），
+ * 点选就知道球会落在哪，不需要再用文字解释「左下是哪个左下」。
+ *
+ * 球本身没有「关闭」这一项：零记开着的时候它是唯一的记事入口，
+ * 藏起来等于让人找不到入口；真不想要零记的人，直接关掉零记功能。
+ */
+@Composable
+private fun OrbPositionCards(selected: Int, onSelect: (Int) -> Unit) {
+    val C = LocalAppColors.current
+    val options = listOf(
+        OrbPosition.RIGHT to "右下",
+        OrbPosition.CENTER to "中间",
+        OrbPosition.LEFT to "左下",
+    )
+    Row(modifier = Modifier.fillMaxWidth()) {
+        options.forEachIndexed { index, (value, label) ->
+            if (index > 0) Spacer(Modifier.width(10.dp))
+            val active = selected == value
+            val shape = RoundedCornerShape(14.dp)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(shape)
+                    .background(if (active) C.chipBgActive else C.chipBg)
+                    .border(1.dp, if (active) C.accent.copy(alpha = 0.65f) else C.border, shape)
+                    .clickable { onSelect(value) }
+                    .padding(vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(38.dp)
+                        .height(46.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(C.panelBg)
+                        .border(1.dp, C.border, RoundedCornerShape(6.dp)),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .align(
+                                when (value) {
+                                    OrbPosition.LEFT -> Alignment.BottomStart
+                                    OrbPosition.CENTER -> Alignment.BottomCenter
+                                    else -> Alignment.BottomEnd
+                                },
+                            )
+                            .padding(5.dp)
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(C.accent),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    label,
+                    color = if (active) C.accent else C.textSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+                )
+            }
+        }
     }
 }
 

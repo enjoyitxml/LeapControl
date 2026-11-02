@@ -63,7 +63,7 @@ private val DangerRed = Color(0xFFE2503C)
 
 /** 状态色：过期红、临期橙、其余用主题色。 */
 @Composable
-private fun reminderColor(expired: Boolean, soon: Boolean): Color {
+internal fun reminderColor(expired: Boolean, soon: Boolean): Color {
     val C = LocalAppColors.current
     return when {
         expired -> DangerRed
@@ -71,6 +71,28 @@ private fun reminderColor(expired: Boolean, soon: Boolean): Color {
         else -> C.accent
     }
 }
+
+/** 右上角小标的文案。[normal] 是「没事」时的说法（保养叫正常、保险叫保障中）。 */
+internal fun reminderChipText(expired: Boolean, soon: Boolean, normal: String): String = when {
+    expired -> "已过期"
+    soon -> "即将到期"
+    else -> normal
+}
+
+/**
+ * 一张提醒卡上要显示的文字：主数字、单位、标签、副信息。
+ *
+ * 抽出来是因为页面里有两套排版（便当盒的半宽小格、编辑态的整行列表），
+ * 数字口径必须完全一致 —— 「哪个先到报哪个」这种规则复制两遍迟早会分叉。
+ */
+internal data class ReminderHeadline(
+    val value: String,
+    val unit: String,
+    val label: String,
+    val subtitle: String,
+    val expired: Boolean,
+    val soon: Boolean,
+)
 
 /** 「还剩 12 天」/「已超 3 天」。 */
 private fun remainingDaysText(days: Int): String =
@@ -80,59 +102,13 @@ private fun remainingDaysText(days: Int): String =
 private fun remainingKmText(km: Double): String =
     if (km >= 0) "还剩 ${formatKm(km)} km" else "已超 ${formatKm(kotlin.math.abs(km))} km"
 
-/** 右上角的胶囊小标（已过期 / 即将到期 / 正常）。 */
-@Composable
-private fun ReminderChip(text: String, color: Color) {
-    Box(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(color.copy(alpha = 0.14f))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
-    ) {
-        Text(text, color = color, fontSize = 9.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-/**
- * 保养提醒卡。
- *
- * 主数字只报一个维度 —— **哪个先到报哪个**（按「剩余 / 周期」的比例比，
- * 单位不同不能直接比大小）；另一个维度写在标题下面那行小字里。
- * 早先固定按「时间优先」，结果是里程快到了也看不见，用户以为剩余里程没在算。
- *
- * 剩余里程 = 上次保养里程 + 周期 − **当前表显里程**，随车况刷新实时变化
- * （当前里程的取值口径见 `OwnershipStats.currentKm`）。
- */
-@Composable
-fun MaintenanceCard(
-    plan: MaintenancePlan?,
-    currentKm: Double?,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    if (plan == null) {
-        ReminderEmpty(
-            category = CostCategory.SERVICE,
-            title = "添加保养提醒",
-            // 一行放得下才不至于把引导卡撑成两行（11sp 下 284dp 约合 25 个汉字）
-            desc = "填上次保养的时间与里程",
-            modifier = modifier,
-            onClick = onClick,
-        )
-        return
-    }
-
+/** 保养卡的主数字口径（见 [MaintenanceCard] 的说明）。 */
+internal fun maintenanceHeadline(plan: MaintenancePlan, currentKm: Double?): ReminderHeadline {
     val days = plan.remainingDays()
     val km = plan.remainingKm(currentKm)
     // 取「更紧急」的那个维度做整卡状态：时间先到就按时间，里程先到就按里程
     val expired = (days != null && days < 0) || (km != null && km < 0)
     val soon = !expired && ((days != null && days <= DUE_SOON_DAYS) || (km != null && km <= DUE_SOON_KM))
-    val status = reminderColor(expired, soon)
-    val chip = when {
-        expired -> "已过期"
-        soon -> "即将到期"
-        else -> "正常"
-    }
 
     // 主数字报哪个维度：按「剩余 / 周期」的比例比，比例小的先到。早先固定报天数，
     // 于是「还剩 300 公里」被「还有 200 天」盖住，用户只能看到天数不动，误以为
@@ -180,15 +156,67 @@ fun MaintenanceCard(
         else -> "上次 ${JournalDates.shortLabel(plan.lastDate)} · ${formatKm(plan.lastKm)} km"
     }
 
+    return ReminderHeadline(value, unit, label, subtitle, expired, soon)
+}
+
+/** 保险卡的主数字口径。 */
+internal fun insuranceHeadline(plan: InsurancePlan): ReminderHeadline {
+    val days = plan.remainingDays()
+    val expired = days < 0
+    val soon = !expired && days <= DUE_SOON_DAYS
+    val expiry = JournalDates.shortLabel(plan.expireDate())
+    // 副信息「公司 · 到期日」；保费留给设置弹层，塞进来会把这一行挤到省略号后面。
+    // 右边那列已经写着「距到期」，日期前不再重复「到期」两个字 ——
+    // 省下的 24dp 让「平安车险 · 2026年12月31日」在窄屏上也能整行放下。
+    val subtitle = if (plan.company.isNotBlank()) "${plan.company} · $expiry" else "到期 $expiry"
+    return ReminderHeadline(
+        value = if (days >= 0) "$days" else "${-days}",
+        unit = if (days >= 0) "天" else "天前已到期",
+        label = if (days >= 0) "距到期" else "已过期",
+        subtitle = subtitle,
+        expired = expired,
+        soon = soon,
+    )
+}
+
+/** 保养提醒卡。
+ *
+ * 主数字只报一个维度 —— **哪个先到报哪个**（按「剩余 / 周期」的比例比，
+ * 单位不同不能直接比大小），另一个维度写在标题下面那行小字里。
+ * 早先固定按「时间优先」，结果是里程快到了也看不见，用户以为剩余里程没在算。
+ *
+ * 剩余里程 = 上次保养里程 + 周期 − **当前表显里程**，随车况刷新实时变化
+ * （当前里程的取值口径见 `OwnershipStats.currentKm`）。
+ */
+@Composable
+fun MaintenanceCard(
+    plan: MaintenancePlan?,
+    currentKm: Double?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    if (plan == null) {
+        ReminderEmpty(
+            category = CostCategory.SERVICE,
+            title = "添加保养提醒",
+            // 一行放得下才不至于把引导卡撑成两行（11sp 下 284dp 约合 25 个汉字）
+            desc = "填上次保养的时间与里程",
+            modifier = modifier,
+            onClick = onClick,
+        )
+        return
+    }
+
+    val head = maintenanceHeadline(plan, currentKm)
     ReminderBody(
         category = CostCategory.SERVICE,
         title = "保养提醒",
-        chip = chip,
-        status = status,
-        value = value,
-        unit = unit,
-        label = label,
-        subtitle = subtitle,
+        chip = reminderChipText(head.expired, head.soon, "正常"),
+        status = reminderColor(head.expired, head.soon),
+        value = head.value,
+        unit = head.unit,
+        label = head.label,
+        subtitle = head.subtitle,
         modifier = modifier,
         onClick = onClick,
     )
@@ -212,33 +240,32 @@ fun InsuranceCard(
         return
     }
 
-    val days = plan.remainingDays()
-    val expired = days < 0
-    val soon = !expired && days <= DUE_SOON_DAYS
-    val status = reminderColor(expired, soon)
-    val chip = when {
-        expired -> "已过期"
-        soon -> "即将到期"
-        else -> "保障中"
-    }
-    val expiry = JournalDates.shortLabel(plan.expireDate())
-    // 副信息「公司 · 到期日」；保费留给设置弹层，塞进来会把这一行挤到省略号后面。
-    // 右边那列已经写着「距到期」，日期前不再重复「到期」两个字 ——
-    // 省下的 24dp 让「平安车险 · 2026年12月31日」在窄屏上也能整行放下。
-    val subtitle = if (plan.company.isNotBlank()) "${plan.company} · $expiry" else "到期 $expiry"
-
+    val head = insuranceHeadline(plan)
     ReminderBody(
         category = CostCategory.INSURANCE,
         title = "保险续费",
-        chip = chip,
-        status = status,
-        value = if (days >= 0) "$days" else "${-days}",
-        unit = if (days >= 0) "天" else "天前已到期",
-        label = if (days >= 0) "距到期" else "已过期",
-        subtitle = subtitle,
+        chip = reminderChipText(head.expired, head.soon, "保障中"),
+        status = reminderColor(head.expired, head.soon),
+        value = head.value,
+        unit = head.unit,
+        label = head.label,
+        subtitle = head.subtitle,
         modifier = modifier,
         onClick = onClick,
     )
+}
+
+/** 右上角的胶囊小标（已过期 / 即将到期 / 正常）。 */
+@Composable
+internal fun ReminderChip(text: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(color.copy(alpha = 0.14f))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    ) {
+        Text(text, color = color, fontSize = 9.sp, fontWeight = FontWeight.Medium)
+    }
 }
 
 /** 卡片外壳：整行横向 —— 左边角标 + 标题 + 一行说明，右边主数字。 */

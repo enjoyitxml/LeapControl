@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 纯电续航条：绿色填充 + 半透明灰蓝轨道（7dp 高，圆角跟高度一半走）。
+     颜色取自零控首页里程行 Color(0xFF2FCC71)，两边对得上。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape android:shape="rectangle">
+            <corners android:radius="3.5dp" />
+            <solid android:color="#2E8A94A6" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape android:shape="rectangle">
+                <corners android:radius="3.5dp" />
+                <solid android:color="#2FCC71" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 沉浸样式右上角「更新时间」的底衬：照片深浅不可控，给白字垫一层薄黑，任何图上都读得清。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#40000000" />
+    <corners android:radius="7dp" />
+</shape>

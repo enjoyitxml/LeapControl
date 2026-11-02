@@ -154,9 +154,18 @@ fun OtaTile(modifier: Modifier = Modifier, subtitle: String?, onClick: () -> Uni
 // 公共控件
 // ---------------------------------------------------------------------------
 
-/** 二级页面顶栏：居中标题 + 左侧返回。 */
+/**
+ * 二级页面顶栏：居中标题 + 左侧返回 + 可选的右侧动作。
+ *
+ * [trailing] 是给「本页有个说明/帮助入口」用的（目前只有找车页的「?」）。
+ * 做成插槽而不是每页各写一条顶栏：标题居中靠的是两侧等宽，自己复制一份迟早会偏移。
+ */
 @Composable
-internal fun ScreenTopBar(title: String, onBack: () -> Unit) {
+internal fun ScreenTopBar(
+    title: String,
+    onBack: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     val C = LocalAppColors.current
     Box(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
         Text(
@@ -178,6 +187,9 @@ internal fun ScreenTopBar(title: String, onBack: () -> Unit) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(Icons.Filled.ChevronLeft, contentDescription = "返回", tint = C.textPrimary, modifier = Modifier.size(22.dp))
             }
+        }
+        if (trailing != null) {
+            Box(modifier = Modifier.align(Alignment.CenterEnd)) { trailing() }
         }
     }
 }

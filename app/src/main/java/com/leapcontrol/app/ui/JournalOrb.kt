@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -48,11 +49,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -92,21 +92,32 @@ private val OrbFloatHeight = 98.dp
 private const val OrbSpinToClose = 135f
 
 /**
- * 零记首页**底部居中**的「灵感球」。
+ * 零记页面右下角的「灵感球」（位置可在个性化里改成居中 / 左下）。
  *
  * 记录这件事不该先想「进哪个页面、点哪个按钮」——想说什么就直接说：
  *  - **点一下**：中间那个「+」旋成「×」，下方弹出输入条，再点一次「×」收起；
- *  - **长按**：进 Siri 式语音浮层，说话记；
+ *  - **长按**：按住说话，松手即识别；
  *  - 球上方那句提示轮播着教你说什么（「今天充电花了 50」「今天点亮了杭州」）；
  *  - 记完球上方立刻回执「已记：杭州打卡 · 充电 ¥50」，消失后继续轮播。
  *
- * 两点实现上的取舍：
- *  - 球是**半透明彩色**的，压在季节背景上也仍然看得出来是它，但不至于像块贴纸；
+ * **造型：白瓷**。整颗球只用两种颜色 —— 面板底色（浅色接近白、深色为面板深灰）
+ * 加一圈 1dp 发丝描边，加号用主题色。早先是写死的四色渐变（粉紫蓝青）加一圈紫光晕，
+ * 换成冬季蓝、落叶橙之后那套粉紫永远差一档，所以整套砍掉：现在换任何主题，
+ * 球都跟着 accent 走，不会出现「这一块颜色跟页面不搭」。
+ *
+ * 另外两点实现上的取舍：
+ *  - 加号做得比常见尺寸更粗更大（见 [OrbPlusArm] / [OrbPlusStroke]）—— 白底上的细线
+ *    在户外强光下几乎看不见，这是这个页面唯一的入口，必须一眼能找到；
  *  - 输入条弹出时球要**浮在弹层遮罩之上**（`zIndex`），否则会被 56% 的黑遮罩压成
  *    一团灰，那个「×」就既看不见也点不着了。
  */
 @Composable
-fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
+fun JournalOrb(
+    runtime: AppRuntime,
+    modifier: Modifier = Modifier,
+    align: Alignment.Horizontal = Alignment.CenterHorizontally,
+) {
+    val C = LocalAppColors.current
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -229,17 +240,12 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
     }
 
     val transition = rememberInfiniteTransition(label = "orbBreath")
+    // 呼吸幅度压到 ±2.5%：白瓷球是硬的，幅度大了会像果冻
     val breath by transition.animateFloat(
-        initialValue = 0.94f,
-        targetValue = 1.06f,
+        initialValue = 0.975f,
+        targetValue = 1.025f,
         animationSpec = infiniteRepeatable(tween(2400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "breath",
-    )
-    val halo by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(2400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "halo",
     )
     // 输入条展开时把加号旋成叉
     val spin by animateFloatAsState(
@@ -258,6 +264,16 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
     val listening = voicePhase == OrbVoice.LISTENING
     val recognizing = voicePhase == OrbVoice.RECOGNIZING
 
+    // 加号颜色：浅色下就是主题色；深色下提亮一档，否则冬季蓝那类深色调压在
+    // 深灰面板上会糊成一团，远看就是个空白球。
+    val plusColor = if (C.isDark) lerpColor(C.accent, Color.White, 0.24f) else C.accent
+    // 说话时把底色往主题色里揉一点当作「在听」的反馈；不整颗变彩，那又会变回贴纸
+    val ballBg by animateColorAsState(
+        targetValue = if (listening) lerpColor(C.panelBg, plusColor, 0.16f) else C.panelBg,
+        animationSpec = tween(220),
+        label = "orbBg",
+    )
+
     // 提示条：语音优先于回执，回执优先于轮播
     val hint = when {
         listening -> "在听…松手就识别"
@@ -272,7 +288,7 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
             .zIndex(2f)
             // 输入条弹出时键盘会顶上来，球要跟着一起上移，否则被键盘盖住
             .then(if (showInput) Modifier.imePadding() else Modifier),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = align,
     ) {
         // 输入条展开时收起提示条：这时候提示没用了，还会顶在卡片边上碍事
         if (!showInput) {
@@ -315,96 +331,56 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
             contentAlignment = Alignment.Center,
         ) {
             Canvas(Modifier.fillMaxSize()) {
+                if (!listening) return@Canvas
                 val outer = size.minDimension / 2f
-                // 录音时的扩散波纹：三圈错开相位、压得很淡，只是「它在听」的提示，
-                // 不能盖过球体本身的四色渐变。
-                if (listening) {
-                    for (i in 0..2) {
-                        val p = (wave + i * 0.33f) % 1f
-                        drawCircle(
-                            color = OrbGlow.copy(alpha = (1f - p) * 0.28f),
-                            radius = outer * (0.74f + p * 0.26f),
-                            center = center,
-                            style = Stroke(width = 1.4.dp.toPx()),
-                        )
-                    }
-                }
-                // 外层光晕：跟呼吸同相，球「涨」的时候光也涨
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(OrbGlow.copy(alpha = 0.30f * halo), Color.Transparent),
+                // 录音时的扩散波纹：三圈错开相位，用主题色、压得很淡，
+                // 只是「它在听」的提示，不能盖过球体本身
+                for (i in 0..2) {
+                    val p = (wave + i * 0.33f) % 1f
+                    drawCircle(
+                        color = C.accent.copy(alpha = (1f - p) * 0.30f),
+                        radius = outer * (0.70f + p * 0.30f),
                         center = center,
-                        radius = outer,
-                    ),
-                    radius = outer * 0.98f,
-                    center = center,
-                )
+                        style = Stroke(width = 1.4.dp.toPx()),
+                    )
+                }
             }
             Box(
                 modifier = Modifier
                     .size(OrbSize)
-                    .clip(CircleShape),
+                    // 极淡的投影：白球压在白卡上，没有这点影子就只是一枚贴纸；
+                    // 透明度压到 10% 左右，暗色主题下自然看不出，也就不需要分叉
+                    .shadow(
+                        elevation = 8.dp,
+                        shape = CircleShape,
+                        clip = false,
+                        ambientColor = Color.Black.copy(alpha = 0.08f),
+                        spotColor = Color.Black.copy(alpha = 0.10f),
+                    )
+                    .clip(CircleShape)
+                    .background(ballBg)
+                    .border(1.dp, C.border, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Canvas(Modifier.fillMaxSize()) {
                     val r = size.minDimension / 2f
                     val c = center
-
-                    // 1) 彩色球体：斜向四色渐变 + 整体 64% 不透明，压在背景上有磨砂玻璃感
-                    drawCircle(
-                        brush = Brush.linearGradient(
-                            colorStops = arrayOf(
-                                0f to OrbPink,
-                                0.36f to OrbViolet,
-                                0.68f to OrbBlue,
-                                1f to OrbMint,
-                            ),
-                            start = Offset(0f, 0f),
-                            end = Offset(size.width, size.height),
-                        ),
-                        radius = r,
-                        center = c,
-                        alpha = 0.64f,
-                    )
-                    // 2) 左上高光：没有它就是个彩色圆片，没有球感
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(Color.White.copy(alpha = 0.46f), Color.Transparent),
-                            center = Offset(size.width * 0.32f, size.height * 0.26f),
-                            radius = r * 0.92f,
-                        ),
-                        radius = r,
-                        center = c,
-                        alpha = 0.9f,
-                    )
-                    // 3) 上沿一道细高光弧（整圈白描边会像贴纸）
-                    val hairline = 1.dp.toPx()
-                    drawArc(
-                        color = Color.White.copy(alpha = 0.45f),
-                        startAngle = 200f,
-                        sweepAngle = 140f,
-                        useCenter = false,
-                        topLeft = Offset(c.x - r + hairline, c.y - r + hairline),
-                        size = Size((r - hairline) * 2f, (r - hairline) * 2f),
-                        style = Stroke(width = hairline, cap = StrokeCap.Round),
-                    )
-
-                    // 4) 加号：两条圆头短线；旋转 135° 后正好是叉。
-                    //    白字压在 72% 的彩球上，必须接近纯白才读得清，所以画在球体 alpha 之外。
-                    val arm = r * 0.38f
+                    val arm = r * OrbPlusArm
+                    val thick = r * OrbPlusStroke
+                    // 加号：两条圆头短线；旋转 135° 后正好是叉
                     rotate(degrees = spin, pivot = c) {
                         drawLine(
-                            color = Color.White.copy(alpha = 0.97f),
+                            color = plusColor,
                             start = Offset(c.x - arm, c.y),
                             end = Offset(c.x + arm, c.y),
-                            strokeWidth = r * 0.17f,
+                            strokeWidth = thick,
                             cap = StrokeCap.Round,
                         )
                         drawLine(
-                            color = Color.White.copy(alpha = 0.97f),
+                            color = plusColor,
                             start = Offset(c.x, c.y - arm),
                             end = Offset(c.x, c.y + arm),
-                            strokeWidth = r * 0.17f,
+                            strokeWidth = thick,
                             cap = StrokeCap.Round,
                         )
                     }
@@ -427,14 +403,30 @@ fun JournalOrb(runtime: AppRuntime, modifier: Modifier = Modifier) {
     }
 }
 
-/** 球体的四种颜色：粉 → 紫 → 蓝 → 青，斜着铺开。 */
-private val OrbPink = Color(0xFFFF7AB6)
-private val OrbViolet = Color(0xFFA26BFF)
-private val OrbBlue = Color(0xFF5B8CFF)
-private val OrbMint = Color(0xFF2FD9C5)
+/**
+ * 加号两臂的半长（相对球半径）。
+ *
+ * 0.38 → 0.46：加号横向占球径的 92%，60dp 球上约 27.6dp。
+ * 原来那版细一号，白底上的主题色细线在户外强光下几乎看不出有个加号。
+ */
+private const val OrbPlusArm = 0.46f
 
-/** 光晕颜色单独一个，太饱和会像霓虹灯。 */
-private val OrbGlow = Color(0xFFB46BFF)
+/**
+ * 加号笔画粗细（相对球半径）。
+ *
+ * 0.17 太细（白底上像根线）→ 0.21 又偏粗（实机看着像个厚十字）→ 收到 0.18。
+ * 60dp 球上约 5.4dp，比常规图标略粗一点，但两臂相交处还留着加号该有的空隙。
+ */
+private const val OrbPlusStroke = 0.18f
+
+/** 灵感球停在页面的哪个位置。默认右下，个性化里可改成居中 / 左下。 */
+object OrbPosition {
+    const val RIGHT = 0
+    const val CENTER = 1
+    const val LEFT = 2
+
+    fun isValid(value: Int): Boolean = value == RIGHT || value == CENTER || value == LEFT
+}
 
 /** 按住多久算「长按说话」。短于这个时间松手就是单击（收/放输入条）。 */
 private const val OrbLongPressMs = 320L

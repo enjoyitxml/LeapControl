@@ -108,6 +108,34 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!--
+          桌面小组件的自定义背景图。
+          必须是 exported：读图的是桌面（另一个进程），它只拿得到 content:// 这条 URI。
+          提供者内部只按「当前版本号」精确匹配文件名，不接受任意路径。
+        -->
+        <provider
+            android:name=".widget.WidgetWallpaperProvider"
+            android:authorities="${applicationId}.widgetwall"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+
+        <!--
+          桌面小组件（4×2）：续航 / 车况 / 五个控车按键。
+          标准 AppWidgetProvider —— 澎湃「原生小部件」要上架小米商店 + 白名单，侧载包做不到，
+          所以走安卓通用小组件。三套版式由用户选择，见 widget/VehicleWidget.kt 顶部说明。
+        -->
+        <receiver
+            android:name=".widget.VehicleWidgetProvider"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info" />
+        </receiver>
+
         <!-- 蓝牙钥匙后台服务：连接车辆、维持无感解锁所需的 BLE 链路 -->
         <service
             android:name=".bluetooth.BleKeyService"

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 沉浸样式的燃油续航条：蓝提亮一档（#5AA9FF）+ 半透明白轨道。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape android:shape="rectangle">
+            <corners android:radius="3.5dp" />
+            <solid android:color="#4DFFFFFF" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape android:shape="rectangle">
+                <corners android:radius="3.5dp" />
+                <solid android:color="#5AA9FF" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>
