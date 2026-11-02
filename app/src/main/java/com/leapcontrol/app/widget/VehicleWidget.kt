@@ -14,6 +14,10 @@ import com.leapcontrol.app.R
 import com.leapcontrol.app.tiles.QuickTiles
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,6 +49,9 @@ import java.util.Locale
  * ## 数据从哪来
  * 小组件与 App 同进程。车况先用磁盘缓存预填（冷启动也能立刻有内容），
  * 再由 [VehicleWidgetProvider] 在添加 / 点按键时后台刷新。
+ *
+ * 车模图同理，但多了一层 [WidgetCarImage]（磁盘）：桌面定时更新、拖动改尺寸都会在**新进程**里
+ * 重画一次，那时 AppRuntime 的内存位图是空的 —— 只认内存就会把车模判成「没有」，让它在卡上消失。
  */
 object VehicleWidget {
 
@@ -120,9 +127,24 @@ object VehicleWidget {
     private const val BASE_WIDTH_DP = 320f
     private const val BASE_HEIGHT_DP = 150f
 
-    /** 车模图的内存缓存：解码 PNG 比一次网络请求便宜，但没必要每次渲染都做。 */
+    /**
+     * 车模图的内存缓存。`render()` 会被 UI 线程（改尺寸）、IO 线程（刷新车况）、
+     * 广播线程（点按键）同时调用，所以两个字段都标 `@Volatile`。
+     */
+    @Volatile
     private var carCache: Bitmap? = null
+
+    @Volatile
     private var carCacheVin: String? = null
+
+    /** 补车模图的后台任务。进程在任务就在，进程没了说明图也不需要再画。 */
+    private val carFetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** 找不到车模图时，两次「补图」之间的最小间隔（按 VIN 记）。 */
+    private const val CAR_RETRY_MS = 15 * 60 * 1000L
+
+    /** 补图节流记在哪个 prefs 里（与控车按键的 `widget_action_state` 分开）。 */
+    private const val PREFS_CAR = "widget_car_state"
 
     // ---------------- 对外入口 ----------------
 
@@ -138,9 +160,12 @@ object VehicleWidget {
         val r = runtime ?: AppRuntime(context).also { it.loadCachedStatus() }
         val status = r.statusFlow.value
         val updatedAt = r.lastUpdatedFlow.value
-        val signedIn = r.session.selectedVin.isNotBlank()
+        val vin = r.session.selectedVin
+        val signedIn = vin.isNotBlank()
         val title = r.displayName()
-        val car = carCache?.takeIf { !it.isRecycled }
+        // 内存没有就翻磁盘那份（[WidgetCarImage]）—— 冷进程第一帧全靠它，
+        // 只认内存的话车模会时有时无：开过 App 之后有、被系统回收之后就没了。
+        val car = cachedCar(context, vin)
         ids.forEach { id ->
             val (widthDp, heightDp) = widgetSize(manager, id)
             val views = buildViews(
@@ -156,11 +181,48 @@ object VehicleWidget {
             )
             runCatching { manager.updateAppWidget(id, views) }
         }
+
+        // 磁盘里也没有（第一次装、或者刚换登录账号）：后台补一张，补到就再画一遍。
+        // 改卡片尺寸、桌面定时更新走的就是这条路径，以前它们只画不补，于是卡上一直缺车模。
+        if (car == null && signedIn) fetchCarImageLater(context, r, vin)
+    }
+
+    /** 内存 → 磁盘。解码一张 440 宽的 PNG 是毫秒级的，而且一个进程最多只做一次。 */
+    private fun cachedCar(context: Context, vin: String): Bitmap? {
+        carCache?.let { if (!it.isRecycled && carCacheVin == vin) return it }
+        if (vin.isBlank()) return null
+        val fromDisk = WidgetCarImage.load(context, vin) ?: return null
+        carCache = fromDisk
+        carCacheVin = vin
+        return fromDisk
+    }
+
+    /**
+     * 车模图缺失时补一次。
+     *
+     * 按 VIN 限频：有些账号本来就没有官方定妆照（接口不给 shareBindUrl），
+     * 每次重画都去问一遍没有意义，还会让每次桌面更新都多一次网络请求。
+     */
+    private fun fetchCarImageLater(context: Context, runtime: AppRuntime, vin: String) {
+        if (vin.isBlank()) return
+        val prefs = context.getSharedPreferences(PREFS_CAR, Context.MODE_PRIVATE)
+        val key = "last_try_$vin"
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong(key, 0L) < CAR_RETRY_MS) return
+        prefs.edit().putLong(key, now).apply()
+        carFetchScope.launch {
+            val got = runCatching { ensureCar(context, runtime) }.getOrNull()
+            // 没拿到就不用重画：卡片保持原样，等下一次（或用户点按键）再试
+            if (got != null) runCatching { render(context, runtime) }
+        }
     }
 
     /**
      * 取当前车辆的车模图（改过色优先），并缩到小组件够用的尺寸。
      * 官方接口返回 1000px 级别的大图，直接塞进 RemoteViews 会超 Binder 事务上限。
+     *
+     * 拿到之后**同时写进磁盘**（[WidgetCarImage]）：这张图是桌面卡片唯一的图像来源，
+     * 进程一被回收内存就没了，不落盘的话下次唤醒又得从头取一遍。
      */
     suspend fun ensureCar(context: Context, runtime: AppRuntime): Bitmap? {
         val vin = runtime.session.selectedVin
@@ -172,13 +234,31 @@ object VehicleWidget {
         val scaled = scaleDown(raw, 440)
         carCache = scaled
         carCacheVin = vin
+        WidgetCarImage.save(context, vin, scaled)
         return scaled
     }
 
-    /** 换车 / 登出时清掉车模缓存，避免把上一辆车的图留在桌面上。 */
-    fun clearCarCache() {
+    /** 换车 / 登出时清掉车模缓存（内存 + 磁盘），避免把上一辆车的图留在桌面上。 */
+    fun clearCarCache(context: Context) {
         carCache = null
         carCacheVin = null
+        WidgetCarImage.clearAll(context)
+    }
+
+    /**
+     * 车模换了（刷新官方图 / 换色 / 相册导入 / 恢复官方）：丢掉旧图，重新取一张并让桌面重画。
+     *
+     * 只清内存是不够的 —— 磁盘那份缓存图会让桌面一直显示上一版车模，
+     * 而且要等到进程被杀、重新取图才会变，看起来就像「换了没生效」。
+     */
+    fun refreshCarImage(context: Context, runtime: AppRuntime) {
+        carCache = null
+        carCacheVin = null
+        WidgetCarImage.clear(context, runtime.session.selectedVin)
+        carFetchScope.launch {
+            runCatching { ensureCar(context, runtime) }
+            runCatching { render(context, runtime) }
+        }
     }
 
     // ---------------- RemoteViews 组装 ----------------

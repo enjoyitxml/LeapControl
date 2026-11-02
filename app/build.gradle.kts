@@ -13,8 +13,8 @@ android {
         applicationId = "com.leapcontrol.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10005
-        versionName = "1.0.5"
+        versionCode = 10006
+        versionName = "1.0.6"
         resourceConfigurations += setOf("zh", "zh-rCN")
         buildConfigField("String", "AMAP_WEB_KEY_ENCRYPTED", "\"\"")
         buildConfigField("String", "PGYER_API_KEY_ENCRYPTED", "\"\"")

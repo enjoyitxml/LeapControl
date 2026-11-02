@@ -183,6 +183,8 @@ fun SettingsScreen(
                     // 否则点一下刷新就把他辛苦调的图弄没了
                     runtime.clearCarImageCache()
                     val ok = runCatching { runtime.fetchCarImage(force = true) }.getOrNull() != null
+                    // 桌面小组件存的是自己那份缩略图，得让它跟着换
+                    if (ok) runtime.refreshWidgetCarImage()
                     message = when {
                         ok && runtime.hasCustomCarModel() -> "官方车模已刷新（首页仍用你的自定义车模）"
                         ok -> "车模已刷新"

@@ -770,7 +770,7 @@ class AppRuntime(context: Context) {
                 ParkingThumbMemory.clear()
                 resetLocationAnchor()
                 // 小组件里的车模也要换掉：留着的话桌面上还是上一辆车的图
-                com.leapcontrol.app.widget.VehicleWidget.clearCarCache()
+                com.leapcontrol.app.widget.VehicleWidget.clearCarCache(appContext)
             }
         }
         // 换车后能力要重新按 VIN 加载，不能直接沿用上一辆的结果
@@ -800,7 +800,7 @@ class AppRuntime(context: Context) {
         ParkingPhotoStore.clear(appContext)
         ParkingThumbMemory.clear()
         // 桌面小组件也要立刻变成「点此登录」，别把上一辆车的车况留在锁屏外
-        com.leapcontrol.app.widget.VehicleWidget.clearCarCache()
+        com.leapcontrol.app.widget.VehicleWidget.clearCarCache(appContext)
         runCatching { com.leapcontrol.app.widget.VehicleWidget.render(appContext) }
     }
 
@@ -2056,6 +2056,16 @@ class AppRuntime(context: Context) {
         }
     }
 
+    /**
+     * 车模换了（刷新官方图 / 换色 / 相册导入 / 恢复官方）：通知桌面小组件换掉那张缩略图。
+     *
+     * 小组件有自己的磁盘缓存（`widget/WidgetCarImage`），不主动通知的话它会一直贴着旧图 ——
+     * 它没法实时读到这里的内存状态。失败绝不能影响 App 内的显示，所以整体兜住。
+     */
+    fun refreshWidgetCarImage() {
+        runCatching { com.leapcontrol.app.widget.VehicleWidget.refreshCarImage(appContext, this) }
+    }
+
     // ---------------- 自定义车模（内置换色 / 相册导入） ----------------
     //
     // 官方接口只收 VIN，图是按车辆档案渲染好的定妆照，客户端没有任何「选颜色」的入参，
@@ -2166,6 +2176,7 @@ class AppRuntime(context: Context) {
             customCarCache = bitmap
             customCarCacheVin = vin
             _carModelRevision.value += 1
+            refreshWidgetCarImage()
         }
         ok
     }
@@ -2187,6 +2198,7 @@ class AppRuntime(context: Context) {
         customCarCache = result.bitmap
         customCarCacheVin = vin
         _carModelRevision.value += 1
+        refreshWidgetCarImage()
         return result
     }
 
@@ -2207,6 +2219,7 @@ class AppRuntime(context: Context) {
             customCarCache = tinted
             customCarCacheVin = vin
             _carModelRevision.value += 1
+            refreshWidgetCarImage()
         }
         ok
     }
@@ -2218,6 +2231,7 @@ class AppRuntime(context: Context) {
         customCarCache = null
         customCarCacheVin = null
         _carModelRevision.value += 1
+        refreshWidgetCarImage()
     }
 
     /** 官方车模图的只读入口（外观页的预览、换色、导出都以它为准）。 */

@@ -3136,6 +3136,10 @@ private fun ChargingPulseEntry(paused: State<Boolean>, onClick: () -> Unit) {
                 )
             }
         }
+        // 图标用 PNG（drawable-nodpi/ic_charge_plug.png），不再自己画矢量：
+        // 原先那版是靠 2.4 单位的插脚笔画 + 路径拼出来的插头，缩到 19dp 后描边糊成一团，
+        // 插脚和本体粘在一起，看起来就是「变形」。位图缩下来反而干净。
+        // Icon 的 tint 走 SrcIn，只换颜色、保留 PNG 的抗锯齿边缘，所以直接沿用主题绿。
         Icon(
             painter = painterResource(R.drawable.ic_charge_plug),
             contentDescription = "充电中，进入充电中心",
