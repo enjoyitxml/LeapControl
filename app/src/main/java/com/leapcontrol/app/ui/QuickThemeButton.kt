@@ -43,8 +43,17 @@ import kotlin.math.cos
 /** 一次完整呼吸的时长：3.4s 吸气 + 呼气，慢到不会让人盯着看，又能看出在动。 */
 private const val BREATH_CYCLE_NS = 3_400_000_000L
 
-/** 呼吸动画的最小帧间隔（约 30fps）：慢动画用不着 120fps，别跟滚动抢帧预算。 */
-private const val BREATH_FRAME_INTERVAL_NS = 33_000_000L
+/**
+ * 呼吸动画的帧间隔：`0` = 不节流，每个 VSYNC 都推进。
+ *
+ * 以前这里是 33ms（约 30fps），想「别跟滚动抢帧预算」。但系统判断该给多少刷新率，
+ * 看的正是应用出帧的节奏：稳定每 33ms 出一帧会被判成「只需 30Hz」，VSYNC 降到 30；
+ * 一滑动又提到 120，刷新率在两者之间来回横跳，每次切换都要重同步 VSYNC，
+ * 滚动手感就在那一瞬间断掉。省下的绘制时间远不值这个代价。
+ *
+ * **不要改回 33ms。**
+ */
+private const val BREATH_FRAME_INTERVAL_NS = 0L
 
 /** 按钮的触控区（含留白），比可见的小圆点大得多，保证点得中。 */
 private val TOUCH_SIZE = 44.dp

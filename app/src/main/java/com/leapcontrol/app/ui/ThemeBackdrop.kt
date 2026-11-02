@@ -57,12 +57,18 @@ internal val SCENE_HEIGHT = 508.dp
 private const val SCENE_CYCLE_MS = 24_000f
 
 /**
- * 动态场景的帧间隔（约 30fps）。
+ * 动态场景的帧间隔：`0` = 不节流，每个 VSYNC 都推进，跟屏幕刷新率走。
  *
- * 这类动画只是缓慢漂移的云 / 星 / 雨丝，24 秒才走完一轮，30fps 与 60fps 肉眼几乎没差别，
- * 但绘制次数少一半 —— 首页滑动时场景与滚动共用同一帧预算，这一半很关键。
+ * 这里以前是 33ms（约 30fps），理由是「云和星漂得很慢，30fps 看不出来，还能省一半绘制」。
+ * 但省下的绘制时间根本没落到用户手上：系统的动态刷新率会盯着应用出帧的节奏判断该给多少 Hz，
+ * 一个稳定每 33ms 出一帧的界面会被判成「只需 30Hz」，VSYNC 随即降到 30；用户一滑动、
+ * 需要高帧了，又立刻提到 120。于是刷新率在 30 与 120 之间来回横跳，每次切换系统都要
+ * 重同步 VSYNC，滚动节奏就在那一瞬间断掉 —— 这正是「画面一直在 30 和 120 之间跳」的来源。
+ *
+ * **不要再改回 33ms。** 要省电就关掉动态主题（静态主题本来就是烘一张位图，零成本），
+ * 而不是让画面一顿一顿地动。
  */
-private const val SCENE_FRAME_INTERVAL_NS = 33_000_000L
+private const val SCENE_FRAME_INTERVAL_NS = 0L
 
 /** 静态场景的固定相位（0.08 能让云/花瓣/星点落在比较自然的位置）。 */
 private const val STATIC_PHASE = 0.08f
@@ -355,10 +361,11 @@ internal fun advanceScenePhase(current: Float, deltaNanos: Long): Float =
 /**
  * 场景动画进度。
  *
- * 手写节流而不用 `rememberInfiniteTransition`，原因有三个：
- *  1. 无限动画固定按屏幕刷新率推进（60/90/120fps），对这种慢速漂移完全是浪费；
- *  2. [animate] 变 false 时能停在当前相位，而不是被重置回起点；
- *  3. 进后台时 Compose 的帧时钟本身会停，不需要额外处理。
+ * 手写推进而不用 `rememberInfiniteTransition`，原因是 [animate] 变 false 时能停在当前相位，
+ * 而不是被重置回起点；进后台时 Compose 的帧时钟本身会停，也不需要额外处理。
+ *
+ * 推进跟 VSYNC 走，不做帧率节流 —— 节流会让系统把整个界面判成低帧率、进而反复切刷新率，
+ * 详见 [SCENE_FRAME_INTERVAL_NS]。
  *
  * @return 0~1 的循环进度；非动态主题返回固定相位（静态场景不读它）。
  */
@@ -375,7 +382,7 @@ private fun rememberScenePhase(theme: SeasonTheme, animate: Boolean): State<Floa
             withFrameNanos { now ->
                 if (lastFrameNs == 0L) {
                     lastFrameNs = now
-                } else if (now - lastFrameNs >= SCENE_FRAME_INTERVAL_NS) {
+                } else if (SCENE_FRAME_INTERVAL_NS <= 0L || now - lastFrameNs >= SCENE_FRAME_INTERVAL_NS) {
                     phase.floatValue = advanceScenePhase(phase.floatValue, now - lastFrameNs)
                     lastFrameNs = now
                 }

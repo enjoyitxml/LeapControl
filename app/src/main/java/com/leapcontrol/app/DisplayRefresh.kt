@@ -1,17 +1,21 @@
 package com.leapcontrol.app
 
+import android.app.Activity
 import android.view.Display
 
 /**
- * 显示器刷新率描述（仅供帧率浮层 / 设置页展示）。
+ * 刷新率：只「声明偏好」，不指定显示模式。
  *
- * ⚠️ 这里**不再**包含任何「主动申请 / 切换显示模式」的逻辑。
+ * ## 和曾经的 `preferredDisplayModeId` 有什么区别
  *
- * 历史教训：早先的 `apply()` 会用 `WindowManager.LayoutParams.preferredDisplayModeId`
- * 「硬切显示模式」，并且在 onResume / onWindowFocusChanged 里反复调用。这个操作会触发
- * 系统做「显示模式切换 → VSYNC 时钟重同步」，正好发生在滑动过程中时就直接打断滚动节奏，
- * 表现为「渲染很轻却一直掉帧」。用户在系统里设「固定 120Hz」后系统会自行给足高刷，
- * App 侧什么都不该做 —— 反复请求反而和系统打架，越修越卡。
+ * 早先的 `apply()` 用 `WindowManager.LayoutParams.preferredDisplayModeId` **指定了具体的
+ * 显示模式 id**，并且在 onResume / onWindowFocusChanged 里反复调用。那等于每次都要系统
+ * 做一次「显示模式切换 → VSYNC 时钟重同步」，正好发生在滑动过程中时就直接打断滚动节奏，
+ * 表现为「渲染很轻却一直掉帧」。这段历史教训不要再重演。
+ *
+ * 这里用的是 [`preferredRefreshRate`]：只告诉窗口管理器「我希望按这个帧率出帧」，
+ * 由它自己挑最接近的模式，**不指定 id、不强制切模式**。而且只在 onResume 设一次，
+ * 不在焦点变化里反复设 —— 反复协商本身就是抖动来源。
  */
 object DisplayRefresh {
 
@@ -25,5 +29,36 @@ object DisplayRefresh {
             display.supportedModes?.maxOfOrNull { it.refreshRate } ?: current
         }.getOrDefault(current)
         return current to peak
+    }
+
+    /** 这台设备的硬件峰值刷新率（拿不到时按 60 处理）。 */
+    fun peakOf(display: Display?): Float = runCatching {
+        display?.supportedModes?.maxOfOrNull { it.refreshRate }
+    }.getOrNull() ?: 60f
+
+    /**
+     * 声明「本窗口希望按最高刷新率出帧」。
+     *
+     * 为什么需要它：系统的动态刷新率会盯着应用出帧的节奏判断该给多少 Hz。
+     * 界面上只要还有一个按 30fps 推进的动画，就会被判成「只需 30Hz」而降频；
+     * 用户一滑动又提到 120 —— 这就是「画面在 30 和 120 之间来回横跳」的来源。
+     * 把动画改成每帧推进是治本，但静态主题下界面本来就没有持续出帧的理由，
+     * 需要明确声明一次意图，系统才不会又滑回低频。
+     *
+     * 值没变就不重复写：`window.attributes` 每次赋值都会走一遍窗口布局，
+     * 无意义的重复设置反而可能引入抖动。
+     */
+    fun applyMaxFrameRate(activity: Activity) {
+        val peak = peakOf(activity.display)
+        // 60Hz 的屏没什么可声明的，跳过省一次窗口属性更新
+        if (peak <= 60f) return
+        val window = activity.window ?: return
+        runCatching {
+            val lp = window.attributes
+            if (lp.preferredRefreshRate != peak) {
+                lp.preferredRefreshRate = peak
+                window.attributes = lp
+            }
+        }
     }
 }
