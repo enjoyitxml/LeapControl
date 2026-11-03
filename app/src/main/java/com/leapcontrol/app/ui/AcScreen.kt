@@ -95,16 +95,20 @@ fun AcScreen(
     val indoor = normalizeTemp(status?.interiorTemp)
 
     // 车端当前值：页面上所有「调一项、其余保持不变」的指令都拿它做底
+    // null = 车端没上报风量（既没有 1941，也没有 acSetting），此时不能用默认值冒充「当前 2 挡」
     val remoteWind = status?.acWindLevel?.trim()?.toIntOrNull()
         ?.coerceIn(Commands.MIN_AC_WIND_LEVEL, Commands.MAX_AC_WIND_LEVEL)
-        ?: DEFAULT_WIND
     val remotePosition = status?.acPosition ?: "all"
     val mode = status?.acMode ?: "nohotcold"
     val circle = if (status?.acCircle?.contains("外") == true) "out" else "in"
 
     // 风量与出风方向的本地值：点下去要立刻跟手，车端真值回来再覆盖。
     // remember(key) 让车端值一变就同步过来，点击期间车端值不变所以不会被打断。
-    var wind by remember(remoteWind) { mutableStateOf(remoteWind) }
+    // wind 始终是「发指令时带的基数」，车端没上报时退回 DEFAULT_WIND；
+    // 但**显示**要看 [windTouched]：没上报又没点过就老实写「未上报」，不假装是 2 挡。
+    var wind by remember(remoteWind) { mutableStateOf(remoteWind ?: DEFAULT_WIND) }
+    var windTouched by remember(remoteWind) { mutableStateOf(false) }
+    val shownWind = if (remoteWind != null || windTouched) wind else null
     var position by remember(remotePosition) { mutableStateOf(remotePosition) }
 
     // ---- 舒适件的本地档位 ----
@@ -153,8 +157,12 @@ fun AcScreen(
     )
 
     // 运行状态摘要：风量 / 循环 / 出风方向，一行说完，省掉三个独立状态行
-    val summary = "$wind 挡风 · ${if (circle == "out") "外循环" else "内循环"} · " +
-        if (position == "wshld") "前挡出风" else "全车出风"
+    // 风量取不到时整段略去，不留一个假的「2 挡风」在那儿误导人
+    val summary = listOfNotNull(
+        shownWind?.let { "$it 挡风" },
+        if (circle == "out") "外循环" else "内循环",
+        if (position == "wshld") "前挡出风" else "全车出风",
+    ).joinToString(" · ")
 
     // ---- 运行状态清单 ----
     // 只用页面上「正在生效」的值（含刚点下去、还没等到车端回报的），
@@ -436,7 +444,7 @@ fun AcScreen(
         AcSection(title = "风量") {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (level in Commands.MIN_AC_WIND_LEVEL..Commands.MAX_AC_WIND_LEVEL) {
-                    val selected = level == wind
+                    val selected = level == shownWind
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -450,6 +458,7 @@ fun AcScreen(
                                     val command = adjustName("wind", windLevel = level)
                                     val previous = wind
                                     wind = level
+                                    windTouched = true
                                     onCommand(command) { wind = previous }
                                 }
                             },
@@ -473,7 +482,7 @@ fun AcScreen(
                 AcIcon(AcGlyph.Airflow, C.textSecondary, size = 15.dp, stroke = 1.4.dp)
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = "当前 $wind 挡",
+                    text = shownWind?.let { "当前 $it 挡" } ?: "车端未上报风量",
                     color = C.textSecondary,
                     fontSize = 11.5.sp,
                 )
@@ -931,16 +940,13 @@ private fun AcRowDivider() {
 }
 
 /**
- * 带档位的一行开关：图标 + 名称 + 「关 / 1 / 2 / 3」四段档位条。
+ * 带档位的一行开关：图标 + 名称 + 档位点阵。
  *
- * ## 为什么从「点阵」改成「分段」
- * 点阵只能看出「大概亮了几颗」，用户反馈「看不到具体档位」：
- * 3 颗全亮既可能是 3 档也可能是 2 档（第 3 颗没亮时更难分辨），
- * 而且想关掉只能一路点回 0 档。改成分段之后，当前档位有明确的高亮格，
- * 点哪一档就是哪一档、点「关」立刻归零 —— 开和关都是一步。
+ * ## 为什么从「关 / 1 / 2 / 3」四段文字格改成点阵
+ * 四段文字格摆在座位卡里会跟图标、文字挤成一条，几乎连在一起；
+ * 点阵只占三十几 dp，亮了几颗一眼就能数出来。
  *
  * @param onClick 点整行：按 0→1→…→max→0 循环（老习惯，肌肉记忆不用改）
- * @param onSelect 点某一段：直接跳到该档位
  * @param compact 嵌在座位卡里时用（行高更低、左右内边距更小）
  */
 @Composable

@@ -11,6 +11,7 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import com.leapcontrol.app.AcLiveState
 import com.leapcontrol.app.AmapPoi
 import com.leapcontrol.app.ApkUpdater
 import com.leapcontrol.app.AppUpdateInfo
@@ -965,6 +966,43 @@ class AppRuntime(context: Context) {
     /** 最近一次车况更新时刻（毫秒）。 */
     val lastUpdatedFlow: StateFlow<Long> = _lastUpdated.asStateFlow()
 
+    /**
+     * 舒适件（座椅 / 方向盘 / 后视镜）的乐观覆盖记录，见 [ComfortOptimistic]。
+     *
+     * 这些信号车端回报滞后，下发后到真值翻篇之间任何一次刷新都会把界面弹回旧档位 ——
+     * 用户在空调页和舒适卡上点「关闭」看到「又变回弱档」，根因就在这里。所有读写都过
+     * [comfortLock]：控车在 IO 线程写、车况刷新也在 IO 线程写，不能让它俩互相覆盖。
+     */
+    private val comfortLock = Any()
+    private var comfortPending: List<ComfortOptimistic.Pending> = emptyList()
+
+    /**
+     * 指令下发成功后登记一条待确认记录，并**立刻**把目标档位推进状态流。
+     *
+     * 后者是必要的：舒适卡（`ComfortScreens`）上的档位按钮直接读 `status`，不像空调页
+     * 那样另有一份本地档位，光登记 pending 不改状态的话，用户点完「关闭」要盯着「弱档」
+     * 最多等 20 秒回执，观感就是「点了没反应」。
+     */
+    private fun rememberComfortTarget(commandName: String) {
+        val target = ComfortOptimistic.targetOf(commandName, System.currentTimeMillis()) ?: return
+        synchronized(comfortLock) {
+            // 同一字段只留最后一条：连点两下（关 → 强）时以最后一击为准
+            comfortPending = comfortPending.filterNot { it.field == target.field } + target
+            val current = _status.value ?: return
+            // 只是为了算出「覆盖后长什么样」，**不采纳** merge 交回的 pending：
+            // merge 会把「当前值已等于目标」的记录剔掉，而 current 本身就含乐观值，
+            // 照单全收会让记录在真正刷新之前就被清空，一刷新就弹回旧档位。
+            _status.value = ComfortOptimistic.merge(current, comfortPending, target.at).status
+        }
+    }
+
+    /** 解析出的车况先过一遍乐观覆盖，再把用掉的记录剔掉。 */
+    private fun mergeComfortOptimistic(status: CarStatus): CarStatus = synchronized(comfortLock) {
+        val merged = ComfortOptimistic.merge(status, comfortPending, System.currentTimeMillis())
+        comfortPending = merged.pending
+        merged.status
+    }
+
     private fun statusCacheKey(vin: String) = "status_$vin"
     private fun statusTimeKey(vin: String) = "status_time_$vin"
 
@@ -1069,7 +1107,8 @@ class AppRuntime(context: Context) {
     suspend fun refreshStatus(): CarStatus = withContext(Dispatchers.IO) {
         val api = LeapmotorApi(session)
         val st: JSONObject = withNetworkRetry { api.getVehicleState() }
-        val status = buildStatus(st)
+        // 刚下发的舒适件命令在保护窗口内盖住滞后的旧值（见 ComfortOptimistic）
+        val status = mergeComfortOptimistic(buildStatus(st))
         cacheStatus(session.selectedVin, st)
         // 结果通过 statusFlow 下发：首页直接读到新值，不需要 UI 自己再 setState
         _status.value = status
@@ -1280,10 +1319,16 @@ class AppRuntime(context: Context) {
             locationSeenAt = location.seenAt,
             locationSource = location.source,
             acTargetTemp = acSetting["temperature"],
-            acWindLevel = acSetting["windlevel"],
-            acCircle = acSetting["circle"]?.let {
-                when (it) { "in", "1" -> "内循环"; "out", "0" -> "外循环"; else -> null }
-            },
+            // 风量/循环以**实时信号**为准（1941 / 1943），acSetting 里的只是设定值：
+            // 车机上把风量拉到 7 挡后 acSetting 可能还是 2（用户 2026-11-03 实测），
+            // 官方 App 与上游都读 acAirVolume，这里同样处理。见 AcLiveState。
+            acWindLevel = AcLiveState.windLevel(pick(st, "acAirVolume", "1941"), acSetting["windlevel"]),
+            acCircle = AcLiveState.circle(
+                pick(st, "recirculationMode", "1943"),
+                acSetting["circle"]?.let {
+                    when (it) { "in", "1" -> "内循环"; "out", "0" -> "外循环"; else -> null }
+                },
+            ),
             acPosition = acSetting["position"]?.trim()?.takeIf {
                 it == "all" || it == "wshld"
             },
@@ -2318,6 +2363,8 @@ class AppRuntime(context: Context) {
             Commands.build(commandName)
         }
         val result = withNetworkRetry { api.sendControl(command, pin) }
+        // 指令已到网关：立刻记下目标档位，后续车况刷新在保护窗口内不会把它弹回旧值
+        rememberComfortTarget(commandName)
         // 不等回执的调用方：指令已经到网关，剩下的交给调用方回读车况判断
         if (resultWaitMs == 0L) return@withContext "${command.label}指令已下发"
         // 轮询执行结果：车端 T-Box 唤醒 + 执行通常需要数秒，官方抓包协议允许最长 24 秒。
@@ -2698,7 +2745,7 @@ class AppRuntime(context: Context) {
      */
     private fun readChargeState(api: LeapmotorApi): Int? {
         val st = withNetworkRetry { api.getVehicleState() }
-        val status = buildStatus(st)
+        val status = mergeComfortOptimistic(buildStatus(st))
         cacheStatus(session.selectedVin, st)
         _status.value = status
         _lastUpdated.value = System.currentTimeMillis()
