@@ -2061,6 +2061,7 @@ fun HomeScreen(
             ChargeCycleSheet(
                 anchor = journalData.chargeAnchor,
                 currentKm = OwnershipStats.kmFromText(status?.totalMileage),
+                currentSoc = status?.soc,
                 onDismiss = { showChargeSheet = false },
                 onRestart = {
                     val km = OwnershipStats.kmFromText(status?.totalMileage)

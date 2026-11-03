@@ -9,16 +9,39 @@ import org.json.JSONObject
  * 车端没有充电历史接口（信号表里只有 `chargeState` 这一个实时状态，没有行程 / 分段里程），
  * 所以这条起点只能靠 App 自己「看见」充电时记下来 —— 详见 [ChargeCycle.observe]。
  *
- * [soc] 只用来在卡上写「上次充电时 82%」，不参与任何判定：
- * 它记的是「第一次看见这次充电时」的电量，等于开始充的时候多少，不是充满多少。
+ * [soc] 与 [socPeak] 是一对：**从多少充到多少**，卡上要一起写出来。
+ *  - [soc] = 第一次看见这次充电时的电量（「从 X% 充起」）；
+ *  - [socPeak] = 这次充电**充到多少**（「充到 Y%」）。
+ *
+ * ## socPeak 为什么是「往上抬」而不是创建时就填
+ * 创建锚点的那一刻充电还没结束，那时的电量只是个下限 —— 照着它写「充到 55%」，
+ * 充到 89% 就成了谎报。所以它从第一格开始每观测一次就往高处抬，只涨不跌，
+ * 直到拔枪定格（见 [ChargeCycle.observe]）。
+ * 代价是：整段充电期间一次都没看过车况、充完又先开走了 —— 这个值就永远缺着。
+ * 缺着就缺着，宁可只写「余 74%」，也不拼一个假区间出来。采样由 [ChargeWatch]
+ * 在充电期间自动完成，用户不必记得打开 App。
+ *
+ * ## [full] 与 [socPeak] 是两件事
+ * 车端 `chargeState=2`（已完成）只说明「这次充电结束了、车端认定充到了头」，
+ * **不告诉具体百分比** —— 健康充电上限 90% 时它也报 2。所以充满只能记成
+ * 「充到满电」这一句话，不能拿 100% 冒认。
  */
 data class ChargeAnchor(
     /** 充电起点的表显总里程（km）。 */
     val km: Double,
     /** 记下这个起点的时刻（毫秒）。 */
     val at: Long,
-    /** 当时电量（%），可能没有。 */
+    /** 「从 X% 充起」：第一次看见这次充电时的电量（%），可能没有。 */
     val soc: Int? = null,
+    /** 「充到 Y%」：这次充电的满电电量（%），没观测到就 null。 */
+    val socPeak: Int? = null,
+    /**
+     * 车端报告这次充电「已完成」（`chargeState=2`，且车还在原地）。
+     *
+     * 它只说明充到了车端认定的终点，**不含具体百分比**：健康充电上限设成 90% 时
+     * 车端同样报 2。所以卡上写「充到满电」，不写 100%。
+     */
+    val full: Boolean = false,
     /** true = 用户手动「从现在起算」；false = 观测到充电自动记的。 */
     val manual: Boolean = false,
     /**
@@ -33,6 +56,8 @@ data class ChargeAnchor(
         put("km", km)
         put("at", at)
         soc?.let { put("soc", it) }
+        socPeak?.let { put("socPeak", it) }
+        if (full) put("full", true)
         if (manual) put("manual", true)
         if (ended) put("ended", true)
     }
@@ -48,6 +73,8 @@ data class ChargeAnchor(
                 km = km,
                 at = at,
                 soc = raw.opt("soc")?.toString()?.toIntOrNull()?.takeIf { it in 0..100 },
+                socPeak = raw.opt("socPeak")?.toString()?.toIntOrNull()?.takeIf { it in 0..100 },
+                full = raw.optBoolean("full", false),
                 manual = raw.optBoolean("manual", false),
                 ended = raw.optBoolean("ended", false),
             )
@@ -73,7 +100,12 @@ sealed interface ChargeCycleUi {
         val km: Double,
         /** 起点时刻（毫秒）。 */
         val at: Long,
+        /** 「从 X% 充起」：第一次看见这次充电时的电量。 */
         val soc: Int?,
+        /** 「充到 Y%」：这次充电的满电电量；没观测到就 null。 */
+        val socPeak: Int?,
+        /** 车端确认这次充电已充到终点（具体百分比未知）。 */
+        val full: Boolean,
         /** true = 这个起点是用户手动指定的。 */
         val manual: Boolean,
     ) : ChargeCycleUi
@@ -106,8 +138,14 @@ sealed interface ChargeCycleUi {
  *     却能让「上午充一次、下午原地再插枪」也翻篇。
  *
  * ## 漏检
- * 整夜慢充、充完直接开走、期间一次都没打开过 App —— 这次充电就看不到了，起点会停在
- * 更早那次，数字偏大。这个没法从数据里补救（没有充电记录可查），所以：
+ * 充电期间一次都没拿到过车况（插枪前没打开过零控、充完直接开走）—— 这次充电就看不到了，
+ * 起点会停在更早那次，数字偏大。
+ *
+ * 中间那一段已经不需要人管了：充电时 [ChargeWatch] 每 10 分钟自动采一次，拔枪即停。
+ * 但**第一次**仍然得有人碰一下（打开 App / 点小组件）—— 没有常驻服务时，车端不可能
+ * 主动告诉手机「我刚插上枪」；要做成完全免操作就只剩常驻低频轮询，那是另一个决定。
+ *
+ * 剩下的漏检没法从数据里补救（没有充电记录可查），所以：
  * 卡片上永远写着「上次充电 X 月 X 日」让用户自己判断新鲜度，并提供一个
  * 「从现在起算」（[ChargeCycle] 之外由 UI 调 `restartChargeCycle`）把起点拉回当下。
  */
@@ -130,8 +168,16 @@ object ChargeCycle {
      */
     private const val MOVE_TOLERANCE_KM = 0.5
 
-    /** 状态 1 = 充电中，2 = 充电已完成（见 ChargeStatus）。 */
-    private const val STATE_CHARGING = 1
+    /**
+     * 正在往电池里灌电的状态：`1` 交流 / 常规充电中、`5` 直流快充中。
+     *
+     * `5` 是上游与 [com.leapcontrol.app.ChargeStatus.isGunConnected] 都认的「直流充电中」。
+     * 以前这里只认 `1`，结果**直流快充全程记不到起点**：车端报 5 的车型永远停在上一次
+     * 交流慢充，卡片上的里程越攒越大。这是 2026-11-03 全面检查时补上的。
+     */
+    private val CHARGING_STATES = setOf(1, 5)
+
+    /** 状态 2 = 充电已完成（见 ChargeStatus）。 */
     private const val STATE_DONE = 2
 
     fun isUsableKm(km: Double?): Boolean =
@@ -153,31 +199,73 @@ object ChargeCycle {
         // 读不到充电状态：判断不了这次观测属于哪一次充电，什么都别动
         if (chargeState == null) return null
 
-        // ① 没在充电（0 未插枪 / 3 故障 / 4 预约等待 / 6 暂停）：只盖「已结束」的戳。
+        // 「车还停在充电那一格」：充电时车不动，所以里程差在容差内就等于还在充电位上。
+        // 读不到里程就当它动过 —— 宁可缺着，也不能把行驶后的电量写成充到的电量。
+        val km = totalKm?.takeIf { isUsableKm(it) }
+        val parked = km != null && anchor != null && abs(km - anchor.km) <= MOVE_TOLERANCE_KM
+
+        // ① 没在充电（0 未插枪 / 3 故障 / 4 预约等待 / 6 暂停）：盖「已结束」的戳。
         //    4 也归这一类 —— 预约等待结束、真正开始充电，那就是新的一次。
-        if (chargeState != STATE_CHARGING && chargeState != STATE_DONE) {
+        //    这一格同时是「充到多少」的定格时机：充电停了、车没动，此刻电量就是充完那一格。
+        if (chargeState !in CHARGING_STATES && chargeState != STATE_DONE) {
             if (anchor == null || anchor.ended) return null
-            return anchor.copy(ended = true)
+            val ended = anchor.copy(ended = true)
+            return raiseChargeLevel(ended, soc, reachedFull = false, parked = parked) ?: ended
         }
 
         // ② 读不到总里程：宁可留着旧起点，也不写一个瞎猜的
-        val km = totalKm?.takeIf { isUsableKm(it) } ?: return null
+        if (km == null) return null
 
         // ③ 这次观测还算不算「同一次充电」
         val sameSession = anchor != null && !anchor.ended &&
             abs(anchor.km - km) <= MOVE_TOLERANCE_KM &&
             now - anchor.at < SAME_SESSION_MS
 
-        if (chargeState == STATE_CHARGING) {
-            // 充电中车一定停着：里程变了就是另一次充电，时间隔久了也翻篇
-            return if (sameSession) null else ChargeAnchor(km = km, at = now, soc = soc)
+        if (chargeState in CHARGING_STATES) {
+            // 充电中车一定停着：里程变了就是另一次充电，时间隔久了也翻篇。
+            // 新的一次先不填「充到多少」（还没充完，照着此刻写只会低估），
+            // 同一次则把观测到的最高电量抬上去 —— 采样由 ChargeWatch 在充电期间自动完成。
+            return if (sameSession) {
+                raiseChargeLevel(anchor!!, soc, reachedFull = false, parked = true)
+            } else {
+                ChargeAnchor(km = km, at = now, soc = soc)
+            }
         }
 
-        // ④ state=2 会残留到拔枪之后，甚至车已经开走
-        if (anchor == null) return ChargeAnchor(km = km, at = now, soc = soc)
+        // ④ state=2 会残留到拔枪之后，甚至车已经开走。
+        //    只看见「已充满」时从多少充起的无从得知 —— 只填「充到多少」，别拿它冒充起点。
+        if (anchor == null) {
+            return ChargeAnchor(km = km, at = now, socPeak = soc, full = true)
+        }
         // 车明确开过一段 → 这条「已充满」是残影，此刻的里程不是充电时那一格
         if (km > anchor.km + MOVE_TOLERANCE_KM) return null
-        return if (sameSession) null else ChargeAnchor(km = km, at = now, soc = soc)
+        if (!sameSession) return ChargeAnchor(km = km, at = now, socPeak = soc, full = true)
+        // 同一次充电的「已充满」：车没动过，此刻电量就是充到的那格，同时记下「到顶了」
+        return raiseChargeLevel(anchor, soc, reachedFull = true, parked = true)
+    }
+
+    /**
+     * 把「这次充到多少」往上报到观测到的最高电量，并记下「车端说到顶了」。
+     *
+     * 只在**车还停在充电那一格**时才写：充电时车不动，那里的电量只可能是充上去的；
+     * 一旦开走过，之后的电量已经是行驶后的了，写进来就把两件事串了。
+     *
+     * @return 有变化时返回新锚点；没变化返回 null（调用方据此省掉一次写盘）。
+     */
+    private fun raiseChargeLevel(
+        anchor: ChargeAnchor,
+        soc: Int?,
+        reachedFull: Boolean,
+        parked: Boolean,
+    ): ChargeAnchor? {
+        if (!parked) return null
+        var next = anchor
+        val peak = anchor.socPeak
+        if (soc != null && soc in 0..100 && (peak == null || soc > peak)) {
+            next = next.copy(socPeak = soc)
+        }
+        if (reachedFull && !anchor.full) next = next.copy(full = true)
+        return if (next == anchor) null else next
     }
 
     /**
@@ -191,6 +279,13 @@ object ChargeCycle {
         if (!isUsableKm(currentKm)) return ChargeCycleUi.NoKm
         val km = (currentKm ?: return ChargeCycleUi.NoKm) - anchor.km
         if (km < 0.0) return ChargeCycleUi.NoAnchor
-        return ChargeCycleUi.Ready(km = km, at = anchor.at, soc = anchor.soc, manual = anchor.manual)
+        return ChargeCycleUi.Ready(
+            km = km,
+            at = anchor.at,
+            soc = anchor.soc,
+            socPeak = anchor.socPeak,
+            full = anchor.full,
+            manual = anchor.manual,
+        )
     }
 }

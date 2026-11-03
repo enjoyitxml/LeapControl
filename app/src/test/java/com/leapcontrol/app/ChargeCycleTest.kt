@@ -5,6 +5,8 @@ import com.leapcontrol.app.journal.ChargeCycle
 import com.leapcontrol.app.journal.ChargeCycleUi
 import com.leapcontrol.app.journal.JournalCardId
 import com.leapcontrol.app.journal.JournalCardLayout
+import com.leapcontrol.app.ui.chargeLevelLine
+import com.leapcontrol.app.ui.chargeLines
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -51,8 +53,13 @@ class ChargeCycleTest {
             totalKm = 12_000.4,
             now = now + hour,
         )
-        // 里程没变、还在 6 小时内 → 是同一场充电，不该把起点时间越推越晚
-        assertNull(again)
+        // 里程没变、还在 6 小时内 → 是同一场充电，起点里程和时刻都不能被推着走
+        assertNotNull(again)
+        assertEquals(12_000.0, again!!.km, 0.001)
+        assertEquals(now, again.at)
+        assertEquals(20, again.soc)
+        // 变的只有「充到多少」：充电中看到的电量是充上去的
+        assertEquals(55, again.socPeak)
     }
 
     @Test
@@ -139,7 +146,11 @@ class ChargeCycleTest {
         val first = ChargeAnchor(km = 12_000.0, at = now, soc = 20)
         // 表显 0.1 的分辨率，充电时车停着，差 0.2 属于显示抖动
         val again = ChargeCycle.observe(first, 1, 55, 12_000.2, now + hour)
-        assertNull(again)
+        assertNotNull(again)
+        assertEquals(12_000.0, again!!.km, 0.001)
+        assertEquals(now, again.at)
+        // 「充到多少」抬到 55 就到位了：同一个电量再看一眼不该再写一次盘
+        assertNull(ChargeCycle.observe(again, 1, 55, 12_000.2, now + 2 * hour))
     }
 
     @Test
@@ -174,6 +185,95 @@ class ChargeCycleTest {
         assertNull(ChargeCycle.observe(null, 1, 50, null, now))
         assertNull(ChargeCycle.observe(null, 1, 50, 0.0, now))
         assertNull(ChargeCycle.observe(null, 1, 50, Double.NaN, now))
+    }
+
+    // ---------------- 「充到多少」的观测 ----------------
+
+    /**
+     * 用户 2026-11-03 报的那单：从 19% 充到 89%，卡上却写「19% → 74%」。
+     *
+     * 74 是「现在」，19 是「第一次看见充电」—— 两端隔了一整段充电，箭头读起来
+     * 像「充到 74%」。根因是「充到多少」从来没被记过，显示时只好拿起点冒充。
+     */
+    @Test
+    fun `充电中看到电量上涨就把充到多少抬上去`() {
+        val start = ChargeAnchor(km = 12_000.0, at = now, soc = 19)
+        val climbed = ChargeCycle.observe(start, 1, 89, 12_000.0, now + hour)
+        assertNotNull(climbed)
+        assertEquals(19, climbed!!.soc)
+        assertEquals(89, climbed.socPeak)
+    }
+
+    @Test
+    fun `拔枪时车还在原地，那一刻的电量就是充到多少`() {
+        val start = ChargeAnchor(km = 12_000.0, at = now, soc = 19)
+        val ended = ChargeCycle.observe(start, 0, 89, 12_000.0, now + 3 * hour)
+        assertNotNull(ended)
+        assertTrue(ended!!.ended)
+        assertEquals(89, ended.socPeak)
+    }
+
+    @Test
+    fun `开走了才看到未充电，不能拿行驶后的电量当充到多少`() {
+        val start = ChargeAnchor(km = 12_000.0, at = now, soc = 19)
+        // 充到 89%，但期间一次都没打开过零控；现在开出来 6 公里，电量掉到 74%
+        val ended = ChargeCycle.observe(start, 0, 74, 12_006.0, now + 3 * hour)
+        assertNotNull(ended)
+        assertTrue(ended!!.ended)
+        // 宁可缺着，也不能写成「充到 74%」
+        assertNull(ended.socPeak)
+    }
+
+    @Test
+    fun `充到多少只涨不跌，掉回去的电量不改写`() {
+        val start = ChargeAnchor(km = 12_000.0, at = now, soc = 19, socPeak = 89)
+        val drained = ChargeCycle.observe(start, 0, 74, 12_000.0, now + 5 * hour)
+        assertNotNull(drained)
+        assertTrue(drained!!.ended)
+        assertEquals(89, drained.socPeak)
+    }
+
+    @Test
+    fun `已完成状态当起点时只知道充到多少`() {
+        val anchor = ChargeCycle.observe(null, 2, 89, 12_500.0, now)
+        assertNotNull(anchor)
+        // 只看见「已充满」，从多少充起的没观测到 —— 缺着，别拿 89 冒充
+        assertNull(anchor!!.soc)
+        assertEquals(89, anchor.socPeak)
+        // 车端说充到终点了：卡上可以写「充至满电」，但绝不写 100%
+        assertTrue(anchor.full)
+    }
+
+    /**
+     * 直流快充（state=5）以前被当成「没在充电」，起点一路不更新 —— 快充车型上
+     * 卡片会一直累计到上一次交流慢充。这是 2026-11-03 全面检查时发现的。
+     */
+    @Test
+    fun `直流快充也要记起点和充到多少`() {
+        val anchor = ChargeCycle.observe(null, 5, 30, 12_000.0, now)
+        assertNotNull(anchor)
+        assertEquals(12_000.0, anchor!!.km, 0.001)
+        val climbed = ChargeCycle.observe(anchor, 5, 80, 12_000.0, now + hour)
+        assertEquals(80, climbed!!.socPeak)
+        // 也不该被当成「已结束」去盖戳
+        assertTrue(!climbed.ended)
+    }
+
+    @Test
+    fun `车停在原地看到已充满时记下到顶`() {
+        val start = ChargeAnchor(km = 12_000.0, at = now, soc = 19, socPeak = 88)
+        val done = ChargeCycle.observe(start, 2, 90, 12_000.0, now + 3 * hour)
+        assertNotNull(done)
+        assertEquals(90, done!!.socPeak)
+        assertTrue(done.full)
+        assertTrue(!done.ended)
+    }
+
+    @Test
+    fun `车已开走时那条已充满是残影，不认`() {
+        val start = ChargeAnchor(km = 12_000.0, at = now, soc = 19, socPeak = 88)
+        val stale = ChargeCycle.observe(start, 2, 60, 12_040.0, now + 5 * hour)
+        assertNull(stale)
     }
 
     // ---------------- 展示 ----------------
@@ -215,6 +315,14 @@ class ChargeCycleTest {
         // 「已结束」这个戳必须一起存下来，否则重启后第二次充电又会白算
         val ended = ChargeAnchor(km = 12_345.6, at = now, soc = 42, ended = true)
         assertEquals(ended, ChargeAnchor.fromJson(JSONObject(ended.toJson().toString())))
+        // 「充到多少」也要存得住；旧版存的记录没这个字段，读出来是 null 而不是崩
+        val withPeak = ChargeAnchor(km = 12_345.6, at = now, soc = 19, socPeak = 89)
+        assertEquals(withPeak, ChargeAnchor.fromJson(JSONObject(withPeak.toJson().toString())))
+        val legacy = JSONObject().put("km", 12_345.6).put("at", now).put("soc", 19)
+        assertEquals(null, ChargeAnchor.fromJson(legacy)!!.socPeak)
+        // 「车端说充满」也要存得住
+        val full = ChargeAnchor(km = 12_345.6, at = now, soc = 19, full = true)
+        assertEquals(full, ChargeAnchor.fromJson(JSONObject(full.toJson().toString())))
     }
 
     @Test
@@ -232,5 +340,67 @@ class ChargeCycleTest {
         // 零记概览不该再出现第二份同样的数字
         assertTrue(JournalCardId.entries.none { it.name == "CHARGE_CYCLE" })
         assertTrue(HomeCardId.entries.any { it == HomeCardId.CHARGE_CYCLE })
+    }
+
+    // ---------------- 卡片上的电量行 ----------------
+
+    @Test
+    fun `卡上要同时说清充到多少和目前多少`() {
+        assertEquals(listOf("充 19% → 89%", "余 74%"), chargeLines(from = 19, to = 89, now = 74))
+    }
+
+    @Test
+    fun `没观测到充到多少时只写目前，不拿起点冒充`() {
+        // 这正是用户报的那单：19% 充到 89%，卡上却写 19% → 74%
+        assertEquals(listOf("余 74%"), chargeLines(from = 19, to = null, now = 74))
+    }
+
+    @Test
+    fun `只看得见充到多少时写充至`() {
+        assertEquals(listOf("充至 89%", "余 74%"), chargeLines(from = null, to = 89, now = 74))
+        assertEquals(listOf("充至 89%", "余 74%"), chargeLines(from = 89, to = 89, now = 74))
+    }
+
+    @Test
+    fun `三个数都缺时整块留空`() {
+        assertEquals(emptyList<String>(), chargeLines(from = null, to = null, now = null))
+    }
+
+    @Test
+    fun `只知道车端说充满时写满电，不写 100%`() {
+        assertEquals(listOf("充至满电", "余 74%"), chargeLines(from = 19, to = null, now = 74, full = true))
+    }
+
+    @Test
+    fun `有具体电量时以数字为准，不叠加满电二字`() {
+        assertEquals(
+            listOf("充 19% → 89%", "余 74%"),
+            chargeLines(from = 19, to = 89, now = 74, full = true),
+        )
+    }
+
+    @Test
+    fun `弹层把三个数说全`() {
+        assertEquals(
+            "上次充电从 19% 充到 89%，目前 74%。",
+            chargeLevelLine(ChargeAnchor(km = 12_000.0, at = now, soc = 19, socPeak = 89), 74),
+        )
+    }
+
+    @Test
+    fun `弹层在充到多少缺失时说清为什么`() {
+        assertEquals(
+            "目前 74%。这次充到多少没记上：充电期间零控每 10 分钟自动记一次，" +
+                "连不上车（没网、或后台被系统清理）就会缺这一格。",
+            chargeLevelLine(ChargeAnchor(km = 12_000.0, at = now, soc = 19), 74),
+        )
+    }
+
+    @Test
+    fun `弹层在只知道充满时说充满`() {
+        assertEquals(
+            "上次充电车端报充满，目前 74%。",
+            chargeLevelLine(ChargeAnchor(km = 12_000.0, at = now, soc = 19, full = true), 74),
+        )
     }
 }

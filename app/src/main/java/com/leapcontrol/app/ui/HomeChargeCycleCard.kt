@@ -37,14 +37,18 @@ import com.leapcontrol.app.journal.JournalDates
  * 之后拿当前里程一减，就是这段时间跑的路。判定细节见 [ChargeCycle]。
  *
  * ## 为什么要有「从现在起算」
- * 观测式的短板是漏检：整夜慢充、充完直接开走、期间一次没打开 App，这次充电就看不见，
- * 起点会停在上一次，数字只会偏大。这个漏检没法从数据里补回来（没有充电记录可查），
- * 所以点进弹层给一个把起点拉回当下的按钮 —— 比让用户盯着一个越来越离谱的数强。
+ * 观测式的短板是漏检：零控一头一尾都没赶上（插枪前没打开过、充完直接开走），这次充电就看不见，
+ * 起点会停在上一次，数字只会偏大。充电期间 [com.leapcontrol.app.journal.ChargeWatch]
+ * 每 10 分钟自动看一眼，已经把「整夜慢充没人管」这类情况补上了；但**第一次**还是得
+ * 有人打开过 —— 没有常驻服务，车端不可能主动告诉手机「我刚插上枪」。
+ * 剩下的漏检没法从数据里补回来（没有充电记录可查），所以点进弹层给一个把起点拉回当下的
+ * 按钮 —— 比让用户盯着一个越来越离谱的数强。
  *
  * ## 版式（左右分栏）
- * 左栏是主数字「128.4 km / 真实行驶」，右栏是「3 天 / 82% → 46%」，中间一条 1dp 竖线；
- * 顶部标题行右侧只放日期。和旧版相比去掉了数字右边那句「自上次充电」——
- * 标题已经说了，重复一次反而把主数字挤小。
+ * 左栏是主数字「128.4 km / 真实行驶」，右栏是「3 天 / 充 82% → 91% / 余 46%」，中间一条 1dp 竖线；
+ * 顶部标题行右侧只放日期。右栏的电量分两行，因为「充到多少」和「目前多少」是两件事 ——
+ * 挤成一行「82% → 46%」会被读成「从 82 充到 46」，正是用户报过的那个错。
+ * 和旧版相比去掉了数字右边那句「自上次充电」—— 标题已经说了，重复一次反而把主数字挤小。
  */
 @Composable
 fun HomeChargeCycleCard(
@@ -160,11 +164,16 @@ fun HomeChargeCycleCard(
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                 )
-                val trail = socTrail(ready.soc, soc)
-                if (trail != null) {
-                    Spacer(Modifier.height(6.dp))
+                val lines = chargeLines(
+                    from = ready.soc,
+                    to = ready.socPeak,
+                    now = soc,
+                    full = ready.full,
+                )
+                lines.forEachIndexed { index, line ->
+                    Spacer(Modifier.height(if (index == 0) 6.dp else 3.dp))
                     Text(
-                        text = trail,
+                        text = line,
                         color = C.textSecondary,
                         fontSize = 10.5.sp,
                         maxLines = 1,
@@ -207,10 +216,60 @@ private fun durationLabel(days: Long): String = when {
     else -> "$days 天"
 }
 
-/** 右栏第二行：电量变化。两个电量缺一个就不显示，不猜。 */
-private fun socTrail(from: Int?, to: Int?): String? {
-    if (from == null || to == null) return null
-    return "$from% → $to%"
+/**
+ * 右栏的电量行：**上次充电从多少充到多少，目前多少**。
+ *
+ * 三个数分两行写，因为它们说的是两件事：
+ * 「充 X% → Y%」说的是上次充电这件事，「余 Z%」说的是此刻。
+ *
+ * 拼不出来的时候宁可留空：整段充电期间一次都没打开过零控，就真的不知道充到多少，
+ * 这时只写「余 Z%」。拿起点电量冒充「充到多少」正是用户报的那个错
+ * （从 19% 充到 89%，卡上却写 19% → 74%，读起来像充到 74%）。
+ *
+ * 手动「从现在起算」的起点不是一次充电，只写「余 Z%」。
+ */
+internal fun chargeLines(from: Int?, to: Int?, now: Int?, full: Boolean = false): List<String> {
+    val out = mutableListOf<String>()
+    when {
+        to != null -> out += if (from != null && to > from) "充 $from% → $to%" else "充至 $to%"
+        // 只知道「车端说到顶了」、没抓到那一刻的具体电量：写「满电」，不拿 100% 冒认
+        full -> out += "充至满电"
+    }
+    if (now != null) out += "余 $now%"
+    return out
+}
+
+/**
+ * 弹层里把电量说全的一句：上次充电从多少充到多少、目前多少。
+ *
+ * 「充到多少」缺着时如实说缺着，并把原因和补救一起给出来 ——
+ * 这个值只在零控看见充电时才有，错过就没有别的地方可以补。
+ */
+internal fun chargeLevelLine(anchor: ChargeAnchor?, currentSoc: Int?): String? {
+    val from = anchor?.soc
+    val to = anchor?.socPeak
+    val full = anchor?.full == true
+    val now = currentSoc?.takeIf { it in 0..100 }
+    return when {
+        to != null && from != null && to > from && now != null ->
+            "上次充电从 $from% 充到 $to%，目前 $now%。"
+        to != null && from != null && to > from ->
+            "上次充电从 $from% 充到 $to%。"
+        to != null && now != null ->
+            "上次充电充到 $to%，目前 $now%。"
+        to != null ->
+            "上次充电充到 $to%。"
+        full && now != null ->
+            "上次充电车端报充满，目前 $now%。"
+        full ->
+            "上次充电车端报充满。"
+        now != null && anchor != null && !anchor.manual ->
+            "目前 $now%。这次充到多少没记上：充电期间零控每 10 分钟自动记一次，" +
+                "连不上车（没网、或后台被系统清理）就会缺这一格。"
+        now != null ->
+            "目前 $now%。"
+        else -> null
+    }
 }
 
 /** 底部那行：当天不写日均（分母是 0，写出来的数没意义）。 */
@@ -219,7 +278,8 @@ private fun footerText(km: Double, days: Long): String =
 
 /** 没有数字时，数字位置上的那句话。 */
 private fun emptyHint(ui: ChargeCycleUi): String = when (ui) {
-    ChargeCycleUi.NoAnchor -> "充电时打开一次零控，即可自动记录"
+    // 采样是自动的（ChargeWatch），这句话要说清「插上枪就行」，别让人以为得盯着 App
+    ChargeCycleUi.NoAnchor -> "插枪后零控会自动记下起点"
     else -> "刷新车况后显示"
 }
 
@@ -233,6 +293,7 @@ private fun emptyHint(ui: ChargeCycleUi): String = when (ui) {
 fun ChargeCycleSheet(
     anchor: ChargeAnchor?,
     currentKm: Double?,
+    currentSoc: Int?,
     onDismiss: () -> Unit,
     onRestart: () -> Unit,
 ) {
@@ -255,10 +316,28 @@ fun ChargeCycleSheet(
             fontSize = 11.sp,
             lineHeight = 17.sp,
         )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "充电期间零控每 10 分钟自动看一眼车况，把电量抬到看过的最高的那一格，" +
+                "快充满时缩到 3 分钟 —— 拔枪就停，平时不会去唤醒车。",
+            color = C.textSecondary,
+            fontSize = 11.sp,
+            lineHeight = 17.sp,
+        )
 
         if (anchor != null && current != null) {
             Spacer(Modifier.height(12.dp))
             ChargeCycleDiagram(anchor = anchor, currentKm = current)
+        }
+
+        chargeLevelLine(anchor, currentSoc)?.let { levelLine ->
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = levelLine,
+                color = C.textSecondary,
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+            )
         }
 
         Spacer(Modifier.height(11.dp))

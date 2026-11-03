@@ -53,6 +53,7 @@ import com.leapcontrol.app.UpdateCheckMode
 import com.leapcontrol.app.UpdateCheckPolicy
 import com.leapcontrol.app.UpdateCheckResult
 import com.leapcontrol.app.journal.BaiduAsr
+import com.leapcontrol.app.journal.ChargeWatch
 import com.leapcontrol.app.Vehicle
 import com.leapcontrol.app.VehicleChargePlan
 import com.leapcontrol.app.WeeklyEnergyData
@@ -272,6 +273,14 @@ data class CarStatus(
     val healthyChargeEnabled: Boolean? = null,
     val chargingPower: String? = null, // 充电功率，如 "7.2 kW"
     val chargeTimeLeft: String? = null, // 剩余充电时间，如 "1 小时 23 分"
+    /**
+     * 剩余充电分钟数（信号 1200 原值）。
+     *
+     * 与 [chargeTimeLeft] 是同一个信号的两种形态：那个给界面看，这个给
+     * [com.leapcontrol.app.journal.ChargeWatch] 决定采样间隔 —— 快充满时加密采样，
+     * 才抓得住「充到多少」的最后一格。
+     */
+    val chargeRemainMinutes: Int? = null,
     val chargeVoltage: String? = null, // 电压，如 "368 V"
     val chargeCurrent: String? = null, // 电流，如 "18.5 A"
     val batteryTemp: String? = null, // 电池温度，如 "28 °C"
@@ -791,6 +800,9 @@ class AppRuntime(context: Context) {
                 VehiclePlaceMemory.clear()
                 ParkingThumbMemory.clear()
                 resetLocationAnchor()
+                // 换车时把充电采样闹钟撤掉：它是给上一辆车的 VIN 排的，
+                // 留着会拿新车的账号去读旧车的充电状态
+                runCatching { ChargeWatch.cancel(appContext) }
                 // 小组件里的车模也要换掉：留着的话桌面上还是上一辆车的图
                 com.leapcontrol.app.widget.VehicleWidget.clearCarCache(appContext)
             }
@@ -821,6 +833,8 @@ class AppRuntime(context: Context) {
         // 停车位照片同理，而且它更直接：照片里常能看到车牌、车位号、甚至车库门牌
         ParkingPhotoStore.clear(appContext)
         ParkingThumbMemory.clear()
+        // 充电采样闹钟也要撤：登出后它再响也只是个没登录的空转
+        runCatching { ChargeWatch.cancel(appContext) }
         // 桌面小组件也要立刻变成「点此登录」，别把上一辆车的车况留在锁屏外
         com.leapcontrol.app.widget.VehicleWidget.clearCarCache(appContext)
         runCatching { com.leapcontrol.app.widget.VehicleWidget.render(appContext) }
@@ -1124,6 +1138,9 @@ class AppRuntime(context: Context) {
                 soc = status.soc,
                 totalKm = OwnershipStats.kmFromText(status.totalMileage),
             )
+            // 充电中续上采样闹钟（不在充电就撤掉）。这一发同时是「后台采样」的接线点：
+            // 所有拿车况的路径都走这里，闹钟响时也走这里，所以只需接一次。
+            ChargeWatch.reschedule(appContext, status.chargeState, status.chargeRemainMinutes)
         }
         // 同步给控制中心磁贴：用户在车里手动关掉的空调 / 后备箱，
         // 靠的就是这条新鲜报文把磁贴的高亮改回来（磁贴展开时直接读这里，不再发请求）
@@ -1357,6 +1374,8 @@ class AppRuntime(context: Context) {
             chargingPower = formatValue(pick(st, "chargingPower", "chargePower", "chargePowerKw"), "kW")
                 ?: ChargeStatus.electricalPower(batteryVoltageRaw, batteryCurrentRaw),
             chargeTimeLeft = parseChargeTimeLeft(st),
+            chargeRemainMinutes = pick(st, "chargeRemainTime", "1200")
+                ?.toString()?.trim()?.toIntOrNull()?.takeIf { it >= 0 },
             chargeVoltage = formatValue(batteryVoltageRaw, "V"),
             // 充电时 BMS 上报的电流是负数（-8.299），方向对用户没意义，界面统一显示绝对值
             chargeCurrent = formatValue(absoluteCurrent(batteryCurrentRaw), "A"),
@@ -2758,6 +2777,7 @@ class AppRuntime(context: Context) {
                 soc = status.soc,
                 totalKm = OwnershipStats.kmFromText(status.totalMileage),
             )
+            ChargeWatch.reschedule(appContext, status.chargeState, status.chargeRemainMinutes)
         }
         return status.chargeState
     }

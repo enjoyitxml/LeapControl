@@ -136,6 +136,14 @@
                 android:resource="@xml/widget_info" />
         </receiver>
 
+        <!--
+          充电期间的采样闹钟（journal/ChargeWatch）：只在 chargeState∈{1,5} 时存在，
+          拔枪即撤。用显式广播唤起自己，不导出，别的应用调不到。
+        -->
+        <receiver
+            android:name=".journal.ChargeSampleReceiver"
+            android:exported="false" />
+
         <!-- 蓝牙钥匙后台服务：连接车辆、维持无感解锁所需的 BLE 链路 -->
         <service
             android:name=".bluetooth.BleKeyService"
