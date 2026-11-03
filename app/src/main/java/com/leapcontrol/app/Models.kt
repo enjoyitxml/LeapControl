@@ -1075,6 +1075,25 @@ object Commands {
     const val QUICK_DEODORIZE_STATE =
         """{"operate":"manual","temperature":"24","windlevel":"7","mode":"nohotcold","circle":"out","wshld":"0","position":"all"}"""
 
+    /**
+     * 前挡除霜的候选参数组，按「最像真除霜」的顺序排。
+     *
+     * 为什么要多组：用户 2026-11-03 实测，按协议文档那条 defrost
+     * （cold / 24℃ / 5 挡 / position=wshld）下发后，车端把风量改成 5 挡、切成外循环，
+     * **唯独前挡没出风**，信号 1945 保持 0 —— 说明整组被车端执行了，只有除霜位被忽略。
+     * 而那条参数自称「强效加热除霜」却给 cold + 24℃，语义本就自相矛盾；
+     * 文档是照着源码反推的白皮书，没有抓包实证，所以只能按组合逐个试、逐个验证。
+     *
+     * 注意 `wshld` 不是除霜开关：acOn / quickCool / quickHeat 都带 `wshld=1`，
+     * 车端并不因此除霜。真正切换前挡出风的是 `position`。
+     */
+    val DEFROST_VARIANTS = listOf(
+        // ① 加热 + 最大风 + 只吹前挡：最接近车机上按「前除霜」的实际表现
+        """{"operate":"manual","temperature":"32","windlevel":"7","mode":"hot","circle":"out","wshld":"1","position":"wshld"}""",
+        // ② 同样的加热配置，出风方向给全车（上游 4.5.0 精细化面板的用法）
+        """{"operate":"manual","temperature":"32","windlevel":"7","mode":"hot","circle":"out","wshld":"1","position":"all"}""",
+    )
+
     fun build(name: String): ControlCommand = when (name) {
         "lock" -> ControlCommand("110", """{"value":"lock"}""", "上锁")
         "unlock" -> ControlCommand("110", """{"value":"unlock"}""", "解锁")
@@ -1094,7 +1113,7 @@ object Commands {
         "batteryPreheatOff" -> ControlCommand("160", """{"value":"ptcoff"}""", "电池预热关")
         "acOn" -> ControlCommand("170", AC_ON_STATE, "开空调")
         "acOff" -> ControlCommand("170", AC_OFF_STATE, "关空调")
-        "defrost" -> ControlCommand("170", """{"operate":"manual","temperature":"24","windlevel":"5","mode":"cold","circle":"out","wshld":"1","position":"wshld"}""", "开启除雾")
+        "defrost" -> ControlCommand("170", DEFROST_VARIANTS.first(), "开启前挡除霜")
         "quickCool" -> ControlCommand("170", QUICK_COOL_STATE, "极速降温")
         "quickHeat" -> ControlCommand("170", QUICK_HEAT_STATE, "极速升温")
         "deodorize" -> ControlCommand("170", QUICK_DEODORIZE_STATE, "快速除味")

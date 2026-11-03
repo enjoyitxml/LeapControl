@@ -114,12 +114,38 @@ class AcSettingCommandTest {
         val o = JSONObject(cmd.stateJson)
         assertEquals("170", cmd.cmdid)
         assertEquals("manual", o.getString("operate"))
-        assertEquals("cold", o.getString("mode"))
         assertEquals("out", o.getString("circle"))
         assertEquals("1", o.getString("wshld"))
         assertEquals("wshld", o.getString("position"))
         // 7 个字段一个都不能少：车端缺字段会按默认值重来
         assertEquals(7, o.length())
+    }
+
+    /**
+     * 用户 11-03 实测两轮：车端把风量改成 5 挡、切成外循环（说明整组 170 被执行了），
+     * 唯独前挡没出风、信号 1945 保持 0 —— 除霜位被忽略。而协议里那条 defrost
+     * 给的是 cold + 24℃，与它自己「强效加热除霜」的描述矛盾，且没有抓包实证。
+     * 所以改成按组合逐个试：只吹前挡 / 全车出风，都是加热 + 最大风。
+     */
+    @Test
+    fun `除霜候选组覆盖两种出风方向且都带除霜位`() {
+        val variants = Commands.DEFROST_VARIANTS
+        assertEquals(2, variants.size)
+        assertEquals(
+            listOf("wshld", "all"),
+            variants.map { JSONObject(it).getString("position") },
+        )
+        variants.forEach { state ->
+            val o = JSONObject(state)
+            assertEquals(7, o.length())
+            assertEquals("manual", o.getString("operate"))
+            assertEquals("1", o.getString("wshld"))
+            assertEquals("out", o.getString("circle"))
+            assertEquals("hot", o.getString("mode"))
+            assertEquals("7", o.getString("windlevel"))
+        }
+        // build("defrost") 下发的就是第一组，两条路径不能各说各话
+        assertEquals(variants.first(), Commands.build("defrost").stateJson)
     }
 
     @Test
