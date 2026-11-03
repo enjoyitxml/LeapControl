@@ -1074,11 +1074,6 @@ object Commands {
         """{"operate":"manual","temperature":"32","windlevel":"7","mode":"hot","circle":"in","wshld":"1","position":"all"}"""
     const val QUICK_DEODORIZE_STATE =
         """{"operate":"manual","temperature":"24","windlevel":"7","mode":"nohotcold","circle":"out","wshld":"0","position":"all"}"""
-    // 内外循环切换：保持空调运行（manual），仅切换 circle 字段
-    const val CIRCLE_IN_STATE =
-        """{"operate":"manual","temperature":"24","windlevel":"7","mode":"nohotcold","circle":"in","wshld":"0","position":"all"}"""
-    const val CIRCLE_OUT_STATE =
-        """{"operate":"manual","temperature":"24","windlevel":"7","mode":"nohotcold","circle":"out","wshld":"0","position":"all"}"""
 
     fun build(name: String): ControlCommand = when (name) {
         "lock" -> ControlCommand("110", """{"value":"lock"}""", "上锁")
@@ -1103,8 +1098,6 @@ object Commands {
         "quickCool" -> ControlCommand("170", QUICK_COOL_STATE, "极速降温")
         "quickHeat" -> ControlCommand("170", QUICK_HEAT_STATE, "极速升温")
         "deodorize" -> ControlCommand("170", QUICK_DEODORIZE_STATE, "快速除味")
-        "circleIn" -> ControlCommand("170", CIRCLE_IN_STATE, "切换内循环")
-        "circleOut" -> ControlCommand("170", CIRCLE_OUT_STATE, "切换外循环")
         "sentryOn" -> ControlCommand("400", """{"operation":"on"}""", "开启哨兵模式")
         "sentryOff" -> ControlCommand("400", """{"operation":"off"}""", "关闭哨兵模式")
         "startCharging" -> ControlCommand("193", """{"value":"start"}""", "开始充电")

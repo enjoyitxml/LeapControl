@@ -100,4 +100,66 @@ class AcSettingCommandTest {
         assertEquals("320", Commands.build("steeringWheelHeating_1").cmdid)
         assertEquals("440", Commands.build("rearviewMirrorHeating_on").cmdid)
     }
+
+    /**
+     * 除霜那一组参数逐字段钉死。
+     *
+     * 这是车端唯一认的组合：mode=cold 才会开压缩机除湿，circle=out 才不会把车内湿气
+     * 反复吹到玻璃上，wshld=1 + position=wshld 才同时点亮「除霜位」和「前挡出风」。
+     * 少一个字段车端就按默认值重置，用户看到的就是「开成了普通空调」。
+     */
+    @Test
+    fun `前挡除霜下发的是完整的除霜组`() {
+        val cmd = Commands.build("defrost")
+        val o = JSONObject(cmd.stateJson)
+        assertEquals("170", cmd.cmdid)
+        assertEquals("manual", o.getString("operate"))
+        assertEquals("cold", o.getString("mode"))
+        assertEquals("out", o.getString("circle"))
+        assertEquals("1", o.getString("wshld"))
+        assertEquals("wshld", o.getString("position"))
+        // 7 个字段一个都不能少：车端缺字段会按默认值重来
+        assertEquals(7, o.length())
+    }
+
+    @Test
+    fun `切换内外循环不会顺手改掉温度与风量`() {
+        // 空调中心页的循环按钮按当前车况整组合成，26℃ / 4 挡必须原样带下去；
+        // 老的 circleIn / circleOut 常量写死 24℃ / 7 挡，切个循环会把温度风量一起改掉。
+        val name = Commands.acSettingName(
+            op = "circle",
+            temperature = 26,
+            windLevel = 4,
+            mode = "cold",
+            circle = "out",
+            windshield = false,
+            position = "all",
+        )
+        val o = JSONObject(Commands.build(name).stateJson)
+        assertEquals("26", o.getString("temperature"))
+        assertEquals("4", o.getString("windlevel"))
+        assertEquals("out", o.getString("circle"))
+        assertEquals("cold", o.getString("mode"))
+        assertEquals("切到外循环", Commands.build(name).label)
+    }
+
+    @Test
+    fun `除霜状态下切循环会保留除霜位`() {
+        val o = JSONObject(
+            Commands.build(
+                Commands.acSettingName(
+                    op = "circle",
+                    temperature = 24,
+                    windLevel = 5,
+                    mode = "cold",
+                    circle = "in",
+                    windshield = true,
+                    position = "wshld",
+                )
+            ).stateJson
+        )
+        assertEquals("in", o.getString("circle"))
+        assertEquals("1", o.getString("wshld"))
+        assertEquals("wshld", o.getString("position"))
+    }
 }

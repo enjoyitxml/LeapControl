@@ -13,6 +13,24 @@ object VehicleSignals {
 
     fun locked(values: Map<String, Any?>): Boolean? = locked(values["driverDoorLockStatus"])
 
+    /**
+     * 三态布尔解析：`true/false`、`1/0`、`"1"/"0"` 都认，缺失或无法解析 → null。
+     *
+     * 车端的开关类信号（除霜、加热…）在不同车型上既有数字也有字符串，
+     * 而且**缺信号不等于关着**，所以这里宁可返回 null 让 UI 不显示，
+     * 也不要猜成 false。
+     */
+    fun bool(value: Any?): Boolean? = when (value) {
+        is Boolean -> value
+        is Number -> value.toInt() != 0
+        is String -> when (value.trim().lowercase()) {
+            "true", "1", "on", "open", "opened" -> true
+            "false", "0", "off", "close", "closed" -> false
+            else -> null
+        }
+        else -> null
+    }
+
     /** 返回开着的那几扇车窗的名称，用于锁车后的安全提醒。 */
     fun openWindowLabels(status: JSONObject, carType: String? = null): List<String> =
         openWindowLabels { key -> status.opt(key) }
@@ -92,8 +110,7 @@ object VehicleSignals {
         else -> false
     }
 
-    private fun locked(value: Any?): Boolean? = when (value) {
-        is Boolean -> value
+    private fun locked(value: Any?): Boolean? = when (value) {        is Boolean -> value
         is Number -> value.toInt() != 0
         is String -> when (value.trim().lowercase()) {
             "true", "1", "locked", "lock" -> true

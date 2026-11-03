@@ -76,6 +76,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -106,6 +107,21 @@ private const val CONTROL_RESULT_MAX_WAIT_MS = 20_000L
  * 就走 [AppRuntime.control] 里那段「回读车况再判定」的兜底，不再死等。
  */
 private const val AC_RESULT_MAX_WAIT_MS = 8_000L
+
+/**
+ * 「前挡除霜」前置开机的等待时间。
+ *
+ * 除霜必须在空调运行中才生效，而车端对同一 cmdid 连发会回「系统繁忙」，
+ * 所以先发开机、等车端把这条处理掉（实测 1~2 秒）再发除霜参数。
+ * 短了会被限流丢掉除霜那条，长了用户要干等，1.5 秒是两者之间的取值。
+ */
+private const val DEFROST_PRECONDITION_MS = 1_500L
+
+/** 除霜下发后第一次回读除霜位前的等待：车端从受理到真正打开大约 2~5 秒。 */
+private const val DEFROST_CONFIRM_DELAY_MS = 2_000L
+
+/** 第一次没读到「已开启」时的二次回读间隔。 */
+private const val DEFROST_CONFIRM_GAP_MS = 2_000L
 /** 里程 / 能耗缓存有效期：15 分钟。老服务限频，不必每次进首页都打一次。 */
 private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
 
@@ -216,6 +232,15 @@ data class CarStatus(
     val acPosition: String? = null,
     /** 冷热模式（acSetting.mode）：cold / hot / nohotcold。调风量、风向时要原样带下去。 */
     val acMode: String? = null,
+    /**
+     * 前挡除霜是否开启（信号 1945 windshieldDefrost）。
+     *
+     * 与 [acPosition] 是两个不同的东西：**除霜位**（wshld）负责化霜，
+     * **出风方向**（position）只决定风从哪儿吹。车端可以「前挡出风但不除霜」，
+     * 所以判断「除霜到底开没开」只能用这个字段，不能拿 position 顶替。
+     * null = 车端没上报，UI 不高亮。
+     */
+    val windshieldDefrost: Boolean? = null,
     /** 后备箱是否开启（信号缺失时为 null，不允许猜测成已关）。 */
     val trunkOpen: Boolean? = null,
     /** 是否有车窗未关（信号缺失时为 null）。 */
@@ -1261,6 +1286,8 @@ class AppRuntime(context: Context) {
             acMode = acSetting["mode"]?.trim()?.takeIf {
                 it in com.leapcontrol.app.Commands.AC_MODES
             },
+            // 除霜位单独取信号 1945：acSetting 里没有这个字段，只有 wshld（请求侧的名字）
+            windshieldDefrost = VehicleSignals.bool(pick(st, "windshieldDefrost", "1945")),
             trunkOpen = parseTrunkOpen(st),
             windowOpen = parseWindowOpen(st, session.selectedCarType),
             sunshadeOpen = parseSunshadeOpen(st),
@@ -2276,6 +2303,17 @@ class AppRuntime(context: Context) {
     ): String = withContext(Dispatchers.IO) {
         val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
         val api = LeapmotorApi(session)
+        // 前挡除霜是「空调运行中」的一个子动作，不能当普通开机指令用。
+        // 实测（用户 11-03 反馈）：空调关着时只发这一条 manual + wshld=1，
+        // 车端只把 operate 当「开机」执行，wshld / position 被丢弃 ——
+        // 上车看到的是 auto 24℃ 2 挡内循环全车出风的普通空调，除霜根本没开。
+        // 所以先确保空调在运行，再单独下发除霜那一组参数。
+        if (commandName == "defrost" && statusFlow.value?.acOn != true) {
+            // 开机失败不阻断：除霜那条本身也带 manual，车端仍可能自己开机
+            runCatching { withNetworkRetry { api.sendControl(Commands.build("acOn"), pin) } }
+            // 同 cmdid 连发会撞网关「系统繁忙」，留出车端处理上一条的时间
+            delay(DEFROST_PRECONDITION_MS)
+        }
         val command = if (presetAcTemperature != null) {
             Commands.buildAc(presetAcTemperature)
         } else {
@@ -2301,10 +2339,21 @@ class AppRuntime(context: Context) {
             val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull() ?: continue
             val code = firstResultCode(resp)
             if (code != null) lastCode = code
-            if (code == "0" || code == "200") return@withContext "${command.label}执行成功"
+            if (code == "0" || code == "200") {
+                // 除霜不能只看网关回执：结果码 0 只代表云端受理，车端有可能把它当成
+                // 一条普通开机执行（除霜位被丢掉）。回读信号 1945 再说结论，
+                // 免得又一次「提示已开启、上车发现没开」。
+                if (commandName == "defrost") {
+                    return@withContext confirmDefrost(api, suffix = "")
+                }
+                return@withContext "${command.label}执行成功"
+            }
         }
         // 超时或结果码不可解析：回读一次车况做二次判定，避免谎报成功
         val suffix = lastCode?.let { "（车端结果码 $it）" }.orEmpty()
+        if (commandName == "defrost") {
+            return@withContext confirmDefrost(api, suffix)
+        }
         if (commandName == "acOn" || commandName == "acOff" || presetAcTemperature != null) {
             val stillOn = runCatching { parseAcOn(api.getVehicleState()) }.getOrNull()
             val turnedOn = presetAcTemperature != null || commandName == "acOn"
@@ -2316,6 +2365,36 @@ class AppRuntime(context: Context) {
             }
         }
         "指令已下发$suffix，请在车辆上确认执行结果"
+    }
+
+    /**
+     * 前挡除霜的结果确认。
+     *
+     * 网关回 `result=0` 只说明云端受理了，**不代表车端打开了除霜位**：
+     * 空调关着的时候，车端会把这条 manual 指令当「开机」执行，`wshld` / `position`
+     * 被丢掉 —— 用户看到的就是「点除霜，结果只开了普通空调」。
+     * 所以这里必须回读信号 1945（windshieldDefrost）再下结论：
+     * - 读到 true → 已开启；
+     * - 读到 false（等了两轮都没翻上来）→ 明确告诉用户车端没进入除霜；
+     * - 读不到（车型不上报这个信号）→ 说清楚「未上报」，不猜成功也不猜失败。
+     */
+    private suspend fun confirmDefrost(api: LeapmotorApi, suffix: String): String {
+        suspend fun readSignal(): Boolean? = runCatching {
+            VehicleSignals.bool(pick(api.getVehicleState(), "windshieldDefrost", "1945"))
+        }.getOrNull()
+
+        delay(DEFROST_CONFIRM_DELAY_MS)
+        when (readSignal()) {
+            true -> return "前挡除霜已开启"
+            null -> return "除霜指令已下发$suffix，本车未上报除霜状态"
+            false -> Unit
+        }
+        delay(DEFROST_CONFIRM_GAP_MS)
+        return when (readSignal()) {
+            true -> "前挡除霜已开启"
+            null -> "除霜指令已下发$suffix，本车未上报除霜状态"
+            false -> "除霜指令已下发$suffix，但车端未进入除霜状态，请在车上确认"
+        }
     }
 
     /**

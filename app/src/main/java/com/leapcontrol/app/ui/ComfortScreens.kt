@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import kotlin.math.cos
 import kotlin.math.sin
 import com.leapcontrol.app.AcSwitchIntent
+import com.leapcontrol.app.Commands
 import com.leapcontrol.app.FridgeControlCommand
 import com.leapcontrol.app.FridgeMode
 import com.leapcontrol.app.FridgeStyle
@@ -682,6 +683,13 @@ fun ClimateScreen(
         Spacer(Modifier.height(8.dp))
         SectionCard("内外循环") {
             val circleIn = status?.acCircle?.contains("内") == true
+            // 170 是整组下发：车端没有「只换循环」的单字段指令，所以其余字段必须
+            // 按当前车况原样带上。老的 circleIn / circleOut 常量写死了 24℃ / 7 挡 /
+            // 全车出风 —— 用户只是切个内外循环，温度和风量就被一起改掉了。
+            val acTemp = AcTempDraft.parse(status?.acTargetTemp) ?: Commands.DEFAULT_AC_TEMPERATURE
+            val acWind = status?.acWindLevel?.trim()?.toIntOrNull()
+                ?.coerceIn(Commands.MIN_AC_WIND_LEVEL, Commands.MAX_AC_WIND_LEVEL) ?: 2
+            val acWindshield = status?.acPosition == "wshld"
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 listOf(true to "内循环", false to "外循环").forEach { (value, text) ->
                     val selected = if (value) circleIn else status?.acCircle?.contains("外") == true
@@ -692,7 +700,17 @@ fun ClimateScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .background(if (selected) C.chipBgActive else C.chipBg)
                             .clickable(enabled = !busy) {
-                                onCommand(if (value) "circleIn" else "circleOut")
+                                onCommand(
+                                    Commands.acSettingName(
+                                        op = "circle",
+                                        temperature = acTemp,
+                                        windLevel = acWind,
+                                        mode = status?.acMode ?: "nohotcold",
+                                        circle = if (value) "in" else "out",
+                                        windshield = status?.windshieldDefrost == true,
+                                        position = if (acWindshield) "wshld" else "all",
+                                    ),
+                                )
                             },
                         contentAlignment = Alignment.Center,
                     ) {

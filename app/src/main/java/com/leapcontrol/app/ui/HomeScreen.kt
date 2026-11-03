@@ -127,6 +127,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.collectAsState
 import com.leapcontrol.app.AcSwitchIntent
+import com.leapcontrol.app.Commands
 import com.leapcontrol.app.ChargePlanCyclesHelper
 import com.leapcontrol.app.ChargeSchedule
 import com.leapcontrol.app.EnergyFormat
@@ -684,13 +685,41 @@ fun HomeScreen(
             }
         }
 
-        /** 空调模块：按指定温度下发空调指令（参考原项目 Commands.buildAc）。 */
+        /**
+         * 空调模块：按指定温度下发。
+         *
+         * 车端没有「只调温度」的指令，170 每次都要带全套参数（见 [Commands.acSettingName]）。
+         * 以前这里统一发 [Commands.buildAc] —— 那是一条写死「7 挡 / 内循环 / 全车出风 /
+         * 除霜关」的预设：空调开着调 1℃，风量会被顶到 7 挡、除霜被顺手关掉。
+         * 现在只在「空调关着」时才把它当开机指令用；开着时按当前车况整组合成，
+         * 只改温度和冷热模式，其余原样带下去。
+         */
         fun runAcTemperature(temp: Int, onFailed: (() -> Unit)? = null) {
             scope.launch {
                 controlling = "acTemp"
                 actionMessage = null
                 try {
-                    actionMessage = runtime.control("acOn", presetAcTemperature = temp)
+                    val live = status
+                    actionMessage = if (acOnNow) {
+                        val wind = live?.acWindLevel?.trim()?.toIntOrNull()
+                            ?.coerceIn(Commands.MIN_AC_WIND_LEVEL, Commands.MAX_AC_WIND_LEVEL) ?: 2
+                        runtime.control(
+                            Commands.acSettingName(
+                                op = "temperature",
+                                temperature = temp,
+                                windLevel = wind,
+                                // 冷热模式跟温度走：27℃ 以上才是制热，沿用旧模式会出现
+                                // 「设了 30℃ 还在吹冷风」
+                                mode = if (temp >= 27) "hot" else "cold",
+                                circle = if (live?.acCircle?.contains("外") == true) "out" else "in",
+                                windshield = live?.windshieldDefrost == true,
+                                position = if (live?.acPosition == "wshld") "wshld" else "all",
+                            ),
+                        )
+                    } else {
+                        // 空调关着：这条本身就是「开机 + 设定温度」
+                        runtime.control("acOn", presetAcTemperature = temp)
+                    }
                     refresh(force = true)
                 } catch (e: NeedPinException) {
                     pendingAcTemp = temp

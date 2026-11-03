@@ -388,6 +388,9 @@ fun AcScreen(
                 glyph = AcGlyph.Defrost,
                 label = "前挡除霜",
                 modifier = Modifier.weight(1f),
+                // 高亮跟随车端的除霜位（信号 1945），不是出风方向：
+                // 以前这里没有任何反馈，用户点完只能靠上车看，开没开全靠猜。
+                active = status?.windshieldDefrost == true,
                 enabled = !busy,
                 onClick = { onCommand("defrost", null) },
             )
