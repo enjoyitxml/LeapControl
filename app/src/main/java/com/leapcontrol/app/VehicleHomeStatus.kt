@@ -145,19 +145,29 @@ object VehicleHomeStatus {
 
     /**
      * 判断车辆是否处于已下电、已熄火或离车闭锁驻车状态：
-     * 1. 车辆处于闭锁状态（locked == true）说明车主已锁车离开；
-     * 2. BCM电源状态为OFF（bcmKeyPositionOn3 == 0 / false）；
-     * 3. 整车状态为非运行中（vehicleState in 0, 1, 3）；
-     * 4. 电子手刹/驻车制动已拉起（parkingBrakeState == 1）。
+     * 1. BCM 电源状态为 OFF（bcmKeyPositionOn3 == 0 / false）—— 最强的「人已离车」信号；
+     * 2. 电子手刹 / 驻车制动已拉起（parkingBrakeState == 1）；
+     * 3. 车辆已闭锁（locked == true），**但挂 D / R 挡时不算** —— 见下方「行车自动落锁」。
+     *
+     * ## 为什么不采信 vehicleState(1944)
+     * API 文档（`API/API.md`）写得很明确：`1`=Ready/行车状态，`0`=下电休眠。
+     * 但上游 `isVehicleShutDown` 把 `0/1/3` 全当下电、`2` 当运行，与文档正好相反。
+     * 2026-11-04 用户反馈「车在行驶中，胶囊却显示已驻车」就是这条引起的：
+     * 行驶时车端报 `1`，被判成下电，状态胶囊跟着说「已驻车」。
+     * 所以这里只认文档明确的 `0`（下电休眠），`1` 与其它未知值一律不当成下电。
+     *
+     * ## 行车自动落锁
+     * 绝大多数车起步后会自动上锁（`driverDoorLockStatus` 变 1），此时人明明在车上开着车，
+     * 若把「已闭锁」直接当成离车，行驶中就会被说成「已驻车」—— 这正是同一个反馈的另一半原因。
+     * 所以挂 D / R 挡时跳过闭锁这一条：挡位说车在动，就不可能是人锁车走了。
      */
     fun isVehicleShutDown(
         bcmKeyPositionOn3: Any? = null,
         vehicleState: Any? = null,
         parkingBrakeState: Any? = null,
-        locked: Boolean? = null
+        locked: Boolean? = null,
+        gearStatus: String? = null
     ): Boolean {
-        if (locked == true) return true
-
         if (bcmKeyPositionOn3 != null && bcmKeyPositionOn3 != JSONObject.NULL) {
             val raw = bcmKeyPositionOn3.toString().trim()
             if (raw == "0" || raw.equals("false", ignoreCase = true)) {
@@ -168,14 +178,6 @@ object VehicleHomeStatus {
             }
         }
 
-        if (vehicleState != null && vehicleState != JSONObject.NULL) {
-            val state = vehicleState.toString().trim().toIntOrNull()
-            if (state != null) {
-                if (state in setOf(0, 1, 3)) return true
-                if (state == 2) return false
-            }
-        }
-
         if (parkingBrakeState != null && parkingBrakeState != JSONObject.NULL) {
             val epb = parkingBrakeState.toString().trim()
             if (epb == "1" || epb.equals("true", ignoreCase = true)) {
@@ -183,8 +185,23 @@ object VehicleHomeStatus {
             }
         }
 
+        // 只有文档明确的 0（下电休眠）才算下电；1=Ready/行车绝不能算
+        if (vehicleState != null && vehicleState != JSONObject.NULL) {
+            if (vehicleState.toString().trim().toIntOrNull() == 0) return true
+        }
+
+        // 行车自动落锁：挂 D/R 挡时的「已闭锁」不代表人离开了车
+        if (locked == true && !isDrivingGear(gearStatus)) return true
+
         return false
     }
+
+    /** D / R 挡（含车端可能下发的数字编码 3 / 1）：车在动，人不可能锁车离开。 */
+    fun isDrivingGear(gearStatus: String?): Boolean =
+        when (gearStatus?.trim()?.uppercase()) {
+            "D", "D挡", "DRIVE", "前进", "3", "R", "R挡", "REVERSE", "倒车", "1" -> true
+            else -> false
+        }
 
     /**
      * 解析位置下方的详细行车挡位与速度状态：

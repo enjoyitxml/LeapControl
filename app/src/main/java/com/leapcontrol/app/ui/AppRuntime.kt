@@ -65,8 +65,6 @@ import com.leapcontrol.app.LocationAnchor
 import com.leapcontrol.app.LocationAnchorRule
 import com.leapcontrol.app.VehicleLocationAnchorStore
 import com.leapcontrol.app.VehicleLocationRules
-import com.leapcontrol.app.ChinaCoordinate
-import com.leapcontrol.app.CoordinateShiftPrefs
 import com.leapcontrol.app.VehicleOtaInfo
 import com.leapcontrol.app.VehicleCapabilityDetector
 import com.leapcontrol.app.VehicleCapabilities
@@ -1366,6 +1364,8 @@ class AppRuntime(context: Context) {
                 vehicleState = st.opt("vehicleState"),
                 parkingBrakeState = st.opt("parkingBrakeState"),
                 locked = VehicleSignals.locked(st),
+                // 挂 D/R 挡时的「已闭锁」是行车自动落锁，不能当成离车（用户 2026-11-04 反馈）
+                gearStatus = formatGear(st.opt("gearStatus")),
             ),
             chargeState = ChargeStatus.state(st),
             healthyChargeEnabled = parseOnOff(pick(st, "healthyChargeEnabled", "48")),
@@ -1553,14 +1553,16 @@ class AppRuntime(context: Context) {
      * 现在 D / R 挡直接显示「D挡 · 60km/h」，P 挡与已下电显示「已驻车」。
      */
     private fun parseDrivingStatus(st: JSONObject): String? {
+        val gearStatus = formatGear(st.opt("gearStatus"))
         val shutDown = VehicleHomeStatus.isVehicleShutDown(
             bcmKeyPositionOn3 = st.opt("bcmKeyPositionOn3"),
             vehicleState = st.opt("vehicleState"),
             parkingBrakeState = st.opt("parkingBrakeState"),
             locked = VehicleSignals.locked(st),
+            gearStatus = gearStatus,
         )
         VehicleHomeStatus.resolveDetailedDrivingState(
-            gearStatus = formatGear(st.opt("gearStatus")),
+            gearStatus = gearStatus,
             speed = st.opt("speed")?.toString(),
             isDriving = runCatching { VehicleSignals.isDriving(st) }.getOrNull(),
             isShutDown = shutDown,
@@ -1643,19 +1645,10 @@ class AppRuntime(context: Context) {
         val rawLatitude = selected.pair.latitude?.toString()?.toDoubleOrNull()
         val rawLongitude = selected.pair.longitude?.toString()?.toDoubleOrNull()
         val valid = VehicleLocationRules.isValid(rawLatitude, rawLongitude)
-        // 纠偏开关（默认关）：车端坐标到底是不是 GCJ-02 没有抓包证据，
-        // 万一它其实是 GPS 原始的 WGS-84，整张图会偏几百米 —— 这时打开开关，
-        // 后面地图、地址、导航目的地全都用换算后的坐标（见 [ChinaCoordinate]）
-        val shifted = if (valid && CoordinateShiftPrefs.isEnabled(appContext)) {
-            ChinaCoordinate.wgs84ToGcj02(rawLatitude!!, rawLongitude!!)
-        } else {
-            null
-        }
         return ResolvedLocation(
-            latitude = shifted?.first ?: rawLatitude,
-            longitude = shifted?.second ?: rawLongitude,
+            latitude = rawLatitude,
+            longitude = rawLongitude,
             hint = VehicleLocationDiagnostics.describe(values),
-            // 锚点用**原始**坐标推进：开关一开一关不该让「这条位置多久没变过」重新计时
             seenAt = if (valid) {
                 trackLocationAnchor(rawLatitude!!, rawLongitude!!, System.currentTimeMillis())
             } else {
@@ -1663,18 +1656,6 @@ class AppRuntime(context: Context) {
             },
             source = if (valid) VehicleLocationDiagnostics.describeSource(values) else null,
         )
-    }
-
-    /** 车端坐标是否按「WGS-84 当成 GCJ-02」来纠偏（见 [ChinaCoordinate]）。 */
-    fun coordinateShiftEnabled(): Boolean = CoordinateShiftPrefs.isEnabled(appContext)
-
-    fun setCoordinateShiftEnabled(enabled: Boolean) {
-        CoordinateShiftPrefs.setEnabled(appContext, enabled)
-        // 缓存里的地图是按旧坐标画的，留着会让人以为开关没生效：
-        // 位置缓存一清，下次进页面必然重拉
-        runCatching { VehicleLocationStore.clear(appContext) }
-        // 内存里那张同样不能留，否则这一版看到的还是纠偏前的位置
-        VehiclePlaceMemory.clear()
     }
 
     // ---- 位置的「稳定起点」----

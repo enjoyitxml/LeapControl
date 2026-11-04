@@ -76,7 +76,7 @@ import kotlinx.coroutines.launch
  * 「设置」页（从「我的」进入）：功能与账号相关项。
  *  - 自定义车名（仅本地保存，清空恢复官方昵称）
  *  - 控车密码（4 位，官方 App 里设置的操控密码）
- *  - 高德 Web Key（目的地搜索）
+ *  - 高德 Web Key（中文地址与目的地搜索；地图底图不需要）
  *  - 刷新车模图片
  *  - 系统控制中心快捷磁贴
  *
@@ -406,14 +406,15 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(14.dp))
 
-        // ---- 车辆位置与目的地：首页那张合并卡，以及它依赖的高德 Web Key ----
+        // ---- 车辆位置与目的地：首页那张合并卡，以及「地址与搜索」需要的高德 Web Key ----
         // 这一对原来锁在「高级设置」里，可那张卡已经回到首页了，配置就不该再藏一层：
-        // 卡片点开要 Key，而「高级设置」默认折叠 —— 等于让人先去猜东西在哪。
+        // 「高级设置」默认折叠 —— 等于让人先去猜东西在哪。
         SettingsCard("车辆位置与目的地") {
             Text(
-                "首页那张卡上的地图、地址与「发送目的地」都要高德的关键字搜索与静态地图，\n" +
+                "地图底图（找车页与首页缩略图）直连高德的公开瓦片，不需要 Key，有坐标就能看、能拖能缩。\n" +
+                    "需要 Key 的是另外两件事：把坐标翻译成中文地址、以及按关键字搜目的地 —— " +
                     "用的是你自己的 Key（免费额度足够日常使用）。\n" +
-                    "配好之后：位置卡上显示车辆周围的实况地图和中文地址，搜到目的地还能一键发到车机。\n" +
+                    "配好之后：位置卡上显示车停在哪条街几号院，搜到目的地还能一键发到车机。\n" +
                     "不想从设置里进也行 —— 找车页右上角那颗「?」是同一个入口。\n" +
                     "卡片右上角拍停车位照片不需要 Key，也不联网。",
                 color = C.textSecondary,
@@ -423,7 +424,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(10.dp))
             ClickRow(
                 title = "高德 Web Key",
-                desc = if (runtime.hasAmapKey()) "已配置，可直接搜索目的地" else "未配置，点开看申请步骤",
+                desc = if (runtime.hasAmapKey()) "已配置，可直接搜索目的地" else "未配置，地址只显示经纬度",
                 iconRes = R.drawable.ic_key,
             ) { showAmapKey = true }
             Spacer(Modifier.height(10.dp))
@@ -1343,7 +1344,7 @@ private val AmapKeySteps = listOf(
 
 /** 「配好之后能干嘛」：用户最关心的是这一步，顺手把账号同步的前提讲清楚。 */
 private val AmapKeyBenefits = listOf(
-    "找车页会画出车辆周围的实况地图，配上中文地址 —— 车停在哪条街，一眼就看到",
+    "找车页那张地图会配上中文地址 —— 车停在哪条街、哪个院，一眼就看到",
     "地址下面两个按钮：一个带你去车那儿（步行 / 骑行 / 驾车随你选），一个把目的地交给车",
     "发目的地时按关键字搜全国的地点、停车场、充电站，输入几个字就出结果",
     "手机和车机登录同一个高德账号，选好目的地再上车，车机会自动提示继续导航",
@@ -1352,7 +1353,7 @@ private val AmapKeyBenefits = listOf(
 
 /** 教程末尾那句「卡住了怎么办」：把最常见的两个卡点直接摆出来。 */
 private const val AmapKeyNote =
-    "配好之后地图仍是空白？进找车页点右上角刷新一次；还不行就检查 Key 是否选成了「Web 服务」类型。"
+    "配好之后地址还是只显示经纬度？点找车页右上角刷新一次；还不行就检查 Key 是否选成了「Web 服务」类型。"
 
 /** 高德 Web Key 的申请教程（设置里与首页卡片弹层共用）。 */
 @Composable
@@ -1372,11 +1373,13 @@ fun AmapKeyGuide(onOpenConsole: () -> Unit) {
  * 高德 Web Key 的申请 / 填写弹层。
  *
  * 抽成公共组件是因为它有两个入口：设置里的那一行，以及**找车页右上角的「?」**。
- * 后者出现在「地图一片空白、地址只显示经纬度」的现场，用户正卡在这一步，
+ * 后者出现在「地址只显示经纬度、搜不了目的地」的现场，用户正卡在这一步，
  * 再让他退回设置找半天是没道理的。
  *
+ * 地图底图不需要 Key（瓦片直连高德），所以这里讲的全是「地址与搜索」。
+ *
  * 保存后不用手动触发刷新：[[com.leapcontrol.app.ui.rememberVehiclePlace]] 把
- * `hasAmapKey()` 当成了加载 key，Key 一变它自己就会重拉地址与地图。
+ * `hasAmapKey()` 当成了加载 key，Key 一变它自己就会重拉地址。
  */
 @Composable
 fun AmapKeyDialog(runtime: AppRuntime, onDismiss: () -> Unit) {
@@ -1393,8 +1396,9 @@ fun AmapKeyDialog(runtime: AppRuntime, onDismiss: () -> Unit) {
             // 教程比输入框长得多，不给滚动时矮屏上「保存」会被顶出弹窗
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
-                    "零控自己不存地图。找车页那张地图、那句中文地址、以及按关键字搜目的地，" +
-                        "调的都是高德的两个接口，所以需要你填一个自己的 Key。",
+                    "地图底图不需要 Key：找车页和首页缩略图直连高德的公开瓦片，有坐标就画得出来。" +
+                        "这里要 Key 的是另外两件事 —— 把坐标翻译成中文地址（逆地理编码），" +
+                        "以及按关键字搜目的地。",
                     color = C.textSecondary,
                     fontSize = 12.sp,
                     lineHeight = 17.sp,
@@ -1443,7 +1447,7 @@ fun AmapKeyDialog(runtime: AppRuntime, onDismiss: () -> Unit) {
                 onDismiss()
                 Toast.makeText(
                     context,
-                    if (keyInput.isBlank()) "已清空高德 Key" else "已保存，地图和地址马上会刷新",
+                    if (keyInput.isBlank()) "已清空高德 Key，地址将改回经纬度" else "已保存，地址马上会刷新",
                     Toast.LENGTH_SHORT,
                 ).show()
             }) { Text("保存", color = C.accent) }

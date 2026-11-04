@@ -24,8 +24,7 @@ import com.leapcontrol.app.VehicleLocationRules
  * ## 边界
  * - 只存引用，不拷贝 Bitmap；四张图加起来约 2MB 量级，比每次重建便宜得多。
  * - 读写都在主线程（组合期 + `produceState`），只做引用赋值，无需加锁。
- * - 换车 / 退出登录 / 切换坐标纠偏开关时必须清（见 [clear]），
- *   否则会有人看到上一位车主的停车位置。
+ * - 换车 / 退出登录时必须清（见 [clear]），否则会有人看到上一位车主的停车位置。
  */
 internal object VehiclePlaceMemory {
 

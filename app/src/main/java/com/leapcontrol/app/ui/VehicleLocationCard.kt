@@ -75,7 +75,7 @@ sealed interface VehiclePlaceUi {
     /** 车况里没有可信坐标：没上报过，或上报的是 0,0 / 越界值。 */
     data object NoLocation : VehiclePlaceUi
 
-    /** 有坐标但没配高德 Key：能显示坐标，但画不出地图和地址。 */
+    /** 有坐标但没配高德 Key：地图照样画得出来（瓦片不要 Key），缺的是中文地址。 */
     data object NoKey : VehiclePlaceUi
 
     /** Key 和坐标都有，但请求全失败（没网 / 额度用尽 / Key 失效）。 */
@@ -113,11 +113,11 @@ private val THUMB_SIZE = 96.dp
  * 第一版做成了 2:1 的通栏大图 + 按钮，整张卡近 280dp —— 一张卡吃掉大半屏，
  * 首页其余内容全被挤到第二屏。现在把地图压成 96dp 见方放在左边，
  * 整卡约 120dp，和「车辆健康」卡同一档高度，滚动节奏才是连续的。
- * 想看大图点缩略图进找车页（那里是 1024 的正方图）。
+ * 想看大图点缩略图进找车页（那里是可拖动缩放的瓦片地图）。
  *
  * ## 为什么把「发送目的地」并进来
  * 原来首页是两张卡：一张「将目的地发送到车机」的 74dp 横条、一张 2:1 的位置图。
- * 它们其实是同一件事的两头 —— 都靠高德 Web Key、都在回答「我在哪 / 我要去哪」，
+ * 它们其实是同一件事的两头 —— 都在回答「我在哪 / 我要去哪」，
  * 而且是同一个人在同一时刻会用的两个动作（上车前）。拆成两张卡时，
  * 位置图那张只解决「车停哪」，而「送个地址过去」却要往上翻到另一张卡，白白多一次滚动。
  * 合并后：一张卡里「看车在哪」和「把目的地交给车」并列，点缩略图进大图页。
@@ -165,6 +165,10 @@ fun VehicleLocationCard(
         reportedAt = reportedAt,
         seenAt = seenAt,
         refreshKey = refreshKey,
+        // 缩略图现在是瓦片地图（[MiniMapThumb]），不再请求高德静态图：
+        // 静态图要 Web 服务 Key，没配 Key 的用户永远看不到图；瓦片不需要 Key。
+        // 这一步同时也把静态图额度彻底让出去了（逆地理编码仍然要用 Key）。
+        needMap = false,
     )
     val place = ui as? VehiclePlaceUi.Ready
 
@@ -223,16 +227,22 @@ fun VehicleLocationCard(
                         .border(1.dp, C.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    val map = place?.map
-                    if (map != null) {
-                        Image(
-                            bitmap = remember(map) { map.asImageBitmap() },
-                            contentDescription = "车辆位置地图",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop,
+                    if (canNavigate) {
+                        // 瓦片缩略图：不需要高德 Key，有坐标就一定有图（原来没配 Key 是个空框）
+                        MiniMapThumb(
+                            latitude = shownLat!!,
+                            longitude = shownLng!!,
+                            modifier = Modifier.matchParentSize(),
+                        )
+                        // 盖一层透明点击区。**必须盖**：MapView 会吃掉单指拖动，
+                        // 这张卡在首页的滚动列里，不挡住就成了「想滑首页却在拖地图」
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable(onClick = onOpen),
                         )
                     } else {
-                        // 没有真地图时方框里不是一块空色块：铺上路网，
+                        // 没有坐标时方框里不是一块空色块：铺上路网，
                         // 中心压一层径向渐变让「无位置」三个字读得清
                         SimulatedMapBackdrop(Modifier.matchParentSize(), centerFade = true)
                         ThumbPlaceholder(ui)
@@ -455,7 +465,8 @@ private fun ThumbPlaceholder(ui: VehiclePlaceUi) {
     val label = when (ui) {
         VehiclePlaceUi.Loading -> "加载中"
         VehiclePlaceUi.NoLocation -> "无位置"
-        VehiclePlaceUi.NoKey -> "未配 Key"
+        // 没有坐标时才有这个占位；缺 Key 不该写成「未配 Key」——那是地址的事，不是位置的事
+        VehiclePlaceUi.NoKey -> "无位置"
         VehiclePlaceUi.Failed -> "加载失败"
         is VehiclePlaceUi.Ready -> "无地图"
     }
@@ -486,7 +497,9 @@ private fun subtitle(ui: VehiclePlaceUi, reportedAt: Long, fromCache: Boolean = 
     )
     return when (ui) {
         VehiclePlaceUi.NoLocation -> "车辆还没上报过位置"
-        VehiclePlaceUi.NoKey -> "配好高德 Key 后显示地图"
+        // 走到这里意味着「有坐标、地图也画得出来，只是没有地址」——
+        // 底图是瓦片、不需要 Key，缺的只有逆地理编码（见 [MiniMapThumb]）
+        VehiclePlaceUi.NoKey -> "配好高德 Key 后显示地址"
         VehiclePlaceUi.Failed -> if (age != null) "地址获取失败 · 更新于 $age" else "地址获取失败"
         else -> when {
             fromCache && age != null -> "上次记录 · 更新于 $age"
@@ -507,16 +520,17 @@ private fun subtitle(ui: VehiclePlaceUi, reportedAt: Long, fromCache: Boolean = 
  *  3. 车况从「没有可信坐标」变成「有坐标」的那一下（冷启动报文晚到，得补一次）。
  *
  * **坐标变化本身不触发请求** —— 这是本条的关键：车在跑的时候车况可能十几秒刷新一次，
- * 位置每次都变，若把经纬度当 key，一趟一小时的车程就是几百次逆地理 + 几百张静态地图，
+ * 位置每次都变，若把经纬度当 key，一趟一小时的车程就是几百次逆地理，
  * 既吃高德额度又白白把手机和车机都叫醒。所以 key 取的是「有没有坐标」这个布尔值，
  * 不是坐标本身：车开走了，卡片继续显示进页面那一刻的位置，直到用户自己刷一次。
  * 想导航就点「导航到车辆」——它用的是**车况里的当前坐标**，不是这张图上的点。
  *
  * ### 缓存与额度
- *  1. 坐标落在同一个 100 米网格内（[VehicleLocationRules.sameSpot]）且缓存里有地址、
- *     有图 → 直接返回，一个请求都不发。车停在家里，一天翻十次首页就是零次请求。
- *  2. 缓存命中但缺地址或缺图 → 先把已有的画出来，再补差的那部分。
- *  3. 位置变了 / 从来没缓存过 → 逆地理 + 静态地图都请求一次，拿到什么存什么。
+ *  1. 坐标落在同一个 100 米网格内（[VehicleLocationRules.sameSpot]）且缓存里有地址
+ *     → 直接返回，一个请求都不发。车停在家里，一天翻十次首页就是零次请求。
+ *  2. 缓存命中但缺地址 → 先把坐标画出来，再补那一次逆地理。
+ *  3. 位置变了 / 从来没缓存过 → 逆地理请求一次，拿到什么存什么。
+ *     （地图是瓦片现画的，不需要请求：[MiniMapThumb]）
  *
  * 只有 [reportedAt] 变化不会触发重载（它只在刷新车况时变，位置可能没动），
  * 所以它通过 [rememberUpdatedState] 取值，避免写缓存时把旧时间写进去。
@@ -536,6 +550,15 @@ internal fun rememberVehiclePlace(
     seenAt: Long = 0L,
     /** true = 找车页要的大图；false = 首页卡缩略图。两者各自独立缓存。 */
     full: Boolean = false,
+    /**
+     * 要不要那张**静态地图**。
+     *
+     * 找车页改成瓦片地图之后就不再需要它了（见 [FindCarMap]），但地址、坐标、
+     * 「更新于」这些还要走这条链路，所以不能整个不用这个函数。传 false 时
+     * 跳过读图缓存与 `staticMap()` 请求 —— 不跳的话等于每次进找车页都白烧一次
+     * 静态图额度，下载下来的图还没人看。
+     */
+    needMap: Boolean = true,
     /**
      * 强制重试计数。找车页点「刷新」时 +1 —— 位置没变，但上次可能是网络失败，
      * 不给一个能重新发请求的开关，那个刷新按钮就只是重查车况，地址还是不会动。
@@ -573,6 +596,7 @@ internal fun rememberVehiclePlace(
         hasCoords,
         hasKey,
         full,
+        needMap,
         retry,
         refreshKey,
         dark,
@@ -602,7 +626,7 @@ internal fun rememberVehiclePlace(
                 return@produceState
             }
             val cached = withContext(Dispatchers.IO) { VehicleLocationStore.load(context) }
-            val cachedMap = if (cached != null) {
+            val cachedMap = if (cached != null && needMap) {
                 withContext(Dispatchers.IO) { VehicleLocationStore.loadMap(context, full = full, dark = dark) }
             } else {
                 null
@@ -647,7 +671,9 @@ internal fun rememberVehiclePlace(
         // 只比坐标的话，上一处的图会被当成本地缓存一直用下去，刷新按钮也救不回来。
         // 用户按了刷新时一律不认缓存 —— 他按下去的语义就是「再取一次」，图没变就该是图没变，
         // 而不是我们偷偷拿旧图敷衍他（一张静态图而已，多这一次请求值）
-        val cachedMap = if (!manualRefresh && sameSpot && VehicleLocationRules.mapMatches(cached, lat, lng)) {
+        val cachedMap = if (needMap && !manualRefresh && sameSpot &&
+            VehicleLocationRules.mapMatches(cached, lat, lng)
+        ) {
             withContext(Dispatchers.IO) { VehicleLocationStore.loadMap(context, full = full, dark = dark) }
         } else {
             null
@@ -655,6 +681,8 @@ internal fun rememberVehiclePlace(
 
         if (sameSpot) {
             publish(VehiclePlaceUi.Ready(cachedMap, cached?.address, lat, lng))
+            // 地址到手就够了（找车页只要地址，图由瓦片地图自己画）
+            if (!needMap && cached?.address != null) return@produceState
             // 图 + 地址都齐了：这就是终态，不再联网
             if (cachedMap != null && cached?.address != null) return@produceState
         }
@@ -670,7 +698,7 @@ internal fun rememberVehiclePlace(
         val address = knownAddress ?: withContext(Dispatchers.IO) {
             runCatching { AmapWebApi.reverseGeocode(key, lat, lng)?.formatted }.getOrNull()
         }
-        val fetched = if (cachedMap == null) {
+        val fetched = if (needMap && cachedMap == null) {
             withContext(Dispatchers.IO) {
                 runCatching {
                     // 取景按「米」给：首页缩略图 120 米、找车页大图 350 米。

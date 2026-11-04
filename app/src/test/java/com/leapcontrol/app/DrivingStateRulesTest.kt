@@ -176,7 +176,6 @@ class DrivingStateRulesTest {
             gearStatus = "N",
             speedKmh = 0.0,
             isShutDown = true,
-            locked = true,
         )!!
         assertEquals("已驻车", badge.label)
         assertNull(badge.gear)
@@ -190,7 +189,6 @@ class DrivingStateRulesTest {
             gearStatus = "N",
             speedKmh = 3.0,
             isShutDown = true,
-            locked = true,
         )!!
         assertEquals("已驻车", badge.label)
         assertNull(badge.detail)
@@ -211,7 +209,6 @@ class DrivingStateRulesTest {
             gearStatus = "P",
             speedKmh = 0.0,
             isShutDown = true,
-            locked = true,
         )!!
         assertEquals("已驻车", badge.label)
         assertEquals("P", badge.gear)
@@ -224,25 +221,58 @@ class DrivingStateRulesTest {
             gearStatus = "N",
             speedKmh = 0.0,
             isShutDown = false,
-            locked = false,
         )!!
         assertEquals("空挡", badge.label)
         assertEquals("N", badge.gear)
     }
 
     /**
-     * 下电判据里的 `vehicleState == 1` 口径存疑（文档说 1=Ready）。
-     * 万一行驶中报 1，也不能把正在开的车说成「已驻车」—— 车速兜住这一条。
+     * D / R 挡有车速时，「已下电」不能推翻它。
+     *
+     * 这条是用户第二次反馈（「车在行驶中却显示已驻车」）的第一重保险：
+     * 下电判据再怎么算错，只要挡位说车在动、车速也支持，就必须说「行驶中」。
      */
     @Test
-    fun `未闭锁时车速优先于下电判据`() {
+    fun `D 挡有车速时下电判据不能推翻`() {
         val badge = DrivingStateRules.badge(
             gearStatus = "D",
-            speedKmh = 12.0,
+            speedKmh = 60.0,
             isShutDown = true,
-            locked = false,
         )!!
         assertEquals("行驶中", badge.label)
+        assertEquals("60 km/h", badge.detail)
+        assertEquals(DrivingTone.MOVING, badge.tone)
+    }
+
+    /** 倒车同理：R 挡 + 车速，任何「已下电」都不该把它压成已驻车。 */
+    @Test
+    fun `R 挡有车速时下电判据不能推翻`() {
+        val badge = DrivingStateRules.badge(gearStatus = "R", speedKmh = 4.0, isShutDown = true)!!
+        assertEquals("倒车", badge.label)
+        assertEquals(DrivingTone.REVERSING, badge.tone)
+    }
+
+    /** 挂着 P 却报 60km/h 只能是报文没刷新：P 挡的车速一律当残值。 */
+    @Test
+    fun `P 挡的车速一律当残值`() {
+        val badge = DrivingStateRules.badge(gearStatus = "P", speedKmh = 60.0)!!
+        assertEquals("已驻车", badge.label)
+        assertNull(badge.detail)
+        assertEquals("P", badge.gear)
+    }
+
+    /**
+     * 行车自动落锁后 `locked == true` 且挡位是 D、车速非零 —— 用户在开车，不是驻车。
+     *
+     * 上一版拿 locked 压车速，结果这种情况被判成「已驻车」，用户 2026-11-04 第二次反馈。
+     * 现在 locked 不再参与胶囊判定（闭锁怎么算由 [VehicleHomeStatus.isVehicleShutDown]
+     * 按挡位区分），这里守住「D 挡 + 车速就是行驶中」。
+     */
+    @Test
+    fun `行车自动落锁时依然是行驶中`() {
+        val badge = DrivingStateRules.badge(gearStatus = "D", speedKmh = 88.0)!!
+        assertEquals("行驶中", badge.label)
+        assertEquals("88 km/h", badge.detail)
         assertEquals(DrivingTone.MOVING, badge.tone)
     }
 
@@ -255,7 +285,6 @@ class DrivingStateRulesTest {
             chargeState = 1,
             chargeRemainMinutes = 42,
             isShutDown = true,
-            locked = true,
         )!!
         assertEquals("充电中", badge.label)
         assertNull(badge.gear)

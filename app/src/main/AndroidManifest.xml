@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -18,6 +19,12 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- osmdroid 的清单默认要这个（它默认把瓦片缓存写到外部存储根目录）。
+         我们已经把缓存指到 filesDir（见 FindCarMap 的 ensureMapConfig），用不到它，
+         从合并结果里去掉，别让「权限」列表平白多一条 -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:node="remove" />
     <!-- 应用内下载新版本后直接唤起系统安装器（Android 8+ 还需用户在系统里授权一次） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- 语音记账：灵感球长按说话走进程内 SpeechRecognizer（要自己画 Siri 式浮层），

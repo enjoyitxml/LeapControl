@@ -7,10 +7,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -55,7 +55,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.MapIntents
 import com.leapcontrol.app.ParkingPhotoRules
 import com.leapcontrol.app.R
@@ -67,7 +66,7 @@ import kotlinx.coroutines.launch
  *
  * ## 这个页面存在的理由
  * 首页卡只有 2:1 的一条窄图，能看出「在哪条街」但看不清路口。找车时人已经站在楼下、
- * 需要的是「往左还是往右」，所以这里给一张正方形的 1024 图（高德 size 上限），
+ * 需要的是「往左还是往右」，所以这里给一张能拖动缩放的地图（[FindCarMap]），
  * 外加一个整行的「导航到车辆」——那是这个功能真正的出口。
  *
  * ## 和首页卡是同一个组件的两级
@@ -81,7 +80,8 @@ import kotlinx.coroutines.launch
  * 所以「位置更新于 x 前」必须显眼，而不是藏在一行小字里。
  *
  * ## 不做的事
- * - 不用地图 SDK：Key 要绑签名，用户自己申请的填不进这个包（见 [AmapWebApi.staticMap]）。
+ * - 不用高德地图 SDK：Key 要绑签名，用户自己申请的填不进这个包。底图改用开源控件 +
+ *   高德公开栅格瓦片（[FindCarMap]），不需要任何 Key；Key 只留给地址与目的地搜索。
  * - 不主动申请手机定位权限：那会把「看一眼车在哪」变成一次权限弹窗，
  *   而距离数字对找车的实际帮助有限（真实场景里人已经在附近了）。
  */
@@ -112,6 +112,9 @@ fun FindCarScreen(
         reportedAt = reportedAt,
         seenAt = seenAt,
         full = true,
+        // 这一页的底图已经换成瓦片地图（FindCarMap），不再需要高德静态图：
+        // 跳过那张图能让每次进页面少一次请求，额度留给首页卡
+        needMap = false,
         retry = retry,
     )
     val place = ui as? VehiclePlaceUi.Ready
@@ -131,9 +134,6 @@ fun FindCarScreen(
     }
     val ageMs = VehicleLocationRules.ageMs(shownAt, System.currentTimeMillis())
     val age = VehicleLocationRules.ageText(ageMs)
-    // 半小时以上没变过就明说一句「这是旧位置」：车端定位在进地库后就丢了，
-    // 最后一条通常停在入口或地库外的马路上 —— 不提醒的话，用户会以为它就停在图上那一点
-    val staleNotice = ageMs != null && ageMs >= 30 * 60 * 1000L
 
     var refreshing by remember { mutableStateOf(false) }
     // 目的地搜索弹层挂在这一页上：用户在这一页想「把地址发过去」时不必退回首页
@@ -142,11 +142,8 @@ fun FindCarScreen(
     var navPicker by remember { mutableStateOf(false) }
     // 点导航时先取一次最新车况，期间把按钮改成「正在取最新位置」并挡住重复点击
     var navPreparing by remember { mutableStateOf(false) }
-    // 坐标纠偏开关：整页刷新后要跟着重组，所以自己持一份，不每次去读 prefs
-    var shiftOn by remember { mutableStateOf(runtime.coordinateShiftEnabled()) }
-    var showShift by remember { mutableStateOf(false) }
     // 右上角「?」：高德 Key 的申请与填写。放在这一页而不是首页卡上，
-    // 是因为「地图空白 / 地址只有经纬度」的现场就在这里 —— 用户正卡在这一步，
+    // 是因为「地址只有经纬度」的现场就在这里 —— 用户正卡在这一步，
     // 再让他退回设置里找「车辆位置与目的地」是没有道理的。
     var showKeyHelp by remember { mutableStateOf(false) }
 
@@ -158,263 +155,235 @@ fun FindCarScreen(
     // 用户以为「退出了找车」，其实只想关掉那张大图
     BackHandler(enabled = previewPhoto) { previewPhoto = false }
 
-    Column(
+    // 地图不进滚动容器：MapView 要吃掉单指拖动，塞在 verticalScroll 里会变成
+    // 「想拖地图，结果整页跟着滚」。所以顶栏 + 地图固定在上面（地图占上半屏），
+    // 地址卡 / 出口按钮 / 车位照片这些在下面自己滚。
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
             .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 20.dp),
+            .navigationBarsPadding(),
     ) {
-        ScreenTopBar("车辆位置", onBack) {
-            // 没配 Key 时按钮走主题色，配好了退回中性色 —— 它是「帮助」而不是「提醒」，
-            // 只在真正卡住的时候才该抢注意力
-            val needsKey = !runtime.hasAmapKey()
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(if (needsKey) C.accent.copy(alpha = 0.16f) else C.iconBg)
-                    .clickable { showKeyHelp = true },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "?",
-                    color = if (needsKey) C.accent else C.textSecondary,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-
-        // ---- 地图 ----
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .clip(RoundedCornerShape(18.dp))
-                .background(C.accent.copy(alpha = 0.06f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            val map = place?.map
-            if (map != null) {
-                Image(
-                    bitmap = remember(map) { map.asImageBitmap() },
-                    contentDescription = "车辆位置地图",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                )
-            } else {
-                // 占位不是一块空色块：铺一层模拟路网，中心压暗让说明文字读得清
-                SimulatedMapBackdrop(Modifier.matchParentSize(), centerFade = true)
-                FindCarPlaceholder(ui)
-            }
-
-            // 刷新：找车时第一反应就是「再看看车在哪」，给个明确入口，
-            // 不用退出去下拉首页。位置为空时也保留，用户可以先拉一次车况试试
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(10.dp)
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(C.panelBg.copy(alpha = 0.94f))
-                    .clickable(enabled = !refreshing) {
-                        refreshing = true
-                        scope.launch {
-                            val ok = runCatching { runtime.refreshStatus() }.isSuccess
-                            // 无论车况是否取到都重试一次地址 / 地图：
-                            // 上一次可能只是高德请求超时，和车况没有关系
-                            retry += 1
-                            refreshing = false
-                            if (!ok) {
-                                Toast.makeText(context, "刷新失败，请检查网络", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                if (refreshing) {
-                    CircularProgressIndicator(
-                        color = C.accent,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(16.dp),
-                    )
-                } else {
-                    Icon(
-                        Icons.Filled.Refresh,
-                        contentDescription = "刷新位置",
-                        tint = C.accent,
-                        modifier = Modifier.size(17.dp),
-                    )
+        // 地图高度跟着屏幕走：宽屏取「屏宽 - 两侧留白」，矮屏取屏高的 46%，
+        // 保底下半屏至少还能露出地址卡的两行字
+        val mapHeight = minOf(maxWidth - 40.dp, maxHeight * 0.46f).coerceAtLeast(200.dp)
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                ScreenTopBar("车辆位置", onBack) {
+                    // 没配 Key 时按钮走主题色，配好了退回中性色 —— 它是「帮助」而不是「提醒」，
+                    // 只在真正卡住的时候才该抢注意力
+                    val needsKey = !runtime.hasAmapKey()
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(if (needsKey) C.accent.copy(alpha = 0.16f) else C.iconBg)
+                            .clickable { showKeyHelp = true },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "?",
+                            color = if (needsKey) C.accent else C.textSecondary,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
             }
-        }
+            Spacer(Modifier.height(10.dp))
+            // ---- 地图 ----
+            // 有坐标就铺瓦片地图（可拖动 / 双指缩放），没坐标仍画模拟路网占位，
+            // 不留一块空白 —— 那种情况用户更需要的是「为什么没有位置」这句话
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .fillMaxWidth()
+                    .height(mapHeight)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(C.accent.copy(alpha = 0.06f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (canNavigate && shownLat != null && shownLng != null) {
+                    FindCarMap(
+                        latitude = shownLat,
+                        longitude = shownLng,
+                        // 坐标真变了 / 用户点了刷新 → 视角回到车上；
+                        // 用户自己拖到别处看路的时候不会被拽回来
+                        recenterKey = "$shownLat,$shownLng,$retry",
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    SimulatedMapBackdrop(Modifier.matchParentSize(), centerFade = true)
+                    FindCarPlaceholder(ui)
+                }
 
-        Spacer(Modifier.height(14.dp))
-
-        // ---- 地址与时间 ----
-        InfoCard {
-            Text(
-                text = place?.address ?: coordinate ?: "还没有可用的车辆位置",
-                color = C.textPrimary,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = when (ui) {
-                    VehiclePlaceUi.NoLocation -> "车机还没上报过位置，下次上车启动一次后再看"
-                    VehiclePlaceUi.NoKey -> "还没配高德 Key：点右上角「?」看两分钟教程，填完就有地图和地址"
-                    VehiclePlaceUi.Failed -> "地址和地图都没取到，检查网络后点右上角刷新"
-                    else -> when {
-                        fromCache && age != null -> "上次记录的位置 · 更新于 $age"
-                        fromCache -> "上次记录的位置"
-                        age != null -> "位置更新于 $age"
-                        else -> "位置更新时间未知"
-                    }
-                },
-                color = C.textSecondary,
-                fontSize = 12.sp,
-            )
-
-            // 位置是「很久没变」的时候必须说清为什么：车端定位一进地库就丢，
-            // 云端留着的是进库前最后一次定位 —— 那个点常在入口或库外的路上。
-            // 不说这一句，用户会认定「定位不准」；说了，才知道该看下面的车位照片。
-            if (staleNotice) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "这是${age ?: "较久前"}的位置，车机之后没再上报过。" +
-                        "进地库后卫星信号会中断，这个点通常停在入口或马路上，请配合下面的停车位照片确认。",
-                    color = C.textSecondary.copy(alpha = 0.9f),
-                    fontSize = 11.5.sp,
-                    lineHeight = 16.sp,
-                )
-            }
-
-            if (coordinate != null) {
-                Spacer(Modifier.height(12.dp))
-                Row(
+                // 刷新：找车时第一反应就是「再看看车在哪」，给个明确入口，
+                // 不用退出去下拉首页。位置为空时也保留，用户可以先拉一次车况试试
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable {
-                            clipboard.setText(AnnotatedString(coordinate))
-                            Toast.makeText(context, "坐标已复制", Toast.LENGTH_SHORT).show()
+                        .align(Alignment.TopEnd)
+                        .padding(10.dp)
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(C.panelBg.copy(alpha = 0.94f))
+                        .clickable(enabled = !refreshing) {
+                            refreshing = true
+                            scope.launch {
+                                val ok = runCatching { runtime.refreshStatus() }.isSuccess
+                                // 无论车况是否取到都重试一次地址 / 地图：
+                                // 上一次可能只是高德请求超时，和车况没有关系
+                                retry += 1
+                                refreshing = false
+                                if (!ok) {
+                                    Toast.makeText(context, "刷新失败，请检查网络", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    contentAlignment = Alignment.Center,
                 ) {
+                    if (refreshing) {
+                        CircularProgressIndicator(
+                            color = C.accent,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    } else {
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = "刷新位置",
+                            tint = C.accent,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+
+            // 下半部分自己滚：内容比一屏长（车位照片能到 300dp），整体滚动会把地图顶走
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp),
+            ) {
+                // ---- 地址与时间 ----
+                InfoCard {
                     Text(
-                        text = coordinate,
+                        text = place?.address ?: coordinate ?: "还没有可用的车辆位置",
+                        color = C.textPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = when (ui) {
+                            VehiclePlaceUi.NoLocation -> "车机还没上报过位置，下次上车启动一次后再看"
+                            VehiclePlaceUi.NoKey ->
+                                "地图不再依赖 Key，但中文地址还缺一把：点右上角「?」，" +
+                                    "填两分钟就有地址和目的地搜索"
+                            // 走到这里只有地址失败（底图是瓦片、不经过这两个接口）
+                            VehiclePlaceUi.Failed ->
+                                "中文地址没取到：检查网络，或确认高德 Key 还有额度，再点右上角刷新"
+                            else -> when {
+                                fromCache && age != null -> "上次记录的位置 · 更新于 $age"
+                                fromCache -> "上次记录的位置"
+                                age != null -> "位置更新于 $age"
+                                else -> "位置更新时间未知"
+                            }
+                        },
                         color = C.textSecondary,
                         fontSize = 12.sp,
                     )
-                    Text(
-                        text = "复制坐标",
-                        color = C.accent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-            }
-        }
 
-        Spacer(Modifier.height(16.dp))
-
-        // ---- 两个出口：导航到车辆（有坐标才给）+ 发送目的地（与坐标无关） ----
-        // 和首页卡同一套动作，只是放大到整行。两个都没有时才什么都不显示。
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (canNavigate) {
-                BigAction(
-                    text = if (navPreparing) "正在取最新位置" else "导航到车辆",
-                    primary = true,
-                    modifier = Modifier.weight(1f),
-                    icon = { Icon(Icons.Filled.Navigation, contentDescription = null, tint = C.accent, modifier = Modifier.size(17.dp)) },
-                ) {
-                    if (navPreparing) return@BigAction
-                    // 走到车位还是开过去，先问一句。开车去「找车」在楼下这个位置上说不通。
-                    // 问之前先查一次车况：车可能是几小时前停的，手上这份坐标是那时拉到的
-                    navPreparing = true
-                    scope.launch {
-                        runCatching { runtime.refreshStatus() }
-                        // 顺手把地址/地图也重取一次：位置真变了，那张图就是旧地方
-                        retry += 1
-                        navPreparing = false
-                        navPicker = true
+                    if (coordinate != null) {
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    clipboard.setText(AnnotatedString(coordinate))
+                                    Toast.makeText(context, "坐标已复制", Toast.LENGTH_SHORT).show()
+                                },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = coordinate,
+                                color = C.textSecondary,
+                                fontSize = 12.sp,
+                            )
+                            Text(
+                                text = "复制坐标",
+                                color = C.accent,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
                     }
                 }
+
+                Spacer(Modifier.height(16.dp))
+
+                // ---- 两个出口：导航到车辆（有坐标才给）+ 发送目的地（与坐标无关） ----
+                // 和首页卡同一套动作，只是放大到整行。两个都没有时才什么都不显示。
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (canNavigate) {
+                        BigAction(
+                            text = if (navPreparing) "正在取最新位置" else "导航到车辆",
+                            primary = true,
+                            modifier = Modifier.weight(1f),
+                            icon = { Icon(Icons.Filled.Navigation, contentDescription = null, tint = C.accent, modifier = Modifier.size(17.dp)) },
+                        ) {
+                            if (navPreparing) return@BigAction
+                            // 走到车位还是开过去，先问一句。开车去「找车」在楼下这个位置上说不通。
+                            // 问之前先查一次车况：车可能是几小时前停的，手上这份坐标是那时拉到的
+                            navPreparing = true
+                            scope.launch {
+                                runCatching { runtime.refreshStatus() }
+                                // 顺手把地址/地图也重取一次：位置真变了，那张图就是旧地方
+                                retry += 1
+                                navPreparing = false
+                                navPicker = true
+                            }
+                        }
+                    }
+                    BigAction(
+                        text = "发送目的地",
+                        primary = !canNavigate,
+                        modifier = Modifier.weight(1f),
+                        icon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_send_to_car),
+                                contentDescription = null,
+                                tint = C.accent,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                    ) { showDestination = true }
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                // ---- 停车位照片 ----
+                // 排在两个出口**之后**：这张卡有图时接近 300dp，放在按钮前面会把「导航到车辆」
+                // 推到第二屏 —— 而那两个才是到楼下时第一时间要按的。照片是确认具体车位的第二步。
+                ParkingPhotoCard(photo = photo, onPreview = { previewPhoto = true })
+
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "位置来自车机最后一次上报。熄火后车机休眠，位置会停在熄火的地方；" +
+                        "若车停放较久，请注意上方的时间。",
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
             }
-            BigAction(
-                text = "发送目的地",
-                primary = !canNavigate,
-                modifier = Modifier.weight(1f),
-                icon = {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_send_to_car),
-                        contentDescription = null,
-                        tint = C.accent,
-                        modifier = Modifier.size(18.dp),
-                    )
-                },
-            ) { showDestination = true }
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        // ---- 停车位照片 ----
-        // 排在两个出口**之后**：这张卡有图时接近 300dp，放在按钮前面会把「导航到车辆」
-        // 推到第二屏 —— 而那两个才是到楼下时第一时间要按的。照片是确认具体车位的第二步。
-        ParkingPhotoCard(photo = photo, onPreview = { previewPhoto = true })
-
-        Spacer(Modifier.height(14.dp))
-        Text(
-            text = "位置来自车机最后一次上报。熄火后车机休眠，位置会停在熄火的地方；" +
-                "若车停放较久，请注意上方的时间。",
-            color = C.textSecondary,
-            fontSize = 11.sp,
-            lineHeight = 16.sp,
-        )
-
-        // 出口：整张图整体偏几百米时（坐标系对不上），这是唯一能自救的地方。
-        // 藏在普通文案下面而不是做成显眼按钮 —— 绝大多数人用不到它，
-        // 但真碰上的人在这里能找到，而且改完当场就能看出有没有用。
-        Spacer(Modifier.height(10.dp))
-        Text(
-            text = if (shiftOn) "坐标纠偏：已开启 · 点此调整" else "整张图都偏了几百米？点这里纠偏",
-            color = C.accent,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .clickable { showShift = true }
-                .padding(vertical = 6.dp, horizontal = 2.dp),
-        )
-
-        // debug 构建才显示：万一这台车的位置键不在已知的 2/3、3724/3725 里，
-        // 这一行能直接说明是「报文没信号」「值不是数字」还是「报了 0,0」；
-        // 有坐标时则报出**用的是哪一对键**和位置的实际年龄 —— 「定位不准」这类反馈，
-        // 一张截图就能分清是坐标系（整张图整体偏）还是位置太旧（时间很长）。
-        // release 版本不打扰用户 —— 他们看这行没有意义，也没法处理。
-        if (BuildConfig.DEBUG && ui != VehiclePlaceUi.Loading) {
-            val diagnostic = if (ui == VehiclePlaceUi.NoLocation || coordinate == null) {
-                status?.locationHint ?: "车况报文里没有位置信息"
-            } else {
-                "位置键 ${status?.locationSource ?: "未知"} · ${age ?: "时间未知"} · 纠偏${if (shiftOn) "开" else "关"}"
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "诊断：$diagnostic",
-                color = C.textSecondary.copy(alpha = 0.75f),
-                fontSize = 10.5.sp,
-                lineHeight = 15.sp,
-            )
         }
     }
 
@@ -453,30 +422,6 @@ fun FindCarScreen(
         )
     }
 
-    // 坐标纠偏：改完必须重拉，否则地图还是按旧坐标画的，用户会以为开关没生效
-    if (showShift) {
-        CoordinateShiftDialog(
-            enabled = shiftOn,
-            onDismiss = { showShift = false },
-            onPick = { on ->
-                showShift = false
-                if (on == shiftOn) return@CoordinateShiftDialog
-                shiftOn = on
-                runtime.setCoordinateShiftEnabled(on)
-                refreshing = true
-                scope.launch {
-                    runCatching { runtime.refreshStatus() }
-                    retry += 1
-                    refreshing = false
-                    Toast.makeText(
-                        context,
-                        if (on) "已按换算后的坐标重新获取" else "已恢复原始坐标",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-            },
-        )
-    }
     // 右上角「?」：高德 Key 的申请教程 + 当场填写
     if (showKeyHelp) {
         AmapKeyDialog(runtime = runtime, onDismiss = { showKeyHelp = false })
@@ -519,17 +464,18 @@ private fun BigAction(
     }
 }
 
-/** 大图还没出来时的占位：和首页卡同一套说法，但空间更大，可以说得更完整。 */
+/** 没有坐标时的占位：和首页卡同一套说法，但空间更大，可以说得更完整。 */
 @Composable
 private fun FindCarPlaceholder(ui: VehiclePlaceUi) {
     val C = LocalAppColors.current
     val (title, desc) = when (ui) {
         VehiclePlaceUi.Loading -> "正在获取位置" to "通常一秒内完成"
         VehiclePlaceUi.NoLocation -> "没有可用的车辆位置" to "上车启动一次车机后就会有"
-        VehiclePlaceUi.NoKey -> "未配置高德 Key" to "点右上角「?」，按教程申请后粘进来就有地图"
-        VehiclePlaceUi.Failed -> "地图没加载出来" to "检查网络后点右上角刷新"
-        // 走到这里说明「地址有了、图没取到」：再写「正在获取」会让人一直干等
-        is VehiclePlaceUi.Ready -> "地图没画出来" to "点右上角刷新重试，地址是准的"
+        // 走到这几个分支时一定是「没有坐标」：有坐标的话上面已经画瓦片地图了，
+        // 而瓦片地图不依赖高德 Key（只有地址才依赖）
+        VehiclePlaceUi.NoKey -> "没有可用的车辆位置" to "地图不用 Key，但得先有坐标"
+        VehiclePlaceUi.Failed -> "位置没取到" to "检查网络后点右上角刷新"
+        is VehiclePlaceUi.Ready -> "没有可用的车辆位置" to "点右上角刷新试试"
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(

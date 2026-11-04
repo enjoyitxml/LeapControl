@@ -13,8 +13,8 @@ android {
         applicationId = "com.leapcontrol.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10015
-        versionName = "1.0.15"
+        versionCode = 10016
+        versionName = "1.0.16"
         resourceConfigurations += setOf("zh", "zh-rCN")
         buildConfigField("String", "AMAP_WEB_KEY_ENCRYPTED", "\"\"")
         buildConfigField("String", "PGYER_API_KEY_ENCRYPTED", "\"\"")
@@ -91,6 +91,10 @@ androidComponents {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // 找车页地图：轻量开源地图控件（约 1.3MB，纯 Java，无 native）。选它而不是高德 Android SDK，
+    // 是因为后者的 Key 必须绑包名 + 签名 SHA1，只能把 Key 打进 APK（谁都能反编译拿去用）。
+    // 瓦片走高德栅格服务，坐标系正好也是 GCJ-02，和车端上报一致，不需要纠偏。
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")
     debugImplementation("com.github.chuckerteam.chucker:library:4.1.0")
     releaseImplementation("com.github.chuckerteam.chucker:library-no-op:4.1.0")

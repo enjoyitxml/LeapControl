@@ -2,6 +2,7 @@ package com.leapcontrol.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -25,6 +27,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.TirePressure
@@ -172,6 +175,45 @@ fun TireQuickCard(
 /** 异常红：浅色主题用偏深的红（白底上够清楚），深色主题用亮一点的红。 */
 private fun redFor(C: AppColors): Color = if (C.isDark) Color(0xFFFF6B6F) else Color(0xFFE5484D)
 
+/** 胎压数字的基准字号（系统字号 1.0 时）。 */
+internal val TireValueFontSize = 17.sp
+
+/**
+ * 数字缩到多小就不再缩了。
+ *
+ * 这条是「缩到能放下」的底线而不是目标值：13dp 左右的列宽里，再小就真的读不清了。
+ * 真缩到这条线还放不下（极窄屏 + 极大字号），宁可让末位贴边，也不把它缩成蚂蚁。
+ */
+internal const val TireValueMinFontSp = 11.5f
+
+/**
+ * 量「三个数字最宽时有多宽」，用最宽的探测文本，让四个格子算出同一个字号。
+ *
+ * 探测用 `888`：无衬线字体里 8 基本是最宽的数字，而且四格里只要有一个用 8，
+ * 其余三格就必须跟着它缩，否则四个数字大小不一，看着像坏了。
+ */
+private const val TireValueProbe = "888"
+
+/**
+ * 按可用宽度把字号收一收：放得下就原样，放不下就等比缩小。
+ *
+ * 宽度与字号是严格线性的，所以一次测量 + 一次比例就能算出精确值，不需要反复试排。
+ * 纯函数，便于单测（见 `TireValueFontTest`）。
+ *
+ * @param measuredWidthPx 基准字号下 `888` 的渲染宽度（px）
+ * @param availableWidthPx 格子实际可用宽度（px）
+ */
+internal fun fittedValueFontSp(
+    measuredWidthPx: Int,
+    availableWidthPx: Int,
+    baseSp: Float = TireValueFontSize.value,
+    minSp: Float = TireValueMinFontSp,
+): Float = when {
+    measuredWidthPx <= 0 || availableWidthPx <= 0 -> baseSp
+    measuredWidthPx <= availableWidthPx -> baseSp
+    else -> (baseSp * availableWidthPx.toFloat() / measuredWidthPx).coerceAtLeast(minSp)
+}
+
 /** 单个轮子的「位置 / 数值 / kPa」。正常＝正文色，不足＝红，无数据＝次要灰。 */
 @Composable
 private fun TireValueCell(
@@ -187,6 +229,9 @@ private fun TireValueCell(
         TirePressure.State.Low -> redFor(C)
         TirePressure.State.Unknown -> C.textSecondary
     }
+    val measurer = rememberTextMeasurer()
+    val baseStyle = LocalTextStyle.current
+    val fontScale = LocalDensity.current.fontScale
 
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         // 三行都禁止折行：字号放大后「左前」若折成两行，格子高度直接翻倍，
@@ -199,14 +244,35 @@ private fun TireValueCell(
             softWrap = false,
         )
         Spacer(Modifier.height(1.dp))
-        Text(
-            text = tire?.pressure ?: "--",
-            color = valueColor,
-            fontSize = 17.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            softWrap = false,
-        )
+        // 数值按格子实际宽度自适应：字号放大后「258」会超出列宽，被 Text 的 Clip 从右边切掉
+        // （用户 2026-11-04 第二次反馈）。高度已经解决了，这一版解决的是横向。
+        BoxWithConstraints {
+            val probeWidth = remember(fontScale, constraints.maxWidth, baseStyle) {
+                runCatching {
+                    measurer.measure(
+                        text = TireValueProbe,
+                        style = baseStyle.copy(
+                            fontSize = TireValueFontSize,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        maxLines = 1,
+                        softWrap = false,
+                    ).size.width
+                }.getOrDefault(0)
+            }
+            val sizeSp = fittedValueFontSp(
+                measuredWidthPx = probeWidth,
+                availableWidthPx = constraints.maxWidth,
+            )
+            Text(
+                text = tire?.pressure ?: "--",
+                color = valueColor,
+                fontSize = sizeSp.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
         Text(
             text = "kPa",
             color = if (state == TirePressure.State.Low) redFor(C).copy(alpha = 0.75f) else C.textSecondary,

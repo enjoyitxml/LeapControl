@@ -41,7 +41,8 @@ data class DrivingBadge(
  * ## 只用三个信号
  * 挡位 1010、车速 1319、充电状态 1149 —— 都是车况报文里现成的字段，不新增任何请求。
  * `vehicleState`(1944) 刻意**不用**：文档写「1=Ready、0=下电休眠」，上游代码却把 0/1/3 当成下电、
- * 2 当成运行，两套口径互相矛盾且没有实车核验，拿它下结论会给出错的状态。
+ * 2 当成运行，两套口径互相矛盾。2026-11-04 用户反馈「行驶中显示已驻车」正是踩了这个坑，
+ * 所以 [VehicleHomeStatus.isVehicleShutDown] 现在只认文档明确的 0。
  *
  * ## 挡位字母不等于车辆状态
  * 2026-11-04 用户反馈「车已经停好锁车了，这里显示 N 空挡，不合理」。根因是车端熄火后
@@ -49,10 +50,16 @@ data class DrivingBadge(
  * **挂 N + 拉电子手刹**再锁车。这时按挡位直译成「空挡」，对远程看手机的人传达的是
  * 「没挂 P、可能溜车」，纯属吓人。
  *
- * 所以已熄火（[isShutDown]：闭锁 / BCM 电源 OFF / 整车状态非运行 / EPB 拉起任一成立）时
+ * 所以已熄火（[isShutDown]：BCM 电源 OFF / EPB 拉起 / 非 D、R 挡时的闭锁）时
  * **状态压过挡位**，一律说「已驻车」；挡位徽标只在它是真的 P 时才画
  * （N / D / R 熄火后不可信，画出来会与「已驻车」自相矛盾）。
  * 上电状态下的 N 挡仍然老老实实说「空挡」—— 人还在车上，提醒他挂 P 是有意义的。
+ *
+ * ## 车速才是「在动」的唯一硬证据
+ * 早先版本用 `locked == true` 去压车速（怕车机休眠后车速残留），结果撞上**行车自动落锁**：
+ * 车一开起来就自动上锁，`locked` 变 true，车速被压掉，行驶中反而被判成「已驻车」
+ * （用户 2026-11-04 第二次反馈）。现在改成按挡位压：只有 **P 挡**才把车速当残值 ——
+ * 挂着 P 挡却报 60km/h 只能是报文没刷新；D / R 挡报多少就是多少。
  *
  * ## 判不出来就什么都不显示
  * 挡位和车速都没有时返回 null，首页整条不占位 —— 与其写「状态未知」，不如不出现
@@ -76,10 +83,9 @@ object DrivingStateRules {
      * [chargeRemainMinutes] 优先于 [chargeTimeLeft]：前者是信号 1200 的原值（分钟），
      * 后者只是同一个信号格式化后的文案，拿到原值就能自己控制「剩 2 小时 5 分钟」这种说法。
      *
-     * [isShutDown] 见 [VehicleHomeStatus.isVehicleShutDown]：闭锁 / 电源 OFF / 非运行 / EPB 拉起。
-     * [locked] 单独传一份是为了压车速：车在开绝不可能闭锁，所以闭锁状态下的车速一定是报文残值。
-     * （不能反过来拿 [isShutDown] 压车速 —— 它把 `vehicleState==1` 当下电，万一行驶中报 1，
-     * 正在开的车会被说成「已驻车」，那比残留车速严重得多。）
+     * [isShutDown] 见 [VehicleHomeStatus.isVehicleShutDown]：BCM 电源 OFF / EPB 拉起 /
+     * 非 D、R 挡时的闭锁。**不再接收 locked** —— 用它压车速会撞上行车自动落锁，
+     * 把正在开的车说成「已驻车」（见类注释「车速才是『在动』的唯一硬证据」）。
      */
     fun badge(
         gearStatus: String?,
@@ -88,11 +94,16 @@ object DrivingStateRules {
         chargeRemainMinutes: Int? = null,
         chargeTimeLeft: String? = null,
         isShutDown: Boolean = false,
-        locked: Boolean? = null,
     ): DrivingBadge? {
         val gear = normalizeGear(gearStatus)
         val speed = speedKmh?.takeIf { it.isFinite() && it >= 0.0 }
-        val moving = locked != true && speed != null && speed > MOVING_THRESHOLD_KMH
+        // 车速什么时候可信：
+        // · 挂 D / R 挡 —— 一定可信，这是「车在动」最硬的证据（行车自动落锁时也是如此）；
+        // · 其余挡位（P / N / 没有挡位）—— 只要已判定「人已离车 / 已下电」就不采信，
+        //   人都锁车走了怎么会有车速，那只能是车机休眠前留下的报文残值。
+        val speedTrusted = gear == "D" || gear == "R" || !isShutDown
+        val moving = speedTrusted && gear != "P" &&
+            speed != null && speed > MOVING_THRESHOLD_KMH
 
         // 熄火后挡位字母不可信：只有 P 是真信号，N / D / R 一律不画
         val trustedGear = if (isShutDown && gear != "P") null else gear

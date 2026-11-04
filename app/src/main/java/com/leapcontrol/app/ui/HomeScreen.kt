@@ -131,6 +131,7 @@ import com.leapcontrol.app.AcSwitchIntent
 import com.leapcontrol.app.Commands
 import com.leapcontrol.app.ChargePlanCyclesHelper
 import com.leapcontrol.app.ChargeSchedule
+import com.leapcontrol.app.DrivingStateRules
 import com.leapcontrol.app.EnergyFormat
 import com.leapcontrol.app.HomeCardId
 import com.leapcontrol.app.HomeCardLayout
@@ -281,7 +282,7 @@ fun HomeScreen(
         var refreshing by remember { mutableStateOf(false) }
         // 位置卡的手动刷新年轮：用户下拉 / 点顶部刷新 / 切车时 +1。
         // 车辆位置**不再跟着坐标变自动重拉**（行驶中车况十几秒一次，坐标每次都变，
-        // 一趟车程就是几百次逆地理 + 几百张静态地图，白白叫醒车机、吃高德额度），
+        // 一趟车程就是几百次逆地理，白白叫醒车机、吃高德额度），
         // 只在进首页和这个计数变化时才重新问高德，见 rememberVehiclePlace。
         var placeEpoch by remember { mutableStateOf(0) }
         var carName by remember { mutableStateOf(runtime.displayName()) }
@@ -1579,42 +1580,15 @@ fun HomeScreen(
                     }
                 }
                 Spacer(Modifier.width(12.dp))
-                // 右：车辆状态（靠右；行车状态在闭锁上方，4 项状态同一行可横滑）
-                Column(
-                    modifier = Modifier.wrapContentWidth(),
-                    horizontalAlignment = Alignment.End,
-                ) {
-                    val locked = currentStatus?.locked
-                    // 闭锁状态始终显示
-                    StatusItem(
-                        iconRes = if (locked == true) R.drawable.ic_qc_lock else R.drawable.ic_qc_unlock,
-                        label = when (locked) {
-                            true -> "车辆已闭锁"
-                            false -> "车辆未闭锁"
-                            null -> "闭锁状态未知"
-                        },
-                        alert = locked == false,
-                    )
-                    // 已开启提醒：排在「车辆已闭锁」正下方、纵向排列；未开启不提示
-                    val openHints = buildList {
-                        if (currentStatus?.windowOpen == true) add(R.drawable.ic_qc_window to "车窗已开启")
-                        if (currentStatus?.trunkOpen == true) add(R.drawable.ic_qc_trunk to "后备箱已开启")
-                        if (currentStatus?.sunshadeOpen == true) add(R.drawable.ic_qc_sunshade to "遮阳帘已开启")
-                        if (currentStatus?.acOn == true) add(R.drawable.ic_qc_ac to "空调已开启")
-                    }
-                    if (openHints.isNotEmpty()) {
-                        Spacer(Modifier.height(10.dp))
-                        Column(
-                            modifier = Modifier.wrapContentWidth(),
-                            horizontalAlignment = Alignment.End,
-                        ) {
-                            openHints.forEachIndexed { index, (iconRes, text) ->
-                                if (index > 0) Spacer(Modifier.height(8.dp))
-                                StatusItem(iconRes, text, alert = true)
-                            }
-                        }
-                    }
-                }
+                // 右：车辆状态区（方案 02「双行文本流」，用户 2026-11-05 定稿）。
+                // 第一行是主状态（圆点 + 结论 + 可选数值），第二行把闭锁 / 空调 /
+                // 车窗 / 后备箱 / 遮阳帘用「 · 」串成一句灰色小字 —— 不再有胶囊外框，
+                // 也不再有图标行：这块以前三种外形（胶囊 + 裸图标 + 裸文字）堆在一列，
+                // 右边缘参差、又悬在夜景上，看着最乱的就是它。
+                HomeStatusText(
+                    status = currentStatus,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
 
             // ---- 胶囊入口行（续航下方，样式参考官网 App）：充电中心 / 驻车拍照 ----
@@ -1692,19 +1666,6 @@ fun HomeScreen(
                         )
                     }
                 }
-            }
-
-            // ---- 车辆状态胶囊：固定在车模正下方居中 ----
-            // 判据只有挡位 / 车速 / 充电状态，判不出来时组件自己返回 null、不占位。
-            // 车模被关掉（carBitmap 为空）时这条也照样显示：它说的是车，不是车模，
-            // 只是要自己补一点上间距，不然会紧贴上面那排胶囊。
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = if (carBitmap != null) 2.dp else 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                DrivingStatePill(status = currentStatus, scrolling = scrollingState)
             }
 
             // ---- 快捷控车：一行显示 4 个，左右滑动查看其余，下方带横向滚动提示条 ----
@@ -3114,36 +3075,6 @@ private fun MileageRow(
             maxLines = 1,
             softWrap = false,
             textAlign = TextAlign.Start,
-        )
-    }
-}
-
-/**
- * 车辆状态面板里的单行状态：左图标 + 右文字。
- * 文字统一用主色（浅色模式黑、深色模式白）—— 状态提示压在动态背景上时，
- * 灰色或红色小字会糊掉；警示信息改由图标颜色承担（[alert]=true 时图标转红）。
- *
- * 图标用「快捷控车」那一套 `ic_qc_*` 矢量图（与首页圆钮同源），
- * 不再混用 Material 图标 —— 两套线宽/圆角不同，并排时会明显不是一家人。
- */
-@Composable
-private fun StatusItem(iconRes: Int, label: String, alert: Boolean) {
-    val C = LocalAppColors.current
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-            painter = painterResource(iconRes),
-            contentDescription = null,
-            tint = if (alert) STATUS_ALERT_RED else C.textPrimary,
-            modifier = Modifier.size(16.dp),
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = label,
-            color = C.textPrimary,
-            fontSize = 15.sp,
-            // 状态文案不折行：折了会把右侧状态栏撑高，左边的续航区跟着错位
-            maxLines = 1,
-            softWrap = false,
         )
     }
 }

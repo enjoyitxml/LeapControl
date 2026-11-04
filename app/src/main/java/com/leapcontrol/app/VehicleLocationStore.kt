@@ -186,26 +186,6 @@ object LocationAnchorRule {
 }
 
 /**
- * 坐标纠偏开关的存储（WGS-84 → GCJ-02，见 [ChinaCoordinate]）。
- *
- * 和锚点放在同一个 prefs 里：两者都是「位置这件事」的本地设置，
- * 退出登录 / 换车时由 [VehicleLocationStore.clear] 一起收拾才不会漏。
- */
-object CoordinateShiftPrefs {
-    private const val PREFS = "leapcontrol_location"
-    private const val KEY_WGS_TO_GCJ = "shift_wgs_to_gcj"
-
-    fun isEnabled(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_WGS_TO_GCJ, false)
-
-    fun setEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_WGS_TO_GCJ, enabled)
-            .apply()
-    }
-}
-
-/**
  * 锚点的落盘（单独一个 prefs，不塞进 `last.json`）。
  *
  * 分开存是有意的：`last.json` 由位置卡在「取图成功」时写，锚点由车况每次刷新时写，
