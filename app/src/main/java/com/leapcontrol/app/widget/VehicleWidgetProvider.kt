@@ -6,6 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
+import com.leapcontrol.app.ConfirmAction
+import com.leapcontrol.app.ConfirmActions
+import com.leapcontrol.app.ConfirmGate
+import com.leapcontrol.app.DoubleConfirmRules
 import com.leapcontrol.app.tiles.QuickTiles
 import com.leapcontrol.app.tiles.TileSpec
 import com.leapcontrol.app.ui.AppRuntime
@@ -13,6 +17,7 @@ import com.leapcontrol.app.ui.CarStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -119,9 +124,17 @@ class VehicleWidgetProvider : AppWidgetProvider() {
             else -> return
         }
 
-        // 开后备箱不可撤销：沿用 App 内「3 秒内再点一次确认」的策略
-        if (command == "trunkOpen" && !confirmTrunkOpen(context)) {
-            toast(context, "再点一次后备箱确认打开")
+        // 二次确认（可选项，默认全关）：第一次点只记下「待确认」并提示，
+        // 窗口内再点同一个键才真正下发。开关在「设置 → 快捷控制再点一次」。
+        if (ConfirmActions.isEnabled(context, command) && !ConfirmGate.step(context, SCOPE, command)) {
+            val label = ConfirmAction.of(command)?.title ?: "该操作"
+            // 卡片右上角那行本来显示「12:30 更新」，临时借来说一句确认提示；
+            // 只走增量，别为一个提示把整张卡（含壁纸）重画一遍
+            VehicleWidget.render(context, runtime, busy = "再点一次确认", partial = true)
+            toast(context, "再点一次「$label」确认")
+            // 3 秒后把提示改回车况文案。单独起协程、**不阻塞这一条广播**：
+            // 广播 10 秒就超时，在 execute() 里 delay 会把整条链路一起拖长。
+            resetHintLater(context, runtime)
             return
         }
 
@@ -212,18 +225,19 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         else -> "正在下发…"
     }
 
-    private fun confirmTrunkOpen(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val now = System.currentTimeMillis()
-        val last = prefs.getString(KEY_LAST_TRUNK, null)
-        val lastAt = prefs.getLong(KEY_LAST_TRUNK_AT, 0L)
-        val confirmed = last == "trunkOpen" && now - lastAt in 0..DOUBLE_CLICK_WINDOW_MS
-        // 确认过一次就清掉，避免连点三下变成两次开箱
-        prefs.edit()
-            .putString(KEY_LAST_TRUNK, if (confirmed) null else "trunkOpen")
-            .putLong(KEY_LAST_TRUNK_AT, if (confirmed) 0L else now)
-            .apply()
-        return confirmed
+    /**
+     * 确认提示到期后把卡片右上角改回车况文案。
+     *
+     * 不挂在 [execute] 里 `delay`：那条链路走的是 [goAsync]，广播只有约 10 秒预算，
+     * 多等 3 秒会把「回读车况 + 重画」一起顶出预算。这里用进程级 [work]，
+     * 广播早就 finish 了，协程仍然能把卡片恢复；进程被回收时卡片也会在下一次更新时重置。
+     */
+    private fun resetHintLater(context: Context, runtime: AppRuntime) {
+        val appContext = context.applicationContext
+        work.launch {
+            delay(DoubleConfirmRules.WINDOW_MS + 300)
+            runCatching { VehicleWidget.render(appContext, runtime, partial = true) }
+        }
     }
 
     private suspend fun refresh(context: Context) {
@@ -251,11 +265,7 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         /** 车模图（有缓存时是 0 开销）。三段上限 5+3+1.5 = 9.5 秒，压住 10 秒广播预算。 */
         const val CAR_IMAGE_MS = 1_500L
 
-        /** 与 App 内「再点一次」窗口保持一致（3 秒）。 */
-        const val DOUBLE_CLICK_WINDOW_MS = 3_000L
-
-        const val PREFS = "widget_action_state"
-        const val KEY_LAST_TRUNK = "last_trunk_command"
-        const val KEY_LAST_TRUNK_AT = "last_trunk_at"
+        /** 「待确认」状态在这块入口下的作用域（见 [ConfirmGate]），与磁贴的互不干扰。 */
+        const val SCOPE = "widget"
     }
 }

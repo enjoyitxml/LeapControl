@@ -63,6 +63,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.BuildConfig
+import com.leapcontrol.app.ConfirmActions
 import com.leapcontrol.app.QuickSwitchLock
 import com.leapcontrol.app.QuickSwitchMode
 import com.leapcontrol.app.SessionStore
@@ -89,9 +90,13 @@ fun SettingsScreen(
 ) {
     val C = LocalAppColors.current
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var showRename by remember { mutableStateOf(false) }
     var showPin by remember { mutableStateOf(false) }
     var showAmapKey by remember { mutableStateOf(false) }
+    // 「快捷控制再点一次」子页：勾选哪些动作要确认（桌面小组件 / 控制中心磁贴）
+    var showConfirmActions by remember { mutableStateOf(false) }
+    var confirmSummary by remember { mutableStateOf(ConfirmActions.summary(context)) }
     // 发送到车机弹层（首页卡片与设置里的「搜一个地方」共用）
     var showDestination by remember { mutableStateOf(false) }
     var showAsrKey by remember { mutableStateOf(false) }
@@ -105,6 +110,16 @@ fun SettingsScreen(
             BluetoothKeyScreen(host = host, onBack = { showBleKey = false })
             return
         }
+    }
+    if (showConfirmActions) {
+        // 子页里改的是 prefs，回来时重新读一遍摘要：不读的话那一行会一直显示旧的勾选结果
+        ConfirmSettingsScreen(
+            onBack = {
+                showConfirmActions = false
+                confirmSummary = ConfirmActions.summary(context)
+            },
+        )
+        return
     }
     // 快速切换壁纸/背景：三态模式 + 两块各自的小白点开关（都挂在 runtime 的 State 上，
     // 这里直接订阅，改完即时生效，不在页面里存第二份）
@@ -206,13 +221,21 @@ fun SettingsScreen(
             Spacer(Modifier.height(10.dp))
             SwitchRow(
                 label = "控车二次确认",
-                desc = "主界面下发控车指令前弹窗确认，防误触（控制中心磁贴不受限）",
+                desc = "主界面下发前弹窗确认（桌面小组件与控制中心不走这套）",
                 checked = confirmGate,
                 onCheckedChange = {
                     confirmGate = it
                     runtime.setBiometricConfirmEnabled(it)
                 },
             )
+            Spacer(Modifier.height(10.dp))
+            // 与上面那个开关是两件事：上面管 App 内弹窗，这个管桌面 / 控制中心的「再点一次」。
+            // 默认全关 —— 那两个入口的意义就是一步到位。
+            ClickRow(
+                title = "快捷控制再点一次",
+                desc = confirmSummary,
+                icon = Icons.Filled.TouchApp,
+            ) { showConfirmActions = true }
         }
 
         Spacer(Modifier.height(14.dp))

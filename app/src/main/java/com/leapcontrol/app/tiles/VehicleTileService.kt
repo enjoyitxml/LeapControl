@@ -9,6 +9,9 @@ import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.widget.Toast
+import com.leapcontrol.app.ConfirmActions
+import com.leapcontrol.app.ConfirmGate
+import com.leapcontrol.app.DoubleConfirmRules
 import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
@@ -43,6 +46,14 @@ abstract class VehicleTileService : TileService() {
     private val prefs by lazy { getSharedPreferences("quick_tiles_state", Context.MODE_PRIVATE) }
     private var busy = false
 
+    /**
+     * 「待确认」状态的作用域：每块磁贴各一条记录。
+     *
+     * 不能所有磁贴共用一个 —— 点完「解锁」马上点「后备箱」，共用一个 key 会被当成
+     * 「确认开后备箱」，反而把用户没打算做的事做掉。
+     */
+    private val confirmScope: String get() = "tile_${spec.id}"
+
     override fun onTileAdded() {
         super.onTileAdded()
         prefs.edit().putBoolean("added_${spec.id}", true).apply()
@@ -58,7 +69,9 @@ abstract class VehicleTileService : TileService() {
         // 先用进程内已知的最新车况把状态摆正，再渲染：控制中心一展开就是对的，
         // 不用等下面那个异步校准（它可能要发一次网络请求）
         if (!busy) applyKnownStatus()
-        if (!busy) render()
+        // 上一次点击还在确认窗口里（收起再展开控制中心）：把提示接着显示出来，
+        // 否则用户第二次展开会以为刚才那一下已经生效了。
+        if (!busy) render(if (ConfirmGate.pending(this, confirmScope) != null) CONFIRM_HINT else null)
         // 异步再校一次：顺手覆盖「App 完全没跑、进程内没有快照」的情况
         if (spec.kind == TileKind.TOGGLE) scope.launch { syncFromVehicle() }
     }
@@ -91,6 +104,21 @@ abstract class VehicleTileService : TileService() {
 
         // 本次要下发的方向：一次性动作固定「执行」，开关磁贴取反本地记住的开合态。
         val turningOn = spec.kind == TileKind.MOMENTARY || !QuickTiles.isOn(ctx, spec)
+        val command = if (turningOn) spec.openCommand else spec.closeCommand
+
+        // 二次确认（可选项，默认全关，见「设置 → 快捷控制再点一次」）：
+        // 第一次点只把磁贴改成「再点一次确认」，窗口内再点同一个磁贴才真正执行。
+        // 这里**不能**进 busy —— 待确认时磁贴必须还能被点第二下。
+        if (ConfirmActions.isEnabled(ctx, command) && !ConfirmGate.step(ctx, confirmScope, command)) {
+            toast("再点一次确认${spec.title}")
+            render(CONFIRM_HINT, active = false)
+            // 窗口过了就恢复默认文案。期间用户点了第二下（进入 busy）就别覆盖执行中的状态。
+            scope.launch {
+                delay(DoubleConfirmRules.WINDOW_MS + 300)
+                if (!busy) render()
+            }
+            return
+        }
 
         busy = true
         render(spec.doing, active = turningOn)
@@ -249,6 +277,9 @@ abstract class VehicleTileService : TileService() {
 
         /** 进程内车况快照的最长可用年龄。再老的话宁可联网拉一次。 */
         const val SNAPSHOT_TTL_MS = 30_000L
+
+        /** 待确认时磁贴副标题：短一点，控制中心的格子放不下更长的字。 */
+        const val CONFIRM_HINT = "再点一次确认"
     }
 }
 
