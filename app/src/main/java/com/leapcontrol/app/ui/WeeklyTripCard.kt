@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,7 +53,8 @@ fun WeeklyTripCard(
 
     Column(
         modifier = modifier
-            .height(172.dp)
+            // 与左侧胎压卡同一个高度：字号放大时两张卡一起长，并排时下边缘才齐平
+            .height(pairCardHeight(LocalDensity.current.fontScale))
             .clip(RoundedCornerShape(8.dp))
             .background(C.panelBg, RoundedCornerShape(8.dp))
             .padding(horizontal = 12.dp, vertical = 11.dp),

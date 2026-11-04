@@ -1,6 +1,5 @@
 package com.leapcontrol.app.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,6 +46,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.AppUpdateInfo
@@ -54,11 +54,23 @@ import com.leapcontrol.app.R
 import android.widget.Toast
 
 /**
+ * 折叠时露出几行更新说明。3 行约 51dp（11sp / 17sp 行高）：
+ * 够看清这一版改了什么方向，又不会把「去下载 / 稍后」挤出屏幕。
+ */
+private const val NOTES_COLLAPSED_LINES = 3
+
+/** 展开后说明区的高度上限：再长就在框内自己滚，弹窗整体高度不跟着涨。 */
+private val NOTES_EXPANDED_MAX_HEIGHT = 150.dp
+
+/**
  * 版本更新提醒弹窗：检测到 GitHub 有新版本时弹出。
  * - 「去下载」：App 内下载安装包，下载中可最小化到悬浮条，不影响继续用车；
  * - 「稍后」：关闭弹窗，下次启动仍会提醒（未忽略该版本）；
  * - 「不再提醒此版本」：记下该版本，之后不再自动弹窗（设置页红点仍保留）；
- * - 「更新说明」：读取 Release 正文，默认折叠，点开才展开（长说明不占满屏）。
+ * - 「更新说明」：默认**露出开头几行**（[NOTES_COLLAPSED_LINES]），够看清这一版改了什么方向；
+ *   想细看再点开，展开后限高 [NOTES_EXPANDED_MAX_HEIGHT] 内部滚动。
+ *   默认不整段摊开是有原因的：Release 正文动辄二三十行，全摊开会把「去下载 / 稍后」
+ *   挤出屏幕，用户反而找不到主按钮。
  */
 @Composable
 fun UpdateDialog(
@@ -79,6 +91,9 @@ fun UpdateDialog(
 ) {
     val C = LocalAppColors.current
     var notesExpanded by remember { mutableStateOf(false) }
+    // 说明短到放得下时不必给「展开」—— 否则点了没反应，像坏了。
+    // 只在折叠态统计，展开后 maxLines 不设限就测不出溢出了，保留折叠时那次结果即可。
+    var notesOverflow by remember { mutableStateOf(false) }
     // 半透明遮罩 + 居中卡片；点遮罩 = 稍后
     Box(
         modifier = Modifier
@@ -133,55 +148,76 @@ fun UpdateDialog(
                     lineHeight = 20.sp,
                 )
 
-                // ---- 更新说明：默认折叠，点开才展开 ----
+                // ---- 更新说明：默认露出开头几行，想细看再展开 ----
                 if (info.notes.isNotBlank()) {
                     Spacer(Modifier.height(14.dp))
+                    val notesScroll = rememberScrollState()
+                    val toggleNotes = { notesExpanded = !notesExpanded }
+                    // 折叠时整块都能点（好点中），展开后只有标题行能点 ——
+                    // 否则在说明里往下拖到头、抬手那一下会被当成「收起」。
+                    val tapWholeCard = notesOverflow && !notesExpanded
+                    val tapTitleRow = notesOverflow && notesExpanded
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
                             .background(C.chipBg)
-                            .clickable { notesExpanded = !notesExpanded }
+                            // 只有真的溢出才可点：一两行就说完的说明，点了没反应会让人以为坏了
+                            .then(if (tapWholeCard) Modifier.clickable(onClick = toggleNotes) else Modifier)
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (tapTitleRow) Modifier.clickable(onClick = toggleNotes) else Modifier),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Text(
                                 "更新说明",
                                 color = C.textPrimary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                             )
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                if (notesExpanded) "收起" else "展开",
-                                color = C.textSecondary,
-                                fontSize = 11.sp,
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.Filled.ExpandMore,
-                                contentDescription = null,
-                                tint = C.textSecondary,
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .rotate(if (notesExpanded) 180f else 0f),
-                            )
-                        }
-                        AnimatedVisibility(visible = notesExpanded) {
-                            Column {
-                                Spacer(Modifier.height(8.dp))
+                            if (notesOverflow) {
+                                Spacer(Modifier.weight(1f))
                                 Text(
-                                    text = plainNotes(info.notes),
+                                    if (notesExpanded) "收起" else "展开",
                                     color = C.textSecondary,
                                     fontSize = 11.sp,
-                                    lineHeight = 17.sp,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Filled.ExpandMore,
+                                    contentDescription = null,
+                                    tint = C.textSecondary,
                                     modifier = Modifier
-                                        // 说明可能很长：限高 + 内部滚动，别把弹窗顶出屏幕
-                                        .heightIn(max = 170.dp)
-                                        .verticalScroll(rememberScrollState()),
+                                        .size(16.dp)
+                                        .rotate(if (notesExpanded) 180f else 0f),
                                 )
                             }
                         }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = plainNotes(info.notes),
+                            color = C.textSecondary,
+                            fontSize = 11.sp,
+                            lineHeight = 17.sp,
+                            // 默认只露开头几行：足够看出这一版改了什么方向，
+                            // 又不至于把「去下载 / 稍后」挤出屏幕
+                            maxLines = if (notesExpanded) Int.MAX_VALUE else NOTES_COLLAPSED_LINES,
+                            overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { result ->
+                                if (!notesExpanded) notesOverflow = result.hasVisualOverflow
+                            },
+                            modifier = if (notesExpanded) {
+                                // 展开后限高 + 框内滚动，弹窗整体高度不跟着涨
+                                Modifier
+                                    .heightIn(max = NOTES_EXPANDED_MAX_HEIGHT)
+                                    .verticalScroll(notesScroll)
+                            } else {
+                                Modifier
+                            },
+                        )
                     }
                 }
                 Spacer(Modifier.height(22.dp))

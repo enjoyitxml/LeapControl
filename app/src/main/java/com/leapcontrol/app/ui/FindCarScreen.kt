@@ -695,7 +695,7 @@ private fun ParkingPhotoCard(photo: ParkingPhotoState, onPreview: () -> Unit) {
 
 /** 照片卡里的小按钮（40dp 高）。配色与 [BigAction] 同一套：淡色底 + 主题色字。 */
 @Composable
-private fun PhotoAction(
+internal fun PhotoAction(
     text: String,
     primary: Boolean,
     modifier: Modifier = Modifier,
@@ -729,7 +729,7 @@ private fun PhotoAction(
  * 放大看是唯一能确认「是不是这格」的办法。
  */
 @Composable
-private fun PhotoPreviewDialog(bitmap: android.graphics.Bitmap, onDismiss: () -> Unit) {
+internal fun PhotoPreviewDialog(bitmap: android.graphics.Bitmap, onDismiss: () -> Unit) {
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),

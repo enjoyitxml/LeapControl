@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Window
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -297,6 +298,8 @@ fun HomeScreen(
         var showAcScreen by remember { mutableStateOf(false) }
         // 找车页（点首页「车辆位置」卡进入）
         var showFindCar by remember { mutableStateOf(false) }
+        // 驻车拍照页（点首页「驻车拍照」胶囊进入；和找车页的照片卡共用同一份存储）
+        var showParkingPhoto by remember { mutableStateOf(false) }
         // 空调页里的指令在 PIN 验证完成后重放（记录命令名，含 acSetting: 合成命令）
         var pendingAcPanelCommand by remember { mutableStateOf<String?>(null) }
         // 设定温度的本地草稿：概览条与展开面板共用同一份，两处加减号才不会各调各的
@@ -427,7 +430,8 @@ fun HomeScreen(
         // 打开时向 MainScreen 汇报，让场景动画只在首页主界面跑
         val onMainPage = !showChargingCenter && !showSeatComfort && !showFridge && !showClimate &&
             !showAcScreen && !showScheduledAc && !showVehicleHealth && !showOta &&
-            !showControlEditor && !showBleKey && !showPlaybook && !showFindCar
+            !showControlEditor && !showBleKey && !showPlaybook && !showFindCar &&
+            !showParkingPhoto
         LaunchedEffect(onMainPage) { onMainPageChange(onMainPage) }
 
         // ---- 系统返回（返回键 / 左右滑返回手势）：逐级退回，不再直接退出 App ----
@@ -448,6 +452,7 @@ fun HomeScreen(
                 showOta -> showOta = false
                 showVehicleHealth -> showVehicleHealth = false
                 showFindCar -> showFindCar = false
+                showParkingPhoto -> showParkingPhoto = false
                 showAcScreen -> showAcScreen = false
                 showClimate -> showClimate = false
                 showFridge -> showFridge = false
@@ -1175,6 +1180,13 @@ fun HomeScreen(
                 onMessage = { actionMessage = it },
                 onBack = { showFindCar = false },
             )
+        } else if (showParkingPhoto) {
+            // 驻车拍照：首页胶囊的落点。存储与拍照流程和找车页共用（同一个 space.jpg），
+            // 这一页只是把照片摆成主角，并能直接重拍 / 删除
+            ParkingPhotoScreen(
+                onBack = { showParkingPhoto = false },
+                onMessage = { actionMessage = it },
+            )
         } else if (showAcScreen) {
             // 首页空调条点进来的全屏空调页：温度草稿与首页共用（acTargetTemp），
             // 所以两处加减号不会各调各的
@@ -1605,8 +1617,11 @@ fun HomeScreen(
                 }
             }
 
-            // ---- 充电中心入口（胶囊按钮，续航下方，样式参考官网 App）----
-            ChargingCenterEntry(onClick = { showChargingCenter = true })
+            // ---- 胶囊入口行（续航下方，样式参考官网 App）：充电中心 / 驻车拍照 ----
+            HomePillRow(
+                onChargingCenter = { showChargingCenter = true },
+                onParkingPhoto = { showParkingPhoto = true },
+            )
 
             // ---- 车模：显示官方接口图（默认常开，不再提供关闭开关）----
             if (carBitmap != null) {
@@ -1677,6 +1692,19 @@ fun HomeScreen(
                         )
                     }
                 }
+            }
+
+            // ---- 车辆状态胶囊：固定在车模正下方居中 ----
+            // 判据只有挡位 / 车速 / 充电状态，判不出来时组件自己返回 null、不占位。
+            // 车模被关掉（carBitmap 为空）时这条也照样显示：它说的是车，不是车模，
+            // 只是要自己补一点上间距，不然会紧贴上面那排胶囊。
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = if (carBitmap != null) 2.dp else 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                DrivingStatePill(status = currentStatus, scrolling = scrollingState)
             }
 
             // ---- 快捷控车：一行显示 4 个，左右滑动查看其余，下方带横向滚动提示条 ----
@@ -3210,11 +3238,44 @@ private fun ChargingPulseEntry(paused: State<Boolean>, onClick: () -> Unit) {
     }
 }
 
-/** 充电中心入口：胶囊按钮（文字 + 右箭头），样式参考官网 App。 */
+/**
+ * 续航下方的入口行：充电中心 / 驻车拍照，两颗胶囊平行。
+ *
+ * 「驻车拍照」保留四个字（用户明确要求：只留相机图标认不出来），末尾配一枚线稿相机
+ * 顶替原来的右箭头；尺寸、内边距、字号全部沿用 [HomePill]，两颗仍是同一套外观。
+ */
 @Composable
-private fun ChargingCenterEntry(onClick: () -> Unit) {
-    val C = LocalAppColors.current
+private fun HomePillRow(
+    onChargingCenter: () -> Unit,
+    onParkingPhoto: () -> Unit,
+) {
     Spacer(Modifier.height(8.dp))
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HomePill(text = "充电中心", onClick = onChargingCenter)
+        HomePill(
+            text = "驻车拍照",
+            icon = Icons.Outlined.PhotoCamera,
+            onClick = onParkingPhoto,
+        )
+    }
+}
+
+/**
+ * 首页胶囊按钮：文字 + 右侧箭头，样式参考官网 App。
+ *
+ * [icon] 给「驻车拍照」用：用户要求保留四个字，并把原来的箭头换成相机图标 ——
+ * 所以图标画在**末尾**顶替箭头的位置，不是前面再加一枚。其他胶囊不传，外观与原来一字不差。
+ */
+@Composable
+private fun HomePill(
+    text: String,
+    onClick: () -> Unit,
+    icon: ImageVector? = null,
+) {
+    val C = LocalAppColors.current
     // 胶囊入口：比上一版收一档（左右 14/8 → 10/6，上下 7 → 4，字号 13 → 12sp，箭头 16 → 14dp）；
     // 左右内边距仍不对称，文字整体略微靠右，不贴着左侧圆弧。
     Surface(
@@ -3227,7 +3288,7 @@ private fun ChargingCenterEntry(onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "充电中心",
+                text = text,
                 color = C.textPrimary,
                 fontSize = 12.sp,
                 lineHeight = 13.sp,
@@ -3237,7 +3298,7 @@ private fun ChargingCenterEntry(onClick: () -> Unit) {
             )
             Spacer(Modifier.width(1.dp))
             Icon(
-                imageVector = Icons.Filled.ChevronRight,
+                imageVector = icon ?: Icons.Filled.ChevronRight,
                 contentDescription = null,
                 tint = C.textPrimary,
                 modifier = Modifier.size(14.dp),

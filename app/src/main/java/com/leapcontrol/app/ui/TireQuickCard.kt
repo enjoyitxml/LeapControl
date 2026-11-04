@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,6 +83,11 @@ private class TireMeasure {
  *
  * 数据全部来自 AppRuntime 的车况轮询（四轮胎压 + 胎压状态位），本卡不发指令、也不跳二级页
  * （四轮数值在卡上已经全给了，再进一页只是把同样的数字放大一遍）。
+ *
+ * ## 高度跟着系统字号走
+ * 卡片高度和中间车模的宽度都按 `fontScale` 等比放大（见 [pairCardHeight] / [pairCardCarWidth]）。
+ * 写死 172dp 时，字号放大后最下面那行 `kPa` 会顶出卡片、被圆角 clip 切掉半截 —— 用户
+ * 2026-11-04 反馈的就是这个。车模宽度同步放大，否则卡片变高、车模会被纵向拉长。
  */
 @Composable
 fun TireQuickCard(
@@ -91,6 +97,8 @@ fun TireQuickCard(
     val C = LocalAppColors.current
     val tires = status?.tires.orEmpty()
     val measure = remember { TireMeasure() }
+    // 系统字号越大，格子里的三行文字越高 —— 卡片高度与车模宽度一起放大（见 PairCardMetrics）
+    val fontScale = LocalDensity.current.fontScale
 
     /**
      * 实测「左前」格子中心 → 前轴比例。
@@ -115,7 +123,7 @@ fun TireQuickCard(
 
     Row(
         modifier = modifier
-            .height(172.dp)
+            .height(pairCardHeight(fontScale))
             .clip(RoundedCornerShape(8.dp))
             .background(C.panelBg, RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp, vertical = 10.dp)
@@ -143,7 +151,7 @@ fun TireQuickCard(
             tires = tires,
             frontFraction = { TireCarGeometry.frontFraction },
             modifier = Modifier
-                .width(60.dp)
+                .width(pairCardCarWidth(fontScale))
                 .fillMaxHeight(),
         )
 
@@ -181,7 +189,15 @@ private fun TireValueCell(
     }
 
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(position, color = C.textSecondary, fontSize = 9.5.sp)
+        // 三行都禁止折行：字号放大后「左前」若折成两行，格子高度直接翻倍，
+        // 卡片再高也装不下（这是「字号一大就裁字」的另一条路径，不能只靠加高卡片解决）
+        Text(
+            text = position,
+            color = C.textSecondary,
+            fontSize = 9.5.sp,
+            maxLines = 1,
+            softWrap = false,
+        )
         Spacer(Modifier.height(1.dp))
         Text(
             text = tire?.pressure ?: "--",
@@ -189,11 +205,14 @@ private fun TireValueCell(
             fontSize = 17.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
+            softWrap = false,
         )
         Text(
             text = "kPa",
             color = if (state == TirePressure.State.Low) redFor(C).copy(alpha = 0.75f) else C.textSecondary,
             fontSize = 8.5.sp,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }

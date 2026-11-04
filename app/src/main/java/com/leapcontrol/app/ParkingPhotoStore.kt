@@ -120,4 +120,22 @@ object ParkingPhotoRules {
         val age = VehicleLocationRules.ageText(ageMs) ?: return "车位已拍照"
         return String.format(Locale.CHINA, "车位已拍照 · %s", age)
     }
+
+    /**
+     * 「拍摄于 12 分钟前」—— 驻车拍照页用的说法。
+     *
+     * 那一页标题就叫「驻车拍照」、图就在正中间，「车位已拍照」是重复一遍已知的事；
+     * 用户真正想知道的是**这张是什么时候拍的**（停了一夜还是刚停，决定要不要重拍）。
+     * 时间读不到（文件 mtime 丢失）时返回 null，调用方退回一句中性文案，不编假时间。
+     */
+    fun takenAt(hasPhoto: Boolean, savedAt: Long, now: Long): String? {
+        if (!hasPhoto) return null
+        if (savedAt <= 0L || savedAt > now) return null
+        val ageMs = now - savedAt
+        // 一分钟内说「刚刚拍摄」而不是「拍摄于 刚刚」—— 后者读起来像病句。
+        // 这个 60 秒与 [VehicleLocationRules.ageText] 的第一个分界一致。
+        if (ageMs < 60_000L) return "刚刚拍摄"
+        val age = VehicleLocationRules.ageText(ageMs) ?: return null
+        return String.format(Locale.CHINA, "拍摄于 %s", age)
+    }
 }
