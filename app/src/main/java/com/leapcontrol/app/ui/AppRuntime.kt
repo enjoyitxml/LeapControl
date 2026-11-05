@@ -800,6 +800,8 @@ class AppRuntime(context: Context) {
         val vehicles = api.listVehicles()
         if (vehicles.isEmpty()) throw ApiException("账号下没有找到车辆")
         sessionStore.saveVehicles(vehicles)
+        // 重新登录成功：把「登录已失效」的标记撤掉，桌面卡片的「点此登录」才能回到车况
+        ControlFailure.clearSessionExpired(appContext)
         val selected = vehicles.firstOrNull { it.vin == session.selectedVin } ?: vehicles.first()
         selectVehicle(selected)
         vehicles
@@ -842,6 +844,7 @@ class AppRuntime(context: Context) {
 
     suspend fun logout(): Unit = withContext(Dispatchers.IO) {
         sessionStore.clear()
+        ControlFailure.clearSessionExpired(appContext)
         // 登出后不该再给别人看到上一辆车的车况/车模，清掉内存与磁盘快照
         _status.value = null
         _lastUpdated.value = 0L
@@ -871,6 +874,23 @@ class AppRuntime(context: Context) {
         runCatching { ChargeWatch.cancel(appContext) }
         // 桌面小组件也要立刻变成「点此登录」，别把上一辆车的车况留在锁屏外
         com.leapcontrol.app.widget.VehicleWidget.clearCarCache(appContext)
+        runCatching { com.leapcontrol.app.widget.VehicleWidget.render(appContext) }
+    }
+
+    /**
+     * 登录已失效，用户选择「重新登录」：**只退会话，不动用户数据**。
+     *
+     * 和 [logout] 的区别很关键：位置缓存、停车位照片、位置校准都是用户自己攒下来的东西，
+     * 只是 token 过期一次就全删了，重新登录同一账号等于白干一遍。
+     * 这里只把会话和内存快照收掉，界面自然回到登录页（见 `LeapControlApp`）。
+     */
+    suspend fun endExpiredSession(): Unit = withContext(Dispatchers.IO) {
+        sessionStore.clear()
+        ControlFailure.clearSessionExpired(appContext)
+        _status.value = null
+        _lastUpdated.value = 0L
+        // 车况快照不适用于「没登录」的状态；位置与照片**保留**
+        runCatching { statusPrefs.edit().clear().apply() }
         runCatching { com.leapcontrol.app.widget.VehicleWidget.render(appContext) }
     }
 

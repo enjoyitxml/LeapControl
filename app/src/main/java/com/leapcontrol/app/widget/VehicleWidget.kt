@@ -17,6 +17,7 @@ import com.leapcontrol.app.tiles.QuickTiles
 import com.leapcontrol.app.ui.AppNavRequest
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
+import com.leapcontrol.app.ui.ControlFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -197,7 +198,12 @@ object VehicleWidget {
         val status = r.statusFlow.value
         val updatedAt = r.lastUpdatedFlow.value
         val vin = r.session.selectedVin
-        val signedIn = vin.isNotBlank()
+        // 登录已失效（token 被服务端作废，比如账号在别的设备上被重新登录）时，
+        // 车况缓存还在、VIN 还在，但任何指令都会失败。这里按「未登录」画：
+        // 右上角明说、五颗按键改成「点一下打开 App 重新登录」——
+        // 否则用户只能反复点、反复等 5 秒超时，还以为 App 坏了（2026-11-05 的反馈）。
+        val sessionExpired = ControlFailure.isSessionExpired(context)
+        val signedIn = vin.isNotBlank() && !sessionExpired
         val title = r.displayName()
         // 内存没有就翻磁盘那份（[WidgetCarImage]）—— 冷进程第一帧全靠它，
         // 只认内存的话车模会时有时无：开过 App 之后有、被系统回收之后就没了。
@@ -225,6 +231,7 @@ object VehicleWidget {
                             // 增量只改文案，但「未设控车密码」这行字必须在，
                             // 否则每次刷新都会把它盖回「12:30 更新」
                             pinReady = r.hasPin,
+                            sessionExpired = sessionExpired,
                         ),
                     )
                 } else {
@@ -243,6 +250,8 @@ object VehicleWidget {
                             // 没设控车密码 → 五颗按键改成「打开 App 去设置」，
                             // 否则用户点了之后只看到卡片闪一下，什么也没发生
                             pinReady = r.hasPin,
+                            signInRequired = !signedIn,
+                            sessionExpired = sessionExpired,
                         ),
                     )
                     lastFullNight = night
@@ -404,6 +413,10 @@ object VehicleWidget {
         heightDp: Int = 150,
         /** 控车密码是否已设置；没设置时五个按键改成「打开 App 去设置密码」。 */
         pinReady: Boolean = true,
+        /** 登录已失效（token 被服务端作废）：五颗按键一律改成「打开 App 重新登录」。 */
+        signInRequired: Boolean = false,
+        /** 登录**失效**（而不是从没登录过）：只影响右上角那行字。 */
+        sessionExpired: Boolean = false,
     ): RemoteViews {
         val style = WidgetStyle.style(context)
         val night = WidgetStyle.isNight(context)
@@ -444,28 +457,35 @@ object VehicleWidget {
         // 与其弹一句很可能被 ROM 吞掉的 toast，不如让按键本身变成入口：
         // 点任意一颗都打开 App 并直接弹密码录入框 —— Activity 型的 PendingIntent
         // 由桌面发起，不受「后台启动 Activity」限制，比广播里 startActivity 可靠得多。
-        val pinIntent = if (pinReady) null else openAppIntent(context, AppNavRequest.OP_PASSWORD)
+        // 登录失效同理（而且优先级更高）：先去重新登录，密码设了也没用。
+        val navIntent = when {
+            signInRequired -> openAppIntent(context, AppNavRequest.RELOGIN)
+            !pinReady -> openAppIntent(context, AppNavRequest.OP_PASSWORD)
+            else -> null
+        }
         bindCellShell(views, R.id.wg_cell_unlock, R.id.wg_icon_unlock, R.drawable.ic_qc_unlock,
-            pinIntent ?: broadcast(context, ACTION_UNLOCK, RC_UNLOCK), cellBg, BASE_ICON_PAD, density)
+            navIntent ?: broadcast(context, ACTION_UNLOCK, RC_UNLOCK), cellBg, BASE_ICON_PAD, density)
         bindCellShell(views, R.id.wg_cell_lock, R.id.wg_icon_lock, R.drawable.ic_qc_lock,
-            pinIntent ?: broadcast(context, ACTION_LOCK, RC_LOCK), cellBg, BASE_ICON_PAD, density)
+            navIntent ?: broadcast(context, ACTION_LOCK, RC_LOCK), cellBg, BASE_ICON_PAD, density)
         bindCellShell(views, R.id.wg_cell_ac, R.id.wg_icon_ac, R.drawable.ic_qc_ac,
-            pinIntent ?: broadcast(context, ACTION_TOGGLE_AC, RC_AC), cellBg, BASE_ICON_PAD + AC_ICON_SHRINK, density)
+            navIntent ?: broadcast(context, ACTION_TOGGLE_AC, RC_AC), cellBg, BASE_ICON_PAD + AC_ICON_SHRINK, density)
         bindCellShell(views, R.id.wg_cell_trunk, R.id.wg_icon_trunk, R.drawable.ic_qc_trunk,
-            pinIntent ?: broadcast(context, ACTION_TOGGLE_TRUNK, RC_TRUNK), cellBg, BASE_ICON_PAD, density)
+            navIntent ?: broadcast(context, ACTION_TOGGLE_TRUNK, RC_TRUNK), cellBg, BASE_ICON_PAD, density)
         bindCellShell(views, R.id.wg_cell_horn, R.id.wg_icon_horn, R.drawable.ic_qc_horn,
-            pinIntent ?: broadcast(context, ACTION_HORN, RC_HORN), cellBg,
+            navIntent ?: broadcast(context, ACTION_HORN, RC_HORN), cellBg,
             (BASE_ICON_PAD - HORN_ICON_GROW).coerceAtLeast(0f), density,
             liftDp = HORN_ICON_LIFT)
 
         // 点文字区 / 车模都打开 App（车模不再兼做「换背景」按钮，那是设置页的事）
-        openAppIntent(context)?.let {
+        // 登录失效时带上 RELOGIN：进去直接问「要不要重新登录」，而不是让人对着满屏报错自己找
+        openAppIntent(context, if (signInRequired) AppNavRequest.RELOGIN else null)?.let {
             views.setOnClickPendingIntent(R.id.wg_info, it)
             views.setOnClickPendingIntent(R.id.wg_car_box, it)
         }
 
         // ---- 所有会变的内容 ----
-        bindLive(views, context, p, status, updatedAt, busy, signedIn, title, car, heightDp, pinReady)
+        bindLive(views, context, p, status, updatedAt, busy, signedIn, title, car, heightDp,
+            pinReady, sessionExpired)
 
         // 字号跟尺寸走，是结构属性：只在全量里设
         applyTextScale(views = views, scale = textScale(widthDp, heightDp))
@@ -488,13 +508,15 @@ object VehicleWidget {
         car: Bitmap? = null,
         heightDp: Int = 150,
         pinReady: Boolean = true,
+        /** 登录已失效：右上角改写「登录已失效」，比「点此登录」说得更清楚。 */
+        sessionExpired: Boolean = false,
     ): RemoteViews {
         val glass = WidgetStyle.style(context) == WidgetStyle.STYLE_D
         val layout = if (glass) R.layout.widget_d else R.layout.widget_a
         val views = RemoteViews(context.packageName, layout)
         bindLive(
             views, context, paletteFor(context), status, updatedAt, busy, signedIn,
-            title, car, heightDp, pinReady,
+            title, car, heightDp, pinReady, sessionExpired,
         )
         return views
     }
@@ -517,6 +539,7 @@ object VehicleWidget {
         car: Bitmap?,
         heightDp: Int,
         pinReady: Boolean = true,
+        sessionExpired: Boolean = false,
     ) {
         // ---- 车标 + 车名 ----
         views.setTextViewText(R.id.wg_title, title.ifBlank { "我的零跑" })
@@ -536,8 +559,10 @@ object VehicleWidget {
                 stateColor = p.active
             }
             !signedIn -> {
-                stateText = "点此登录"
-                stateColor = p.sub
+                // 登录失效和「从没登录过」要分开写：前者用户明明登录过，
+                // 只写「点此登录」他会以为自己点错了，不知道是 token 被作废
+                stateText = if (sessionExpired) "登录已失效" else "点此登录"
+                stateColor = if (sessionExpired) p.warn else p.sub
             }
             // 没设控车密码：五颗按键点了也不会下发（指令层直接抛 NeedPin），
             // 提前在卡片上说清楚，用户就不用靠「点了没反应」去猜。

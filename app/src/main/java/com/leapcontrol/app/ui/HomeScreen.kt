@@ -2685,6 +2685,11 @@ private fun ModuleRow(
 /** 把底层网络异常转换为用户可读文案。 */
 private fun friendlyError(e: Throwable): String {
     val msg = e.message.orEmpty()
+    // 登录失效排在最前：这类请求换成网络文案（「稍后自动重试」）会一直重试到天荒地老，
+    // 而用户真正该做的是重新登录（2026-11-05 那波「控车全部失效」就是这么被误读成 App 坏了的）
+    if (ControlFailure.isAuthFailure(msg.lowercase())) {
+        return "登录已失效，请到「我的」退出后重新登录"
+    }
     return when {
         msg.contains("Unable to resolve host", ignoreCase = true) ||
             msg.contains("No address associated with hostname", ignoreCase = true) ->

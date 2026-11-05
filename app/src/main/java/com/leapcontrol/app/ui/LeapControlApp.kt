@@ -34,7 +34,12 @@ fun LeapControlApp() {
     } else {
         LoginScreen(
             runtime = runtime,
-            onLoginSuccess = { loggedIn = true },
+            onLoginSuccess = {
+                // 登录成功：从桌面带进来的 RELOGIN / OP_PASSWORD 请求已经过期了。
+                // 不清的话，下一次进主界面会突然弹一句「登录已失效」，而人刚刚才登录过。
+                AppNavRequest.consume()
+                loggedIn = true
+            },
         )
     }
 }

@@ -16,6 +16,8 @@ import com.leapcontrol.app.tiles.TileSpec
 import com.leapcontrol.app.ui.AppNavRequest
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
+import com.leapcontrol.app.ui.ControlFix
+import com.leapcontrol.app.ui.ControlFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -87,9 +89,21 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         }
         // 登录态 / 控车密码同步检查：不满足就没必要起后台任务
         val session = runtime.session
-        if (session.selectedVin.isBlank() || (session.oldAuth == null && session.newAuth == null)) {
+        val noAuth = session.oldAuth == null && session.newAuth == null
+        if (noAuth || ControlFailure.isSessionExpired(appContext)) {
             pending.finish()
-            toast(appContext, "请先登录零控（点卡片打开 App）")
+            // 光弹 toast 不够：桌面广播里弹的 toast 在不少 ROM 上会被直接吞掉，
+            // 用户看到的就是「点了按钮毫无反应」—— 2026-11-05 那波「小组件全部失效」
+            // 的反馈就是这么来的。直接把 App 拉到前台，让他看得见明确的下一步。
+            toast(appContext, "登录已失效，请重新登录零控")
+            openApp(appContext, AppNavRequest.RELOGIN)
+            return
+        }
+        if (session.selectedVin.isBlank()) {
+            pending.finish()
+            // 登录着但没选车：指令层会抛「还没有选择车辆 VIN」，提前说清楚，别让用户等到超时
+            toast(appContext, "还没选择车辆，正在打开零控")
+            openApp(appContext, null)
             return
         }
         if (runtime.sessionStore.loadOpPassword().isNullOrBlank()) {
@@ -98,7 +112,7 @@ class VehicleWidgetProvider : AppWidgetProvider() {
             // 用户看到的就是「点了按钮毫无反应」。这里直接把 App 拉到前台并落到密码设置页，
             // 让他看见一个确定的结果。
             toast(appContext, "还没设置 4 位控车密码，正在打开零控")
-            openAppForPin(appContext)
+            openApp(appContext, AppNavRequest.OP_PASSWORD)
             return
         }
 
@@ -165,9 +179,12 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         if (outcome.getOrNull() == null) {
             // 没发出去就别改本地开合态，也别让卡片停在「正在上锁…」
             VehicleWidget.render(context, runtime, partial = true)
-            toast(context, failureText(outcome.exceptionOrNull()))
+            fail(context, outcome.exceptionOrNull())
             return
         }
+
+        // 这次通了：之前记下的「登录已失效」可以撤了，别让卡片一直写着「点此登录」
+        ControlFailure.clearSessionExpired(context)
 
         if (toggle != null) {
             // 指令确实发出去了才落状态：发失败时不能让按键「假装」已经开/关了
@@ -221,10 +238,27 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         else -> "指令已下发"
     }
 
-    private fun failureText(e: Throwable?): String = when {
-        e == null -> "指令下发超时，请重试"
-        e.message.isNullOrBlank() -> "下发失败，请检查网络"
-        else -> "下发失败：${e.message!!.take(30)}"
+    /**
+     * 控车没成：说清原因 + 给下一步。
+     *
+     * 登录失效 / 没设密码 / 没选车这三类，**必须**把用户送到能解决问题的那一页 ——
+     * 在桌面上弹一句 toast 是不够的，很多 ROM 会直接吞掉后台 toast（用户看到的就是「点了没反应」）。
+     */
+    private fun fail(context: Context, e: Throwable?) {
+        val hint = ControlFailure.of(e)
+        toast(context, hint.message)
+        when (hint.action) {
+            ControlFix.RELOGIN -> {
+                ControlFailure.markSessionExpired(context)
+                // 全量重画一次：卡片右上角要改成「点此登录」、五颗按键改成「点一下打开 App」。
+                // 丢到进程级协程里做，别占着广播那 10 秒预算。
+                work.launch { runCatching { VehicleWidget.render(context, partial = false) } }
+                openApp(context, AppNavRequest.RELOGIN)
+            }
+            ControlFix.OPEN_PIN -> openApp(context, AppNavRequest.OP_PASSWORD)
+            ControlFix.OPEN_APP -> openApp(context, null)
+            ControlFix.NONE -> Unit
+        }
     }
 
     private fun labelOf(command: String): String = when (command) {
@@ -266,20 +300,21 @@ class VehicleWidgetProvider : AppWidgetProvider() {
     }
 
     /**
-     * 把 App 拉起来并直达「设置 → 控车密码」。
+     * 把 App 拉起来，可带一个直达目标（[AppNavRequest.OP_PASSWORD] / [AppNavRequest.RELOGIN]）。
      *
      * 广播接收器里 `startActivity` 在 Android 10+ 会被后台启动限制拦下，
-     * 所以这只是兜底：卡片正常刷新过之后，五颗按键本身就换成了 Activity 型 PendingIntent
-     * （由桌面发起，不受这条限制），不会再走到这里。
+     * 所以这只是兜底：卡片正常刷新过之后，本该下发的按键本身已换成 Activity 型
+     * PendingIntent（由桌面发起，不受这条限制），不会再走到这里。
+     * `nav == null` 表示只打开首页。
      */
-    private fun openAppForPin(context: Context) {
+    private fun openApp(context: Context, nav: String?) {
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
         launch.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP or
                 Intent.FLAG_ACTIVITY_SINGLE_TOP,
         )
-        launch.putExtra(MainActivity.EXTRA_NAV, AppNavRequest.OP_PASSWORD)
+        if (nav != null) launch.putExtra(MainActivity.EXTRA_NAV, nav)
         runCatching { context.startActivity(launch) }
     }
 

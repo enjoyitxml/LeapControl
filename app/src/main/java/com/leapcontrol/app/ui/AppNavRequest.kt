@@ -19,6 +19,14 @@ object AppNavRequest {
     /** 直达「设置 → 控车密码」：打开设置页并自动弹出密码录入框。 */
     const val OP_PASSWORD = "op_password"
 
+    /**
+     * 登录已失效，进来只为了重新登录。
+     *
+     * 由桌面小组件 / 控制中心磁贴带进来：它们在外面发现 token 挂了，除了弹 toast
+     * 没法把用户送回登录流程（后台 toast 在不少 ROM 上还会被直接吞掉）。
+     */
+    const val RELOGIN = "relogin"
+
     private val _target = MutableStateFlow<String?>(null)
     val target: StateFlow<String?> = _target.asStateFlow()
 

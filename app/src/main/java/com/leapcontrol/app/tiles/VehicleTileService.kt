@@ -17,6 +17,8 @@ import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.ui.AppNavRequest
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
+import com.leapcontrol.app.ui.ControlFix
+import com.leapcontrol.app.ui.ControlFailure
 import com.leapcontrol.app.ui.StatusSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -73,7 +75,16 @@ abstract class VehicleTileService : TileService() {
         if (!busy) applyKnownStatus()
         // 上一次点击还在确认窗口里（收起再展开控制中心）：把提示接着显示出来，
         // 否则用户第二次展开会以为刚才那一下已经生效了。
-        if (!busy) render(if (ConfirmGate.pending(this, confirmScope) != null) CONFIRM_HINT else null)
+        // 「登录已失效」同理，而且优先级最高：展开就看见原因，不用先点一次才被告知。
+        if (!busy) {
+            render(
+                when {
+                    ControlFailure.isSessionExpired(this) -> "登录已失效"
+                    ConfirmGate.pending(this, confirmScope) != null -> CONFIRM_HINT
+                    else -> null
+                },
+            )
+        }
         // 异步再校一次：顺手覆盖「App 完全没跑、进程内没有快照」的情况
         if (spec.kind == TileKind.TOGGLE) scope.launch { syncFromVehicle() }
     }
@@ -85,11 +96,16 @@ abstract class VehicleTileService : TileService() {
         val ctx = applicationContext
         val store = SessionStore(ctx)
         val session = store.load()
+        // 「上次控车因为登录失效失败了」也要当成没登录：否则用户每点一次都要等一轮网络往返
+        // 才看到同一句提示，还以为磁贴坏了
+        val sessionExpired = ControlFailure.isSessionExpired(ctx)
 
-        if (session.oldAuth == null && session.newAuth == null) {
-            render("请先登录", active = false)
-            toast("请先在零控 App 登录")
-            openApp()
+        if (sessionExpired || (session.oldAuth == null && session.newAuth == null)) {
+            render(if (sessionExpired) "登录已失效" else "请先登录", active = false)
+            // 磁贴副标题只有几格宽，说不全「去重新登录」这一步，所以必须把 App 拉起来 ——
+            // 控制中心里的 toast 更容易被 ROM 吞掉，用户看到的就是「点了没反应」
+            toast(if (sessionExpired) "登录已失效，请重新登录零控" else "请先在零控 App 登录")
+            openApp(if (sessionExpired) AppNavRequest.RELOGIN else null)
             return
         }
         if (session.selectedVin.isBlank()) {
@@ -131,12 +147,27 @@ abstract class VehicleTileService : TileService() {
                 onSuccess = { message ->
                     // 指令下发成功才落状态：失败时磁贴不能显示成「已开启」
                     if (spec.kind == TileKind.TOGGLE) QuickTiles.setOn(ctx, spec, turningOn)
+                    // 这次通了：撤掉「登录已失效」的标记，下次展开控制中心不会又写「登录已失效」
+                    ControlFailure.clearSessionExpired(ctx)
                     toast(message)
                     render(message.take(18), active = spec.kind == TileKind.TOGGLE && turningOn)
                 },
                 onFailure = { e ->
-                    toast("执行失败：${e.message?.take(30) ?: "网络异常"}")
-                    render("执行失败", active = false)
+                    // 以前这里只显示「执行失败：信息校验失败」这类原文 ——
+                    // 用户看不出是自己被退出登录了，只知道「磁贴全都不能用」。
+                    // 现在统一走 [ControlFailure]：说清原因 + 指路。
+                    val hint = ControlFailure.of(e)
+                    toast(hint.message)
+                    render(hint.short, active = false)
+                    when (hint.action) {
+                        ControlFix.RELOGIN -> {
+                            ControlFailure.markSessionExpired(ctx)
+                            openApp(AppNavRequest.RELOGIN)
+                        }
+                        ControlFix.OPEN_PIN -> openApp(AppNavRequest.OP_PASSWORD)
+                        ControlFix.OPEN_APP -> openApp()
+                        ControlFix.NONE -> Unit
+                    }
                 },
             )
             delay(2500)

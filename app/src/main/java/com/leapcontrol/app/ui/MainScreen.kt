@@ -16,8 +16,11 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -187,6 +190,12 @@ fun MainScreen(
     // 会带着 extra 把 App 拉起来，这里接住并直接落到密码设置。
     // 只弹 toast 不够 —— 后台 toast 在不少 ROM 上会被吞掉，用户看到的就是「点了没反应」。
     var startWithPin by remember { mutableStateOf(false) }
+    // 「登录已失效」对话框：由桌面小组件 / 控制中心磁贴带 RELOGIN 进来时弹出。
+    // 光靠 toast 和卡片上的一行小字，用户不知道「哪个操作能修好它」——
+    // 这里给一个明确的按钮，点完直接回登录页。
+    var showRelogin by remember { mutableStateOf(false) }
+    val reloginScope = rememberCoroutineScope()
+    val navContext = LocalContext.current.applicationContext
     val navTarget by AppNavRequest.target.collectAsState()
     LaunchedEffect(navTarget) {
         val target = navTarget ?: return@LaunchedEffect
@@ -197,6 +206,11 @@ fun MainScreen(
                 tab = 2
                 startWithPin = true
                 openSettings(SettingsPage.SETTINGS)
+            }
+            // 只有本地确实记着「登录失效」才弹：万一用户刚重新登录过，
+            // 桌面上那张旧卡片的 RELOGIN 就不该再吓人一跳
+            AppNavRequest.RELOGIN -> if (ControlFailure.isSessionExpired(navContext)) {
+                showRelogin = true
             }
         }
     }
@@ -537,6 +551,24 @@ fun MainScreen(
             // 等于探针自己在制造卡顿。
             FrameStatsOverlay(enabled = frameStatsVisible)
 
+            // ---- 登录已失效：重新登录确认 ----
+            // 用户是从桌面卡片 / 控制中心被带进来的，到这里必须给一个「怎么修」的按钮，
+            // 否则他只看到满屏报错，不知道该退出去重登
+            if (showRelogin) {
+                ReloginDialog(
+                    onDismiss = { showRelogin = false },
+                    onConfirm = {
+                        showRelogin = false
+                        reloginScope.launch {
+                            // 只退会话，**不动**位置缓存 / 停车位照片 / 位置校准：
+                            // 重新登录的还是同一个账号，那些都是用户自己攒的东西，删了要他白干一遍
+                            runCatching { runtime.endExpiredSession() }
+                            onLogout()
+                        }
+                    },
+                )
+            }
+
             // ---- 版本更新提醒弹窗（覆盖全局，最高层级）----
             // 最小化时不画弹窗，改由下面的悬浮条接管（下载协程不受影响，继续跑）
             if (showUpdateDialog && pendingUpdate != null && !updateMinimized) {
@@ -694,4 +726,34 @@ private fun radialVeilBrush(
             return gradient
         }
     }
+}
+
+/**
+ * 「登录已失效」确认框。
+ *
+ * 为什么要一个框：这次的问题不是「报错不够明显」，而是**报错了也没告诉用户去做什么**。
+ * 桌面卡片点不动时，用户的第一反应是「App 坏了」；一句「登录已失效」+ 一个「重新登录」按钮，
+ * 才能把他送到能解决问题的那一步。
+ *
+ * 文案刻意写清「可能在其他设备上登录过」：账号被踢下线大多是这个原因，
+ * 比「请重新登录」更能解释他刚才遇到的一连串失败。
+ */
+@Composable
+private fun ReloginDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("登录已失效") },
+        text = {
+            Text(
+                "控车指令都被拒绝了：零控的登录状态已失效，通常是同一账号在其他设备上重新登录过。" +
+                    "重新登录后即可恢复，位置、停车位照片这些记录都会保留。",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("重新登录") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("稍后") }
+        },
+    )
 }
