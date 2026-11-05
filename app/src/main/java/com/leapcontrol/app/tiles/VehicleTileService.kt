@@ -8,17 +8,13 @@ import android.graphics.drawable.Icon
 import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
-import android.widget.Toast
-import com.leapcontrol.app.ConfirmActions
-import com.leapcontrol.app.ConfirmGate
-import com.leapcontrol.app.DoubleConfirmRules
 import com.leapcontrol.app.MainActivity
 import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.ui.AppNavRequest
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
-import com.leapcontrol.app.ui.ControlFix
 import com.leapcontrol.app.ui.ControlFailure
+import com.leapcontrol.app.ui.ControlFix
 import com.leapcontrol.app.ui.StatusSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,13 +46,21 @@ abstract class VehicleTileService : TileService() {
     private val prefs by lazy { getSharedPreferences("quick_tiles_state", Context.MODE_PRIVATE) }
     private var busy = false
 
+    /** 刚执行完的那句话（「执行成功」/「已上锁」）与它的时间戳。 */
+    private var flashText: String? = null
+    private var flashLabel: String? = null
+    private var flashAt = 0L
+
+    /** 每次点击 +1：用来让上一轮的「把副标题收回默认」别盖掉新一轮的执行中文案。 */
+    private var execSeq = 0
+
     /**
-     * 「待确认」状态的作用域：每块磁贴各一条记录。
+     * 「车是不是解锁着」的即时答案（只在解锁磁贴上用）。
      *
-     * 不能所有磁贴共用一个 —— 点完「解锁」马上点「后备箱」，共用一个 key 会被当成
-     * 「确认开后备箱」，反而把用户没打算做的事做掉。
+     * 控车成功后车端报文要 5~15 秒才跟上，这段窗口里不能还按旧报文画。
+     * null = 还没判断过，退回读进程内车况快照。
      */
-    private val confirmScope: String get() = "tile_${spec.id}"
+    private var unlockedHint: Boolean? = null
 
     override fun onTileAdded() {
         super.onTileAdded()
@@ -71,22 +75,13 @@ abstract class VehicleTileService : TileService() {
     override fun onStartListening() {
         super.onStartListening()
         // 先用进程内已知的最新车况把状态摆正，再渲染：控制中心一展开就是对的，
-        // 不用等下面那个异步校准（它可能要发一次网络请求）
+        // 不用等下面那个异步校准（它要发一次网络请求）
         if (!busy) applyKnownStatus()
-        // 上一次点击还在确认窗口里（收起再展开控制中心）：把提示接着显示出来，
-        // 否则用户第二次展开会以为刚才那一下已经生效了。
-        // 「登录已失效」同理，而且优先级最高：展开就看见原因，不用先点一次才被告知。
-        if (!busy) {
-            render(
-                when {
-                    ControlFailure.isSessionExpired(this) -> "登录已失效"
-                    ConfirmGate.pending(this, confirmScope) != null -> CONFIRM_HINT
-                    else -> null
-                },
-            )
-        }
-        // 异步再校一次：顺手覆盖「App 完全没跑、进程内没有快照」的情况
-        if (spec.kind == TileKind.TOGGLE) scope.launch { syncFromVehicle() }
+        if (!busy) render()
+        // 控制中心**每展开一次**都刷一次车况（用户 2026-11-05 要求：一出现就是新的）。
+        // 七八块磁贴会同时回调，[TileStatusSync.appear] 用 2 秒合并窗口把它们并成一个请求。
+        // 动作型磁贴也调：它们自己不用这份结果，但刷新是整块控制中心共用的。
+        scope.launch { syncFromVehicle() }
     }
 
     override fun onClick() {
@@ -96,84 +91,132 @@ abstract class VehicleTileService : TileService() {
         val ctx = applicationContext
         val store = SessionStore(ctx)
         val session = store.load()
-        // 「上次控车因为登录失效失败了」也要当成没登录：否则用户每点一次都要等一轮网络往返
-        // 才看到同一句提示，还以为磁贴坏了
+        // 「上次控车因为登录失效失败了」也当成没登录：否则用户每点一次都要等一轮网络往返
+        // 才看到同一句提示，还以为磁贴坏了。
+        // 2026-11-05 那波「快捷中心全部失效」实际是账号被退出登录 —— 提示必须指路，
+        // 不能只说「执行失败」。
         val sessionExpired = ControlFailure.isSessionExpired(ctx)
 
         if (sessionExpired || (session.oldAuth == null && session.newAuth == null)) {
             render(if (sessionExpired) "登录已失效" else "请先登录", active = false)
             // 磁贴副标题只有几格宽，说不全「去重新登录」这一步，所以必须把 App 拉起来 ——
-            // 控制中心里的 toast 更容易被 ROM 吞掉，用户看到的就是「点了没反应」
-            toast(if (sessionExpired) "登录已失效，请重新登录零控" else "请先在零控 App 登录")
-            openApp(if (sessionExpired) AppNavRequest.RELOGIN else null)
+            // 控制中心里的提示更容易被 ROM 吞掉，用户看到的就是「点了没反应」
+            TileNotice.failed(ctx, ControlFailure.HINT_RELOGIN.message)
+            openApp(AppNavRequest.RELOGIN)
             return
         }
         if (session.selectedVin.isBlank()) {
             render("未选择车辆", active = false)
-            toast("未选择车辆，请先打开 App")
+            TileNotice.failed(ctx, ControlFailure.HINT_NO_VEHICLE.message)
+            openApp(null)
             return
         }
         if (store.loadOpPassword().isNullOrBlank()) {
             render("未设置密码", active = false)
-            toast("还没设置控车密码，正在打开零控")
+            TileNotice.failed(ctx, ControlFailure.HINT_PIN.message)
             openApp(AppNavRequest.OP_PASSWORD)
             return
         }
 
         // 本次要下发的方向：一次性动作固定「执行」，开关磁贴取反本地记住的开合态。
         val turningOn = spec.kind == TileKind.MOMENTARY || !QuickTiles.isOn(ctx, spec)
-        val command = if (turningOn) spec.openCommand else spec.closeCommand
-
-        // 二次确认（可选项，默认全关，见「设置 → 快捷控制再点一次」）：
-        // 第一次点只把磁贴改成「再点一次确认」，窗口内再点同一个磁贴才真正执行。
-        // 这里**不能**进 busy —— 待确认时磁贴必须还能被点第二下。
-        if (ConfirmActions.isEnabled(ctx, command) && !ConfirmGate.step(ctx, confirmScope, command)) {
-            toast("再点一次确认${spec.title}")
-            render(CONFIRM_HINT, active = false)
-            // 窗口过了就恢复默认文案。期间用户点了第二下（进入 busy）就别覆盖执行中的状态。
-            scope.launch {
-                delay(DoubleConfirmRules.WINDOW_MS + 300)
-                if (!busy) render()
-            }
-            return
-        }
 
         busy = true
-        render(spec.doing, active = turningOn)
+        // 上一轮的「执行成功」不能盖住这一轮的「上锁中」
+        flashText = null
+        flashLabel = null
+        val seq = ++execSeq
+
+        // 开关型：点击瞬间先按**意图**落本地状态 —— 要开就先亮、要关就先灭，
+        // 「点完马上有反应」这一半不等车端（下发失败会在下面回滚）。
+        // 显示方向仍以车况校准为准，只是把「等结果」挪到了失败回滚那一步。
+        val previousOn = if (spec.kind == TileKind.TOGGLE) QuickTiles.isOn(ctx, spec) else null
+        if (spec.kind == TileKind.TOGGLE) QuickTiles.setOn(ctx, spec, turningOn)
+
+        // 执行中：动作型把磁贴名改成「上锁中」，**并且亮起** ——
+        // 用户 2026-11-05 明确要求：上锁 / 鸣笛 / 预热发起时要高亮，执行成功后熄灭；
+        // 开关型则按刚落下的本地状态亮灭。
+        //
+        // 解锁是唯一的例外（同一天的第二轮反馈）：闭锁时它必须是灭的，
+        // 只有**车真的解锁了**才点亮 —— 所以它不跟「发起」亮，亮灭只由
+        // [stickyActive] 里的车况（unlockedHint / locked）决定。
+        render(
+            subtitle = spec.doingText(turningOn),
+            active = turningOn && spec.id != "unlock",
+            label = if (spec.kind == TileKind.MOMENTARY) "${spec.title}中" else null,
+        )
+        // 点完先给一句「正在上锁…」。车端 T-Box 唤醒 + 执行要 5~15 秒，
+        // 这段时间如果屏幕上什么都没有，用户只会觉得「点了没反应」。
+        // 优先系统原生 toast；控制中心展开时磁贴是后台、toast 会被系统吞，
+        // 这时 [TileNotice] 自动改用横幅通知兜底。
+        TileNotice.running(ctx, spec.doingText(turningOn))
         scope.launch {
             val result = runCatching { execute(ctx, turningOn) }
             busy = false
             result.fold(
                 onSuccess = { message ->
-                    // 指令下发成功才落状态：失败时磁贴不能显示成「已开启」
-                    if (spec.kind == TileKind.TOGGLE) QuickTiles.setOn(ctx, spec, turningOn)
                     // 这次通了：撤掉「登录已失效」的标记，下次展开控制中心不会又写「登录已失效」
                     ControlFailure.clearSessionExpired(ctx)
-                    toast(message)
-                    render(message.take(18), active = spec.kind == TileKind.TOGGLE && turningOn)
-                },
-                onFailure = { e ->
-                    // 以前这里只显示「执行失败：信息校验失败」这类原文 ——
-                    // 用户看不出是自己被退出登录了，只知道「磁贴全都不能用」。
-                    // 现在统一走 [ControlFailure]：说清原因 + 指路。
-                    val hint = ControlFailure.of(e)
-                    toast(hint.message)
-                    render(hint.short, active = false)
-                    when (hint.action) {
-                        ControlFix.RELOGIN -> {
-                            ControlFailure.markSessionExpired(ctx)
-                            openApp(AppNavRequest.RELOGIN)
+                    // 车端确认执行了 →「执行成功」；只发出去了 →「已下发 · 待确认」
+                    val done = isDone(message)
+                    // 解锁磁贴常亮的依据：**车端确认解锁了** → 亮着；确认上锁 → 熄灭。
+                    // 只有 [done]（车端信号已变成意图值）才写，否则「指令发出去了但车没动」
+                    // 也会把解锁键点亮 —— 用户 2026-11-05 反馈的「假高亮」就是这一条。
+                    // 不再依赖「控车后车端报文 5~15 秒才跟上」：control() 现在自己读车况求证，
+                    // 回来时车况信号已经是新的。
+                    if (done) {
+                        when (spec.id) {
+                            "unlock" -> unlockedHint = true
+                            "lock" -> unlockedHint = false
                         }
-                        ControlFix.OPEN_PIN -> openApp(AppNavRequest.OP_PASSWORD)
-                        ControlFix.OPEN_APP -> openApp()
-                        ControlFix.NONE -> Unit
+                    }
+                    flash(
+                        text = if (done) "执行成功" else "已下发 · 待确认",
+                        label = if (spec.kind == TileKind.MOMENTARY) {
+                            if (done) "已${spec.title}" else "待确认"
+                        } else {
+                            null
+                        },
+                    )
+                    // 先把磁贴摆正（系统可能因此自己弹一句状态），再弹我们的结论 ——
+                    // 顺序反了的话，我们这句会被系统那句压在后头，用户先看到的就是错的。
+                    // 动作型这里熄灭（解锁磁贴若车已解锁会由 [stickyActive] 继续保持亮）。
+                    render()
+                    if (done) {
+                        TileNotice.done(ctx, "${spec.doneText(turningOn)}，执行成功")
+                    } else {
+                        // 消息本身就是「指令已发出，但车辆状态还没变化…」这类实话，原样给用户
+                        TileNotice.pending(ctx, message)
                     }
                 },
+                onFailure = { e ->
+                    // 没发出去：开关型把本地开合态回滚，别让磁贴亮着一个车上根本没开的功能
+                    if (spec.kind == TileKind.TOGGLE && previousOn != null) {
+                        QuickTiles.setOn(ctx, spec, previousOn)
+                    }
+                    fail(e)
+                },
             )
-            delay(2500)
-            render()
+            delay(FLASH_MS)
+            // 期间又点了一次就别把新一轮的「正在…」盖掉
+            if (seq == execSeq) render()
         }
     }
+
+    /**
+     * 这句回执算不算「车端真的执行了」。
+     *
+     * 只有两种算数：
+     * - 网关返回结果码 0 / 200 → [AppRuntime.control] 的文案以「执行成功」结尾；
+     * - 超时后回读车况自证 → 「空调已开启 / 空调已关闭（车端结果码 n）」。
+     *
+     * 其余全是「已下发（车端结果码 n），请在车辆上确认执行结果」。
+     * 把「发出去了」说成「执行成功」，用户就不会再去车边确认，反而耽误事。
+     */
+    private fun isDone(message: String): Boolean =
+        message.endsWith("执行成功") ||
+            message.startsWith("空调已开启") ||
+            message.startsWith("空调已关闭")
 
     private suspend fun execute(ctx: Context, turningOn: Boolean): String = withContext(Dispatchers.IO) {
         val runtime = AppRuntime(ctx)
@@ -199,43 +242,48 @@ abstract class VehicleTileService : TileService() {
     }
 
     /**
-     * 用车况校准开合态（只在后台悄悄改状态，不弹任何提示、不打断用户）。
+     * 控制中心展开时：**刷一次车况**，顺手把显示状态校准回真实值。
      *
-     * 这是「在车里手动关了空调 / 后备箱，控制中心那格还亮着」的修复路径，
-     * 因此校准必须**跟着控制中心的展开走**，而不是隔一分钟才放行一次。
+     * 这是两条反馈的共同修复点：
+     * - 「控制中心每次出现都要自动刷新车况」→ 每次 onStartListening 都刷一次；
+     *   七八块磁贴几乎同时回调，[TileStatusSync.appear] 用 2 秒合并窗口把它们并成**一个**请求；
+     * - 「在车里手动关了空调 / 后备箱，磁贴还亮着」→ 展开时就用这份新报文校准显示。
      *
-     * 四条安全线：
-     * 1. 状态只按车况改显示，**点击方向仍看本地**（见 [QuickTiles] 上的注释），
+     * 三条安全线：
+     * 1. 只按车况改**显示**，点击方向仍看本地（见 [QuickTiles] 上的注释）；
      *    读不到信号（null）就原地不动，绝不拿「读不到」当「关闭」；
-     * 2. 快照比用户最后一次点击旧 → 不用它；刚点过又没有更新快照 → 等宽限期过去再说，
-     *    否则旧报文会把用户刚下发的意图改回去；
-     * 3. 同一块磁贴两次校准之间留最小间隔，真正挡住重复请求的是 [TileStatusSync] 的 15 秒缓存
-     *    （控制中心一次展开会唤醒七八块磁贴，各自发请求就是七八个）；
-     * 4. 校准过程中用户又点了一次，直接放弃这次结果。
+     * 2. 刚点过 [ACTION_GRACE_MS] 内不校准：此刻车端大概率还没执行完，
+     *    读回来的还是上一条报文，会把你刚下发的意图改回去；
+     * 3. 校准过程中用户又点了一次，直接放弃这次结果。
      */
     private suspend fun syncFromVehicle() {
-        if (spec.kind != TileKind.TOGGLE) return
         val ctx = applicationContext
-        val now = System.currentTimeMillis()
-        val lastAction = QuickTiles.lastActionAt(ctx, spec)
-
-        var status = StatusSnapshot.get(SNAPSHOT_TTL_MS, since = lastAction)
-        if (status == null) {
-            // 没有比点击更新的进程内快照。刚点过就先别校：
-            // 此刻车端大概率还没执行完，读回来的还是上一条报文。
-            if (now - lastAction < ACTION_GRACE_MS) return
-            if (now - QuickTiles.syncedAt(ctx, spec) < SYNC_INTERVAL_MS) return
-            status = TileStatusSync.status(ctx, minAt = lastAction) ?: return
-        }
-
-        val open = isOpen(status) ?: return
+        // 每次展开都联网刷一次（合并窗口内多块磁贴只发一个请求）
+        val fresh = TileStatusSync.appear(ctx) ?: return
         if (busy) return
-        // 校准期间用户点过磁贴：以那次下发的方向为准
+        val lastAction = QuickTiles.lastActionAt(ctx, spec)
+        if (System.currentTimeMillis() - lastAction < ACTION_GRACE_MS) return
         if (QuickTiles.lastActionAt(ctx, spec) != lastAction) return
-        // 读到有效信号才记账；信号为 null 的车型下次展开还会继续尝试
-        QuickTiles.markSynced(ctx, spec)
-        if (QuickTiles.isOn(ctx, spec) == open) return
-        QuickTiles.setOn(ctx, spec, open, fromUser = false)
+
+        when {
+            spec.kind == TileKind.TOGGLE -> {
+                val open = isOpen(fresh) ?: return
+                // 读到有效信号才记账；信号为 null 的车型下次展开还会继续尝试
+                QuickTiles.markSynced(ctx, spec)
+                if (QuickTiles.isOn(ctx, spec) == open) return
+                QuickTiles.setOn(ctx, spec, open, fromUser = false)
+            }
+            // 解锁磁贴：刷新「车是不是解锁着」，它常亮的依据就是这个
+            spec.id == "unlock" -> {
+                // ⚠️ `CarStatus.locked` 是**已闭锁**，两者互为反相。
+                // 早先这里把 locked 直接赋给 unlockedHint，结果「车锁着反而点亮解锁键」
+                // （用户 2026-11-05 反馈：闭锁状态下解锁按钮是高亮的）。
+                val lockedNow = fresh.locked ?: return
+                if (unlockedHint == !lockedNow) return
+                unlockedHint = !lockedNow
+            }
+            else -> return
+        }
         if (!busy) render()
     }
 
@@ -247,29 +295,105 @@ abstract class VehicleTileService : TileService() {
         else -> null
     }
 
-    private fun render(subtitle: String? = null, active: Boolean = false) {
+    /**
+     * 记一句「刚执行完」的文字，[FLASH_MS] 内优先显示它。
+     *
+     * 存成一段时间内有效的短句（而不是当场 render 一次就算完）：
+     * 这段时间里控制中心收起又展开、或者车况校准触发重画，文字都不会被
+     * 「点击执行」立刻顶掉 —— 用户回来还能看见刚才那一下成没成。
+     *
+     * @param label 磁贴名要临时改成什么（动作型磁贴用它报状态，见 [render]）
+     */
+    private fun flash(text: String, label: String? = null) {
+        flashText = text
+        flashLabel = label
+        flashAt = System.currentTimeMillis()
+    }
+
+    private fun flashFresh(): Boolean = System.currentTimeMillis() - flashAt < FLASH_MS
+
+    private fun flashSubtitle(): String? = flashText?.takeIf { flashFresh() }
+
+    private fun flashLabelText(): String? = flashLabel?.takeIf { flashFresh() }
+
+    /**
+     * 画磁贴。
+     *
+     * 高亮语义（用户 2026-11-05 定稿）：
+     * - **动作型**（上锁 / 鸣笛 / 预热）：执行中亮起，执行成功后熄灭；
+     * - **解锁**：不跟「发起」亮。车闭锁时它是灭的，**车真的解锁之后才亮** ——
+     *   所以它的亮灭只由 [stickyActive] 决定（见那里的注释）。
+     * - **开关型**（空调 / 后备箱 / 车窗 / 遮阳帘）：跟随实际开合，开着就亮；
+     *   亮着时点击是「关」，灭着时点击是「开」，点击瞬间先按意图亮/灭，失败再回滚。
+     *
+     * ⚠️ 动作型亮起时，MIUI 这类 ROM 可能在提示里补一句「已开启」（2026-11-05 的
+     * 「上锁已开启」就是它编的，不是我们的文案，改 [Tile.subtitle] 也没用）。
+     * 现在的处理：执行中把磁贴名改成「上锁中」，同时自己弹一句「车辆上锁中…」，
+     * 让最后留在屏幕上的是我们的话；成功后立刻熄灭，那句「已开启」也就没了立足点。
+     */
+    private fun render(subtitle: String? = null, active: Boolean = false, label: String? = null) {
         val tile = qsTile ?: return
-        tile.label = spec.title
+        val text = subtitle ?: defaultSubtitle()
+        tile.label = label ?: flashLabelText() ?: spec.title
         tile.icon = Icon.createWithResource(this, spec.iconRes)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            tile.subtitle = subtitle ?: defaultSubtitle()
+            tile.subtitle = text
         }
-        tile.state = when {
-            active -> Tile.STATE_ACTIVE
-            spec.kind == TileKind.TOGGLE && QuickTiles.isOn(this, spec) -> Tile.STATE_ACTIVE
-            else -> Tile.STATE_INACTIVE
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // 部分 ROM 拿 stateDescription 当磁贴下的说明文字，给同一句，
+            // 免得它退回「已开启 / 已关闭」这种按开关语义猜出来的词。
+            tile.stateDescription = text
         }
+        tile.state = if (active || stickyActive()) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.updateTile()
     }
 
-    private fun defaultSubtitle(): String = when {
-        spec.kind != TileKind.TOGGLE -> "点击执行"
-        QuickTiles.isOn(this, spec) -> "已开启 · 点击关闭"
-        else -> "已关闭 · 点击开启"
+    /**
+     * 不靠「这一次点击」也该一直亮着的状态。
+     *
+     * - 开关型：本地记住的开合态（由点击意图 + 车况校准共同维护）；
+     * - 解锁：车未闭锁 → 亮（用户明确要求「车辆解锁状态下解锁按钮要高亮」）；
+     * - 上锁 / 鸣笛 / 预热：不常亮 —— 车绝大多数时间都锁着，常亮没有信息量，
+     *   鸣笛、预热更是瞬时动作。
+     */
+    private fun stickyActive(): Boolean = tileActive(
+        kind = spec.kind,
+        id = spec.id,
+        localOn = spec.kind == TileKind.TOGGLE && QuickTiles.isOn(this, spec),
+        unlockedHint = unlockedHint,
+        locked = StatusSnapshot.get(SNAPSHOT_TTL_MS)?.locked,
+    )
+
+    private fun defaultSubtitle(): String {
+        flashSubtitle()?.let { return it }
+        return when {
+            spec.kind != TileKind.TOGGLE -> "点击执行"
+            QuickTiles.isOn(this, spec) -> "已开启 · 点击关闭"
+            else -> "已关闭 · 点击开启"
+        }
     }
 
-    private fun toast(text: String) {
-        runCatching { Toast.makeText(applicationContext, text, Toast.LENGTH_SHORT).show() }
+    /**
+     * 控车失败：说清原因 + 指路。
+     *
+     * 副标题只放得下 5 个字（[ControlHint.short]），通知横幅给完整一句，
+     * 需要用户动手的（登录失效 / 没设密码 / 没选车）再把 App 拉起来并直达那一页。
+     */
+    private fun fail(e: Throwable?) {
+        val hint = ControlFailure.of(e)
+        flash(hint.short, label = if (spec.kind == TileKind.MOMENTARY) "未成功" else null)
+        // 同样先摆磁贴再弹提示：系统若跟着弹一句自己的状态词，也不会压住真正的原因
+        render()
+        TileNotice.failed(applicationContext, hint.message)
+        when (hint.action) {
+            ControlFix.RELOGIN -> {
+                ControlFailure.markSessionExpired(applicationContext)
+                openApp(AppNavRequest.RELOGIN)
+            }
+            ControlFix.OPEN_PIN -> openApp(AppNavRequest.OP_PASSWORD)
+            ControlFix.OPEN_APP -> openApp(null)
+            ControlFix.NONE -> Unit
+        }
     }
 
     @SuppressLint("StartActivityAndCollapseDeprecated")
@@ -299,15 +423,6 @@ abstract class VehicleTileService : TileService() {
 
     private companion object {
         /**
-         * 同一块磁贴两次车况校准之间的最小间隔。
-         *
-         * 原来是一分钟，结果用户在车里关掉空调/后备箱后马上拉开控制中心，磁贴还亮着 ——
-         * 那 60 秒里校准被直接跳过，用户看到的就是「状态永远不回来」。
-         * 真正的请求节流由 [TileStatusSync]（15 秒快照缓存）负责，这里只防同一瞬间的重复调用。
-         */
-        const val SYNC_INTERVAL_MS = 5_000L
-
-        /**
          * 刚点完磁贴的宽限期：这段时间里车况可能还是上一条报文，
          * 用它去校准会把用户刚下发的意图改回去。
          */
@@ -316,33 +431,49 @@ abstract class VehicleTileService : TileService() {
         /** 进程内车况快照的最长可用年龄。再老的话宁可联网拉一次。 */
         const val SNAPSHOT_TTL_MS = 30_000L
 
-        /** 待确认时磁贴副标题：短一点，控制中心的格子放不下更长的字。 */
-        const val CONFIRM_HINT = "再点一次确认"
+        /**
+         * 「执行成功 / 执行失败」在副标题上停留多久。
+         *
+         * 2.5 秒：够看清一行字，又不至于让磁贴长时间停在结果上 ——
+         * 之后该回到「点击执行」或「已开启 · 点击关闭」这些可以再点的常态。
+         */
+        const val FLASH_MS = 2_500L
     }
 }
 
 /**
- * 磁贴共用的车况快照。
+ * 磁贴共用的车况刷新。
  *
- * 控制中心一拉开，七八块磁贴会同时 onStartListening，各自 `refreshStatus()` 就是七八个请求；
- * 这里用一把锁 + 15 秒缓存把它们合并成一次。
+ * 控制中心一拉开，七八块磁贴会同时 `onStartListening`。如果每块都自己
+ * `refreshStatus()`，一次展开就是七八个请求（每个都要唤醒一次车上 T-Box）。
+ * 这里用一把锁 + 2 秒合并窗口：**同一瞬间只发一个请求**，结果共享；
+ * 窗口一过，下次展开（用户重新拉开控制中心）照常再刷一次 —— 用户要的是
+ * 「每次出现都是新的」，而不是「一天只准刷一次」。
  */
 private object TileStatusSync {
-    private const val TTL_MS = 15_000L
+    /**
+     * 合并窗口。
+     *
+     * 只用来吃掉「同一次展开里七八块磁贴的重复调用」：它们几乎同时发生（几十毫秒内）。
+     * 2 秒是宽裕值，也远小于「用户收起再拉开」的间隔 —— 手动重新展开仍会真的联网。
+     */
+    private const val MERGE_WINDOW_MS = 2_000L
+
     private val mutex = Mutex()
     private var at = 0L
     private var cached: CarStatus? = null
 
     /**
-     * @param minAt 只接受**晚于**这个时刻拉到的报文。传「用户最后一次点磁贴的时间」，
-     *   缓存里如果是更早的报文就重新拉，避免拿旧状态盖掉用户刚下发的指令。
+     * 展开控制中心时刷一次车况。
+     *
+     * 与之前那版 15 秒缓存不同：这里**不看缓存多久**，只要过了合并窗口就重新请求。
+     * 失败时退回上次结果（拿旧数据也比空白好，调用方还会按 null 决定不动状态）。
      */
-    suspend fun status(context: Context, minAt: Long = 0L): CarStatus? = mutex.withLock {
+    suspend fun appear(context: Context): CarStatus? = mutex.withLock {
         val now = System.currentTimeMillis()
-        val hit = cached
-        if (hit != null && now - at < TTL_MS && at >= minAt) return@withLock hit
+        if (now - at < MERGE_WINDOW_MS) return@withLock cached
         val fresh = runCatching { AppRuntime(context).refreshStatus() }.getOrNull()
-            ?: return@withLock null
+            ?: return@withLock cached
         cached = fresh
         at = now
         fresh

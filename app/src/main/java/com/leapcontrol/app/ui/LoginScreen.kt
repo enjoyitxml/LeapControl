@@ -166,7 +166,7 @@ fun LoginScreen(
                                         runtime.login(phone, smsCode)
                                         onLoginSuccess()
                                     } catch (e: Exception) {
-                                        message = e.message ?: "登录失败"
+                                        message = UserMessage.of(e, "登录没完成，请再试一次")
                                     }
                                     busy = false
                                 }
@@ -186,7 +186,7 @@ fun LoginScreen(
                                 countdown = 60
                                 message = "验证码已发送"
                             } catch (e: Exception) {
-                                message = e.message ?: "验证码发送失败"
+                                message = UserMessage.of(e, "验证码没发出去，请稍后再试")
                             }
                             busy = false
                         }
@@ -223,7 +223,7 @@ fun LoginScreen(
                             runtime.login(phone, smsCode)
                             onLoginSuccess()
                         } catch (e: Exception) {
-                            message = e.message ?: "登录失败"
+                            message = UserMessage.of(e, "登录没完成，请再试一次")
                         }
                         busy = false
                     }

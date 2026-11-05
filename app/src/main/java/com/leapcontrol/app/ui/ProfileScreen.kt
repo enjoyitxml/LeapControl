@@ -447,7 +447,7 @@ fun ProfileScreen(
                                     }
                                 },
                                 onFailure = { e ->
-                                    updateDownloadError = "下载失败：${e.message ?: "网络异常"}"
+                                    updateDownloadError = "下载失败：${UserMessage.of(e, "网络异常")}"
                                 },
                             )
                         }

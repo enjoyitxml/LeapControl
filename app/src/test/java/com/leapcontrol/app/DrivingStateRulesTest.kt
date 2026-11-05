@@ -169,9 +169,9 @@ class DrivingStateRulesTest {
 
     // ---- 熄火 / 闭锁后挡位字母不可信（2026-11-04 用户反馈「已锁车却显示 N 空挡」）----
 
-    /** 真实现场：车已停好、已闭锁，车端 1010 仍报 N。不能直译成「空挡」。 */
+    /** 真实现场：车已停好、已上锁，车端 1010 仍报 N。不能直译成「空挡」。 */
     @Test
-    fun `已闭锁的 N 挡说已驻车且不画挡位徽标`() {
+    fun `已上锁的 N 挡说已驻车且不画挡位徽标`() {
         val badge = DrivingStateRules.badge(
             gearStatus = "N",
             speedKmh = 0.0,
@@ -184,7 +184,7 @@ class DrivingStateRulesTest {
 
     /** 熄火后车速残留 3km/h 也不能说「行驶中」：车在开绝不可能闭锁。 */
     @Test
-    fun `已闭锁时忽略残留车速`() {
+    fun `已上锁时忽略残留车速`() {
         val badge = DrivingStateRules.badge(
             gearStatus = "N",
             speedKmh = 3.0,
@@ -204,7 +204,7 @@ class DrivingStateRulesTest {
 
     /** P 挡是真实信号，不是猜的，徽标照留。 */
     @Test
-    fun `已闭锁的 P 挡保留 P 徽标`() {
+    fun `已上锁的 P 挡保留 P 徽标`() {
         val badge = DrivingStateRules.badge(
             gearStatus = "P",
             speedKmh = 0.0,

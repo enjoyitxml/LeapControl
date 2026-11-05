@@ -475,6 +475,22 @@ fun SettingsScreen(
         // ---- 系统控制中心快捷磁贴 ----
         val context = androidx.compose.ui.platform.LocalContext.current
         var tileTick by remember { mutableStateOf(0) }
+        var notifTick by remember { mutableStateOf(0) }
+        // 磁贴控车的进度提示走通知横幅（后台 toast 会被 Android 12+ 丢掉，见 tiles/TileNotice），
+        // 所以在用户来加磁贴的这个位置把权限要下来 —— 否则点了磁贴一句反馈都看不到
+        val notifLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            if (!granted) {
+                Toast.makeText(
+                    context,
+                    "没给通知权限，控车时就看不到「正在上锁 / 已上锁」这些提示了",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            notifTick++
+        }
+        val notifOn = remember(notifTick) { com.leapcontrol.app.tiles.TileNotice.enabled(context) }
         val addedIds = remember(tileTick) {
             QuickTiles.ALL.filter { QuickTiles.isAdded(context, it) }.map { it.id }.toSet()
         }
@@ -484,6 +500,36 @@ fun SettingsScreen(
                 color = C.textSecondary,
                 fontSize = 11.sp,
             )
+            if (!notifOn) {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(C.chipBg)
+                        .clickable {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                notifLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    "请到「设置 → 应用 → 零控 → 通知」里允许通知",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "开启通知，App 在后台时控车进度也能弹出提醒",
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("去开启", color = C.accent, fontSize = 11.sp)
+                }
+            }
             Spacer(Modifier.height(14.dp))
             val rows = QuickTiles.ALL.chunked(4)
             rows.forEachIndexed { index, rowSpecs ->

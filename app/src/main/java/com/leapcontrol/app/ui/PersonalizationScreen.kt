@@ -385,8 +385,8 @@ fun PersonalizationScreen(
                 Spacer(Modifier.height(10.dp))
                 Text(
                     text = heroLayout.desc + "。" + when (heroLayout) {
-                        HeroLayout.CLASSIC -> "行驶状态和闭锁、车窗合成两行，都放在右上角。"
-                        HeroLayout.SEPARATE -> "行驶状态单独挪到车模正下方，右上角只留闭锁、车窗、空调。"
+                        HeroLayout.CLASSIC -> "行驶状态和上锁、车窗合成两行，都放在右上角。"
+                        HeroLayout.SEPARATE -> "行驶状态单独挪到车模正下方，右上角只留上锁、车窗、空调。"
                     },
                     color = C.textSecondary,
                     fontSize = 11.sp,

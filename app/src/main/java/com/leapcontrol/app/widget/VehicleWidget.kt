@@ -78,6 +78,10 @@ object VehicleWidget {
     /** 单次指令：鸣笛寻车。 */
     const val ACTION_HORN = "com.leapcontrol.app.widget.HORN"
 
+    /** 只刷新车况，不下发任何指令（右上角那颗刷新键）。 */
+    const val ACTION_REFRESH = "com.leapcontrol.app.widget.REFRESH"
+
+    /** 控车指令集合。刷新键单独处理，不在这份里 —— 它不需要登录校验 / 二次确认。 */
     val ACTIONS = setOf(ACTION_UNLOCK, ACTION_LOCK, ACTION_TOGGLE_AC, ACTION_TOGGLE_TRUNK, ACTION_HORN)
 
     /** 点「打开 App」用的 requestCode（与五个按键岔开）。 */
@@ -87,6 +91,7 @@ object VehicleWidget {
     private const val RC_AC = 93
     private const val RC_TRUNK = 94
     private const val RC_HORN = 95
+    private const val RC_REFRESH = 97
 
     /** 「打开 App 并直达某个页面」用独立 requestCode，别和上面那颗普通打开混成同一个。 */
     private const val RC_OPEN_APP_NAV = 96
@@ -483,6 +488,13 @@ object VehicleWidget {
             views.setOnClickPendingIntent(R.id.wg_car_box, it)
         }
 
+        // 右上角刷新键：只拉一次车况重画，不打开 App。
+        // 点击区属于静态部分 —— 增量更新里不重设它，桌面上原有的点击才会一直有效。
+        views.setOnClickPendingIntent(
+            R.id.wg_refresh,
+            broadcast(context, ACTION_REFRESH, RC_REFRESH),
+        )
+
         // ---- 所有会变的内容 ----
         bindLive(views, context, p, status, updatedAt, busy, signedIn, title, car, heightDp,
             pinReady, sessionExpired)
@@ -551,6 +563,15 @@ object VehicleWidget {
         } else {
             null
         }
+        // 「充电中」按 chargeState 判，不能只看 status.charging：
+        // 那个字段把「充电结束（2）」也算成 true，充满拔枪前卡片永远写「充电中」。
+        val charging = status != null &&
+            (status.chargeState == 1 || (status.chargeState == null && status.charging == true))
+        // 刚控过车：右上角先把结果说出来（[WidgetFlash]）。车端报文要 5~15 秒才更新，
+        // 这段时间若显示「12:30 更新」，用户会以为刚才那一下没生效。
+        // 车在充电时补一句「充电中」—— 这条信息比「刚控过什么」更该一直看得见。
+        val flash = WidgetFlash.read(context)
+        val clockSuffix = clock?.let { " · $it" }.orEmpty()
         val stateText: String
         val stateColor: Int
         when {
@@ -571,26 +592,25 @@ object VehicleWidget {
                 stateText = "未设控车密码"
                 stateColor = p.warn
             }
+            flash != null -> {
+                stateText = if (charging) "${flash.text} · 充电中" else flash.text
+                // 只下发、没等到车端回执时用警示色，别把「已下发」画得像「已完成」
+                stateColor = if (flash.ok) p.active else p.warn
+            }
             status == null -> {
                 stateText = "正在同步…"
                 stateColor = p.sub
             }
-            // 充电状态按 chargeState 判，不能只看 status.charging：
-            // 那个字段把「充电结束（2）」也算成 true，充满拔枪前卡片永远写「充电中」。
-            status.chargeState == 1 -> {
-                stateText = "充电中" + clock?.let { " · $it" }.orEmpty()
+            charging -> {
+                stateText = "充电中$clockSuffix"
                 stateColor = p.active
             }
             status.chargeState == 2 -> {
                 stateText = if (ChargeStatus.fullConfirmed(status.chargeState, status.soc)) "已充满" else "充电完成"
                 stateColor = p.active
             }
-            status.chargeState == null && status.charging == true -> {
-                stateText = "充电中" + clock?.let { " · $it" }.orEmpty()
-                stateColor = p.active
-            }
             status.locked == false -> {
-                stateText = "未锁车" + clock?.let { " · $it" }.orEmpty()
+                stateText = "未锁车$clockSuffix"
                 stateColor = p.warn
             }
             clock != null -> {
@@ -604,6 +624,8 @@ object VehicleWidget {
         }
         views.setTextViewText(R.id.wg_time, stateText)
         views.setTextColor(R.id.wg_time, stateColor)
+        // 刷新键是常驻工具，不跟着状态变色，跟着副信息那档灰走
+        views.setInt(R.id.wg_refresh, "setColorFilter", p.sub)
 
         // ---- 续航：与首页续航区同一套口径（图标 · 里程 · 进度条 · 百分比）----
         // 纯电车型只有电一行、读的是「总续航」；增程车型电那一行读「纯电续航」，
@@ -647,17 +669,37 @@ object VehicleWidget {
         }
 
         // ---- 五个按键的高亮 ----
-        // 高亮规则：正在生效的状态才亮 —— 车门解锁时「解锁」亮、尾门开着时「后备箱」亮、
-        // 空调开着时「空调」亮。上锁 / 鸣笛没有「开着」这一态，永远常态色（鸣笛是瞬时指令）。
-        val unlocked = status?.locked == false
+        // 只给「有开合态、并且现在正处在这个态」的三颗按键上色：
+        // 解锁（车已解锁）、后备箱（尾门开着）、空调（空调开着）。
+        // **上锁不亮**：车主绝大多数时间车都是锁着的，锁车键常年绿着等于没有信息量；
+        // 鸣笛是瞬时动作，没有「生效后一直亮」这一说，也永远常态色。
+        //
+        // 刚控过车（[WidgetFlash]）且车端已确认时，先按**这次的结果**上色：
+        // 右上角写着「空调已开启」，同一帧里空调键就该是亮的，
+        // 而不是等 2~3 秒后的车况回读才跟上 —— 中间那一下文字和按键会互相矛盾。
+        val hint = flash?.takeIf { it.ok }?.hint
+        val locked = status?.locked
+        val unlocked = when (hint) {
+            WidgetFlash.HINT_UNLOCK -> true
+            WidgetFlash.HINT_LOCK -> false
+            else -> locked == false
+        }
         // 空调 / 后备箱：车况读不到这个信号（部分车型恒为 null）时退回本地记住的开合态，
         // 否则按了也不会亮。判据和控制中心磁贴、按键点击方向是同一份（QuickTiles.state_<id>）。
-        val acOn = status?.acOn
-            ?: QuickTiles.byId("ac")?.let { QuickTiles.isOn(context, it) }
-            ?: false
-        val trunkOpen = status?.trunkOpen
-            ?: QuickTiles.byId("trunk")?.let { QuickTiles.isOn(context, it) }
-            ?: false
+        val acOn = when (hint) {
+            WidgetFlash.HINT_AC_ON -> true
+            WidgetFlash.HINT_AC_OFF -> false
+            else -> status?.acOn
+                ?: QuickTiles.byId("ac")?.let { QuickTiles.isOn(context, it) }
+                ?: false
+        }
+        val trunkOpen = when (hint) {
+            WidgetFlash.HINT_TRUNK_OPEN -> true
+            WidgetFlash.HINT_TRUNK_CLOSE -> false
+            else -> status?.trunkOpen
+                ?: QuickTiles.byId("trunk")?.let { QuickTiles.isOn(context, it) }
+                ?: false
+        }
         tintIcon(views, R.id.wg_icon_unlock, if (unlocked) p.active else p.ink)
         tintIcon(views, R.id.wg_icon_lock, p.ink)
         tintIcon(views, R.id.wg_icon_ac, if (acOn) p.active else p.ink)

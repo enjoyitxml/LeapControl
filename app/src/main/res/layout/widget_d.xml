@@ -348,25 +348,49 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 更新时间：卡片右上角，压在照片上。
-         照片深浅不可控，垫一层 widget_time_pill 薄黑底衬，白字才一直读得清。
+    <!-- 状态行：卡片右上角，压在照片上。
+         照片深浅不可控，垫一层 widget_time_pill 薄黑底衬，白字才一直读得清 ——
+         底衬挂在整行上（文案 + 刷新键共用同一个胶囊），而不是只包住文字。
          右边距比车模那一侧更宽：让它落在车模内侧，而不是贴着车模的右边缘。 -->
-    <TextView
-        android:id="@+id/wg_time"
+    <LinearLayout
+        android:id="@+id/wg_status_row"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
-        android:layout_marginTop="11dp"
-        android:layout_marginEnd="21dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginEnd="20dp"
         android:background="@drawable/widget_time_pill"
-        android:ellipsize="end"
-        android:includeFontPadding="false"
-        android:maxLines="1"
+        android:gravity="center_vertical|end"
+        android:orientation="horizontal"
         android:paddingStart="6dp"
         android:paddingTop="2dp"
-        android:paddingEnd="6dp"
-        android:paddingBottom="2dp"
-        android:text="尚未同步"
-        android:textColor="#E6FFFFFF"
-        android:textSize="10sp" />
+        android:paddingEnd="5dp"
+        android:paddingBottom="2dp">
+
+        <TextView
+            android:id="@+id/wg_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:maxWidth="118dp"
+            android:text="尚未同步"
+            android:textColor="#E6FFFFFF"
+            android:textSize="10sp" />
+
+        <!-- 刷新键：20dp 的格子、2.5dp 内边距 → 图形 15dp（原来只有 11dp）。
+             图形别直接等于格子：留一圈内边距，手指按在边角上也还在点击区内。 -->
+        <ImageView
+            android:id="@+id/wg_refresh"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginStart="2dp"
+            android:clickable="true"
+            android:contentDescription="刷新车况"
+            android:focusable="true"
+            android:padding="2.5dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_widget_refresh" />
+    </LinearLayout>
 </FrameLayout>

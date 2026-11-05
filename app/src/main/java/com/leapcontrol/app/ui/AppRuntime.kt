@@ -119,6 +119,25 @@ private const val CONTROL_RESULT_MAX_WAIT_MS = 20_000L
 private const val AC_RESULT_MAX_WAIT_MS = 8_000L
 
 /**
+ * 网关受理之后，**用车况信号自证「车端真的执行了」**的窗口。
+ *
+ * 结果码 0 / 200 只代表网关收下了这条指令：车端 T-Box 唤醒 + 执行还要 5~15 秒，
+ * 而且执行完还可能被车端自己否掉（车窗防夹弹回、后备箱被挡住）。
+ * 早先一拿到 0 就回「XX执行成功」，首页右上角跟着写「车辆已解锁」，
+ * 车其实没动 —— 用户 2026-11-05 反馈的「假状态」就是这一条。
+ *
+ * 现在受理后再读几次车况：信号变成意图值才算成功；读得到但没变只说「已发出」。
+ * 4 秒起步（车端最快也要这么久才上报），窗口内读 3 次，够覆盖 5~15 秒的常规节奏。
+ */
+private const val VERIFY_CONTROL_WINDOW_MS = 12_000L
+
+/** 求证时两次读车况的间隔。 */
+private const val VERIFY_CONTROL_GAP_MS = 4_000L
+
+/** 空调执行快（1~5 秒），求证窗口短一些，别让首页那颗开关按死在在途状态。 */
+private const val AC_VERIFY_WINDOW_MS = 6_000L
+
+/**
  * 「前挡除霜」前置开机的等待时间。
  *
  * 除霜必须在空调运行中才生效，而车端对同一 cmdid 连发会回「系统繁忙」，
@@ -299,6 +318,14 @@ data class CarStatus(
     val frunkOpen: Boolean? = null,
     /** 哨兵模式是否开启。 */
     val sentryOn: Boolean? = null,
+    /**
+     * 电池预热（PTC 电芯加热）是否正在工作。
+     *
+     * 信号 1186 `batteryThermalRequest`：4 = 正在加热，0 = 空闲。
+     * 车端不给这两个值以外的状态，所以解析见 [com.leapcontrol.app.BatteryPreheatState]，
+     * 认不出来就是 null（首页那颗按钮不高亮，也不瞎猜成「关」）。
+     */
+    val batteryPreheatOn: Boolean? = null,
     /** 四门与前舱盖是否未关好（信号缺失为 null）。 */
     val doors: DoorStates? = null,
     /** 是否正在充电。 */
@@ -1145,7 +1172,7 @@ class AppRuntime(context: Context) {
         _officialPhotoStatus.value = OfficialPhotoStatus.Loading
         val api = LeapmotorApi(session)
         val query = runCatching { withNetworkRetry { api.queryParkingPhoto() } }
-            .getOrElse { ChassisPhotoQuery.Failed(it.message ?: "请求失败") }
+            .getOrElse { ChassisPhotoQuery.Failed(UserMessage.of(it, "照片没取到，请稍后重试")) }
         _officialPhotoStatus.value = when (query) {
             is ChassisPhotoQuery.Found -> {
                 val bitmap = runCatching {
@@ -1595,6 +1622,10 @@ class AppRuntime(context: Context) {
             sunroofOpen = parseSunroofOpen(st),
             frunkOpen = parseFrunkOpen(st),
             sentryOn = parseSentryOn(st),
+            // 电池预热：信号 1186，4 = 正在加热 / 0 = 空闲（上游同款口径）
+            batteryPreheatOn = com.leapcontrol.app.BatteryPreheatState.fromRaw(
+                pick(st, "batteryThermalRequest", "1186"),
+            ),
             doors = parseDoors(st),
             charging = parseCharging(st),
             chargeCableConnected = parseChargeCableConnected(st),
@@ -2579,6 +2610,10 @@ class AppRuntime(context: Context) {
      * [resultWaitMs] 等车端执行结果的窗口；传 0 表示**发出去就返回**，不等回执。
      *   给有广播时间预算的调用方（桌面小组件，整条链路只有 10 秒）用 ——
      *   等回执最长 20 秒，等下去只会在车端还没回话时被系统把进程掐掉。
+     *
+     * **成功必须以车况为准**：网关结果码 0 / 200 只代表指令进了队列，车端执行完还可能
+     * 自己否掉（车窗防夹弹回、后备箱被挡住），所以受理后还要读车况求证
+     * （见 [verifyOutcome]）。求不到证就只说「已发出」，不能把「发出去了」说成「已经成了」。
      */
     suspend fun control(
         commandName: String,
@@ -2612,31 +2647,127 @@ class AppRuntime(context: Context) {
             ?: if (command.cmdid == "170") AC_RESULT_MAX_WAIT_MS else CONTROL_RESULT_MAX_WAIT_MS
         val deadline = System.currentTimeMillis() + windowMs
         var attempt = 0
-        var lastCode: String? = null
+        var accepted = false
         while (System.currentTimeMillis() < deadline) {
             Thread.sleep(resultPollDelayMs(attempt))
             attempt++
             val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull() ?: continue
             val code = firstResultCode(resp)
-            if (code != null) lastCode = code
             if (code == "0" || code == "200") {
-                return@withContext "${command.label}执行成功"
+                accepted = true
+                break
             }
         }
-        // 超时或结果码不可解析：回读一次车况做二次判定，避免谎报成功
-        val suffix = lastCode?.let { "（车端结果码 $it）" }.orEmpty()
+        // 预设温度走的是空调那条指令，求证也按「空调开没开」看
+        val verifyKey = if (presetAcTemperature != null) "acOn" else commandName
+        // 网关受理 ≠ 车端执行：受理后读车况求证，读到信号变成意图值才算真的成功
+        val verified = if (accepted) verifyOutcome(api, verifyKey) else null
+        return@withContext when {
+            verified == true -> "${command.label}执行成功"
+            // 读得到信号但没变成意图值：既不能说成功，也不该说失败 —— 车端可能只是慢
+            verified == false -> "${command.label}指令已发出，但车辆状态还没变化，请下拉刷新或到车上确认"
+            // 读不到这个信号（鸣笛 / 预热 / 充电枪…）：只能按网关回执说话
+            accepted -> "${command.label}执行成功"
+            else -> timeoutOutcome(api, commandName, presetAcTemperature)
+        }
+    }
+
+    /**
+     * 超时没等到网关回执时的兜底说法。
+     *
+     * 空调单独回读一次车况自证（它就在首页第一屏，读一眼最直接）；
+     * 其余指令读不到「执行过没有」，只能说发出去了。
+     */
+    private fun timeoutOutcome(
+        api: LeapmotorApi,
+        commandName: String,
+        presetAcTemperature: Int?,
+    ): String {
         if (commandName == "acOn" || commandName == "acOff" || presetAcTemperature != null) {
             val stillOn = runCatching { parseAcOn(api.getVehicleState()) }.getOrNull()
             val turnedOn = presetAcTemperature != null || commandName == "acOn"
-            return@withContext when {
-                turnedOn && stillOn == true -> "空调已开启$suffix"
-                !turnedOn && stillOn == false -> "空调已关闭$suffix"
-                !turnedOn -> "关闭指令已下发$suffix，但车端仍上报空调运行中，请在车上确认"
-                else -> "开启指令已下发$suffix，暂未读到空调运行信号，请下拉刷新查看"
+            return when {
+                turnedOn && stillOn == true -> "空调已开启"
+                !turnedOn && stillOn == false -> "空调已关闭"
+                !turnedOn -> "关闭指令已经发出，但车辆显示空调还在运行，请到车上确认"
+                else -> "开启指令已经发出，但暂时读不到空调状态，下拉刷新看看"
             }
         }
-        "指令已下发$suffix，请在车辆上确认执行结果"
+        return "指令已经发出，车辆还没回话，请稍后在车上确认"
     }
+
+    /**
+     * 用车况信号求证「车端真的执行了」。
+     *
+     * 与界面共用同一份映射（[ControlFeedback.reached]）：指令 → 该看哪个信号 →
+     * 期望它是开还是关，一处定义，免得磁贴、首页、这里各猜一套。
+     *
+     * @return true = 信号已变成意图值（真成功）；false = 读得到，但窗口内没变；
+     *   null = 这台车读不到这个信号，或这条指令本来就没有可回读的状态
+     *   （鸣笛 / 电池预热 / 充电枪）—— 这种情况只能按网关回执说话。
+     */
+    private fun verifyOutcome(api: LeapmotorApi, commandName: String): Boolean? {
+        val topic = ControlFeedback.topicOf(commandName) ?: return null
+        if (topic == ControlFeedback.TOPIC_HORN) return null
+        val windowMs = when (topic) {
+            ControlFeedback.TOPIC_AC -> AC_VERIFY_WINDOW_MS
+            else -> VERIFY_CONTROL_WINDOW_MS
+        }
+        val deadline = System.currentTimeMillis() + windowMs
+        var sawSignal = false
+        while (true) {
+            val remain = deadline - System.currentTimeMillis()
+            if (remain <= 0) break
+            Thread.sleep(minOf(VERIFY_CONTROL_GAP_MS, remain))
+            val st = runCatching { api.getVehicleState() }.getOrNull() ?: continue
+            // 不要 mergeComfortOptimistic：那是「刚点完先按意图显示」的乐观值，
+            // 拿它求证等于自己证明自己
+            val status = runCatching { buildStatus(st, observeCaps = false) }.getOrNull() ?: continue
+            val verdict = ControlFeedback.reached(commandName, status) ?: continue
+            sawSignal = true
+            if (verdict) return true
+        }
+        return if (sawSignal) false else null
+    }
+
+    /**
+     * 桌面小组件专用的控车：**发完指令后只等一小会儿回执**，然后带结果返回。
+     *
+     * 小组件点击走的是 BroadcastReceiver（[android.appwidget.AppWidgetProvider] 的 onReceive），
+     * goAsync() 之后整条链路只有约 10 秒预算，不能沿用 [control] 那套最长 20 秒的轮询 ——
+     * 一旦超时系统会判 ANR / 掐进程，用户看到的就是「点了没反应还卡一下」。
+     *
+     * 所以这里把窗口压到 [budgetMs]（默认 3.5 秒）：
+     * - 拿到车端结果码 0 / 200 → 返回「XX已执行」，这是**真实执行结果**，不是「已下发」；
+     * - 窗口内没等到 → 返回「XX已下发，车辆还没回话」，由调用方回读车况兜底。
+     *
+     * 与 `control(command, resultWaitMs = 0)` 的区别就在这：那个发完立刻返回，
+     * 一个字的结果都不等，小组件只能靠回读车况猜 —— 而车端执行要 5~15 秒，
+     * 3 秒回读通常还是上一条报文，于是「点了之后状态不刷新」。
+     *
+     * ⚠️ 内部 `Thread.sleep` 轮询没有可中断挂起点，外面的 withTimeout 掐不住它，
+     * 真正的预算控制就靠这里的 [budgetMs]，调用方不要再给它套大超时。
+     */
+    suspend fun controlForWidget(commandName: String, budgetMs: Long = 3_500L): String =
+        withContext(Dispatchers.IO) {
+            val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
+            val api = LeapmotorApi(session)
+            val command = Commands.build(commandName)
+            val result = withNetworkRetry { api.sendControl(command, pin) }
+            // 指令已到网关：记下目标档位，后续车况刷新在保护窗口内不会把它弹回旧值
+            rememberComfortTarget(commandName)
+            val deadline = System.currentTimeMillis() + budgetMs
+            var attempt = 0
+            while (System.currentTimeMillis() < deadline) {
+                Thread.sleep(resultPollDelayMs(attempt))
+                attempt++
+                val resp = runCatching { api.queryControlResult(result.msgID) }.getOrNull() ?: continue
+                val code = firstResultCode(resp)
+                if (code == "0" || code == "200") return@withContext "${command.label}已执行"
+            }
+            // 结果码只对排查有用，用户看不懂；上屏只说「发出去了，还没回话」
+            "${command.label}已下发，车辆还没回话"
+        }
 
     /**
      * 前挡除霜：逐个组合试，每次都用车况信号 1945（windshieldDefrost）自证。

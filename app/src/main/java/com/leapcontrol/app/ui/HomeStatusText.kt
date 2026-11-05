@@ -50,9 +50,13 @@ import java.util.Locale
  * 绝不写「状态未知」占一行。
  */
 @Composable
-internal fun HomeStatusText(status: CarStatus?, modifier: Modifier = Modifier) {
+internal fun HomeStatusText(
+    status: CarStatus?,
+    modifier: Modifier = Modifier,
+    flash: ControlFeedback.Flash? = null,
+) {
     val C = LocalAppColors.current
-    val view = rememberHomeStatusView(status)
+    val view = rememberHomeStatusView(status, flash)
 
     Column(
         modifier = modifier.widthIn(max = MAX_WIDTH),
@@ -95,6 +99,7 @@ internal fun HomeStatusText(status: CarStatus?, modifier: Modifier = Modifier) {
                             SpanStyle(
                                 color = when (token.emphasis) {
                                     StatusEmphasis.ALERT -> AlertRed
+                                    StatusEmphasis.ACCENT -> C.accent
                                     StatusEmphasis.MUTED -> C.textSecondary.copy(alpha = 0.7f)
                                     StatusEmphasis.NORMAL -> C.textSecondary
                                 },
@@ -125,9 +130,12 @@ private val MAX_WIDTH = 168.dp
  * 一处，不会出现「车模下能看到、右上角看不到」这种分裂。
  */
 @Composable
-internal fun rememberHomeStatusView(status: CarStatus?): HomeStatusView =
+internal fun rememberHomeStatusView(
+    status: CarStatus?,
+    flash: ControlFeedback.Flash? = null,
+): HomeStatusView =
     // 数据类做 key：车况刷新时整体换一个新对象，等价于按内容比对
-    remember(status) {
+    remember(status, flash) {
         HomeStatusLines.build(
             badge = status?.let {
                 DrivingStateRules.badge(
@@ -145,6 +153,10 @@ internal fun rememberHomeStatusView(status: CarStatus?): HomeStatusView =
             windowOpen = status?.windowOpen,
             trunkOpen = status?.trunkOpen,
             sunshadeOpen = status?.sunshadeOpen,
+            // 刚控过车：把结果并进第二行（闭锁那句直接被顶掉），
+            // 车端报文跟上之前不要还写着「已闭锁」
+            flashText = flash?.text,
+            flashTopic = flash?.command?.let { ControlFeedback.topicOf(it) },
         )
     }
 
@@ -164,7 +176,7 @@ internal fun toneColor(tone: DrivingTone?, C: AppColors): Color = when (tone) {
 }
 
 /** 一行里每个词的强调等级（纯逻辑，见 [HomeStatusLines]）。 */
-internal enum class StatusEmphasis { NORMAL, ALERT, MUTED }
+internal enum class StatusEmphasis { NORMAL, ALERT, MUTED, ACCENT }
 
 internal data class StatusToken(val text: String, val emphasis: StatusEmphasis = StatusEmphasis.NORMAL)
 
@@ -194,11 +206,15 @@ internal object HomeStatusLines {
         windowOpen: Boolean?,
         trunkOpen: Boolean?,
         sunshadeOpen: Boolean?,
+        flashText: String? = null,
+        flashTopic: String? = null,
     ): HomeStatusView {
         val lockToken = when (locked) {
-            true -> StatusToken("已闭锁")
-            false -> StatusToken("未闭锁", StatusEmphasis.ALERT)
-            null -> StatusToken("闭锁未知", StatusEmphasis.MUTED)
+            // 口径统一（用户 2026-11-05）：整套界面只说「已上锁 / 已解锁」，
+            // 不再出现「已闭锁 / 未闭锁」—— 同一个状态两种说法，读的人要反应一下。
+            true -> StatusToken("已上锁")
+            false -> StatusToken("已解锁", StatusEmphasis.ALERT)
+            null -> StatusToken("锁车未知", StatusEmphasis.MUTED)
         }
         val openTokens = buildList {
             if (acOn == true) add(StatusToken(acText(acTemp)))
@@ -206,15 +222,39 @@ internal object HomeStatusLines {
             if (trunkOpen == true) add(StatusToken("后备箱开", StatusEmphasis.ALERT))
             if (sunshadeOpen == true) add(StatusToken("遮阳帘开"))
         }
+        // 刚控过车：这一句用主色提亮，并顶掉同类项（否则会出现
+        // 「车辆已解锁 · 未闭锁」这种自相矛盾的两句并排）。
+        val flashToken = flashText?.let { StatusToken(it, StatusEmphasis.ACCENT) }
+        val restTokens = openTokens.filterNot { token ->
+            when (flashTopic) {
+                ControlFeedback.TOPIC_AC -> token.text.startsWith("空调")
+                ControlFeedback.TOPIC_WINDOW -> token.text == "车窗开"
+                ControlFeedback.TOPIC_TRUNK -> token.text == "后备箱开"
+                ControlFeedback.TOPIC_SUNSHADE -> token.text == "遮阳帘开"
+                else -> false
+            }
+        }
+        val lockReplaced = flashToken != null && flashTopic == ControlFeedback.TOPIC_LOCK
         return if (badge != null) {
             HomeStatusView(
                 primary = badge.label,
                 detail = badge.detail,
                 tone = badge.tone,
-                tokens = listOf(lockToken) + openTokens,
+                tokens = buildList {
+                    if (flashToken != null) add(flashToken)
+                    if (!lockReplaced) add(lockToken)
+                    addAll(restTokens)
+                },
             )
         } else {
-            HomeStatusView(primary = lockToken.text, tokens = openTokens)
+            // 没有行驶状态时，闭锁那句就是主状态：控车提示直接占主行
+            HomeStatusView(
+                primary = if (lockReplaced) flashText!! else lockToken.text,
+                tokens = buildList {
+                    if (flashToken != null && !lockReplaced) add(flashToken)
+                    addAll(restTokens)
+                },
+            )
         }
     }
 

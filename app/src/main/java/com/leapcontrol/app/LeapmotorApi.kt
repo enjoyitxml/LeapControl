@@ -185,13 +185,13 @@ class LeapmotorApi internal constructor(
         val started = System.currentTimeMillis()
         val response = httpRaw(url, method, headers, query, jsonBody, formBody, queryPost)
         if (!response.isHttpSuccessful) {
-            throw ApiException("HTTP ${response.statusCode}: ${response.rawBody.take(200)}", response.statusCode, System.currentTimeMillis() - started, stage = url.substringAfterLast('/'))
+            throw ApiException("服务器暂时连不上（HTTP ${response.statusCode}），请稍后重试", response.statusCode, System.currentTimeMillis() - started, stage = url.substringAfterLast('/'))
         }
         if (response.rawBody.isBlank()) return JSONObject()
         return try {
             JSONObject(response.rawBody)
         } catch (e: Exception) {
-            throw ApiException("非 JSON 响应: ${response.rawBody.take(200)}", response.statusCode, System.currentTimeMillis() - started, stage = url.substringAfterLast('/'))
+            throw ApiException("服务器返回的内容不像正常数据，请稍后重试", response.statusCode, System.currentTimeMillis() - started, stage = url.substringAfterLast('/'))
         }
     }
 
@@ -540,7 +540,8 @@ class LeapmotorApi internal constructor(
         val code = resp.optString("code", "").ifEmpty { resp.optString("result", "") }
         val success = code == "200" || code == "0" || resp.optBoolean("success", false)
         if (token.isEmpty() || !success) {
-            throw ApiException("旧 token 续期失败: ${resp.optString("msg").ifEmpty { "code=$code" }}")
+            // 「旧 token 续期失败: xxx」是写代码的人才看得懂的说法，用户能做只有重新登录
+            throw ApiException("登录已过期，请重新登录", stage = "token_refresh")
         }
         val tokenExpired = if (data.has("tokenExpired") && !data.isNull("tokenExpired")) {
             data.optString("tokenExpired")
@@ -565,14 +566,18 @@ class LeapmotorApi internal constructor(
         val data = resp.optJSONObject("data") ?: findObject(resp) {
             it.has("accessToken") && it.optJSONObject("signParam") != null
         } ?: throw ApiException(
-            "网关登录响应缺少 accessToken/signParam: ${resp.optString("msg").ifEmpty { resp.toString().take(200) }}"
+            // 原来这里把整段网关响应拼进 message，首页就弹出了
+            // 「网关登录响应缺少 accessToken/signParam: {"code":302010202,...}」——
+            // 用户看到只会以为 App 坏了。技术细节进 stage，上屏只说结果和下一步。
+            "登录没能完成，请再试一次",
+            stage = "gateway_login",
         )
         val accessToken = data.optString("accessToken")
         val signParam = data.optJSONObject("signParam")
         val r2 = signParam?.optString("r2") ?: ""
         val r3 = signParam?.optString("r3") ?: ""
         if (accessToken.isEmpty() || r2.isEmpty() || r3.isEmpty()) {
-            throw ApiException("网关登录响应缺少 signParam.r2/r3")
+            throw ApiException("登录没能完成，请再试一次", stage = "gateway_login")
         }
         val signKey = Crypto.deriveSignKey(accessToken, r2, r3)
         val boundDeviceId = Crypto.jwtDeviceId(accessToken)
@@ -1801,7 +1806,7 @@ class LeapmotorApi internal constructor(
         )
         val route = resp.optJSONObject("data")?.let { routeFrom(it) }
             ?: findObject(resp) { it.has("appRegion") || it.has("appCenter") }?.let { routeFrom(it) }
-            ?: throw ApiException("车辆路由响应缺少 appRegion")
+            ?: throw ApiException("车辆信息没取到，请稍后重试", stage = "vehicle_region")
         session.route = route
         return route
     }
@@ -1828,7 +1833,7 @@ class LeapmotorApi internal constructor(
      */
     fun getVehicleSignalMap(): JSONObject {
         val signalMap = extractSignalMap(getVehicleStateRaw())
-        if (signalMap.length() == 0) throw ApiException("车况接口未返回 signalMap")
+        if (signalMap.length() == 0) throw ApiException("车况没取到，请稍后重试", stage = "vehicle_state")
         return signalMap
     }
 
@@ -1837,7 +1842,7 @@ class LeapmotorApi internal constructor(
         val raw = getVehicleStateRaw()
         val signalMap = extractSignalMap(raw)
         if (signalMap.length() == 0) {
-            throw ApiException("车况接口未返回 signalMap:\n${raw.toString().take(800)}")
+            throw ApiException("车况没取到，请稍后重试", stage = "vehicle_state")
         }
         val decoded = SignalTable.decode(signalMap)
         // 合并车端/网关可能下发的 config.3 充电计划

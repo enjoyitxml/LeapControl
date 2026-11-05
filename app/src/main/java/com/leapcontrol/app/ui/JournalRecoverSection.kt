@@ -89,7 +89,7 @@ fun JournalSafetyRows(
                     dialog = if (failure == null) {
                         "已写入 下载/LeapControl，之后每天自动更新一份。"
                     } else {
-                        "立即备份失败：${failure.message ?: "无法写入下载目录"}"
+                        "立即备份失败：${UserMessage.of(failure, "无法写入下载目录")}"
                     }
                 }
             }
@@ -113,7 +113,7 @@ fun JournalSafetyRows(
             dialog = if (failure == null) {
                 "已写入 下载/LeapControl。这个目录不属于零控，卸载 App 不会删掉它。"
             } else {
-                "备份失败：${failure.message ?: "无法写入下载目录"}"
+                "备份失败：${UserMessage.of(failure, "无法写入下载目录")}"
             }
         }
     }
@@ -139,7 +139,7 @@ fun JournalSafetyRows(
                         sources = list
                     }
                 }
-                .onFailure { dialog = "扫描失败：${it.message ?: "读不出本机数据"}" }
+                .onFailure { dialog = "扫描失败：${UserMessage.of(it, "读不出本机数据")}" }
         }
     }
 
@@ -208,7 +208,7 @@ fun JournalSafetyRows(
                                     dialog = text
                                     onMessage(text)
                                 }
-                                .onFailure { dialog = "合并失败：${it.message ?: "未知错误"}" }
+                                .onFailure { dialog = "合并失败：${UserMessage.of(it, "这个备份文件读不出来")}" }
                         }
                     },
                 ) {

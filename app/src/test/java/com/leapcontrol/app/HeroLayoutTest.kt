@@ -11,18 +11,19 @@ import org.junit.Test
  * 首页两套布局（经典 / 状态分置）的纯逻辑部分。
  *
  * 布局本身是像素活，单测守的是三件容易翻车的事：
- *  1. 存量用户没有这个 prefs 键时必须落在经典，绝不能默认新方案；
+ *  1. 没有存过这个 prefs 键时落在默认（2026-11-05 起为「状态分置」），存坏的值也一样；
  *  2. 右上角那几行必须「闭锁在第一行、一次只有一项」，不许退回成合并成一句；
- *  3. 红色只给真正要看的问题（未闭锁 / 车窗 / 后备箱），空调和遮阳帘不开警示色。
+ *  3. 红色只给真正要看的问题（已解锁 / 车窗 / 后备箱），空调和遮阳帘不开警示色。
  */
 class HeroLayoutTest {
 
     // ---------------------------------------------------------------- 布局选择
 
     @Test
-    fun `没有存过布局时默认经典`() {
-        assertEquals(HeroLayout.CLASSIC, HeroLayout.fromId(null))
-        assertEquals(HeroLayout.CLASSIC, HeroLayout.DEFAULT)
+    fun `没有存过布局时默认状态分置`() {
+        // 2026-11-05 用户看过两套实测后指定「状态分置」为默认
+        assertEquals(HeroLayout.SEPARATE, HeroLayout.fromId(null))
+        assertEquals(HeroLayout.SEPARATE, HeroLayout.DEFAULT)
     }
 
     @Test
@@ -40,11 +41,11 @@ class HeroLayoutTest {
     }
 
     @Test
-    fun `存了不认识的值就退回经典`() {
+    fun `存了不认识的值就退回默认`() {
         // 降级安装、手改 prefs、以后删掉某个方案，都不能让首页空白
-        assertEquals(HeroLayout.CLASSIC, HeroLayout.fromId(""))
-        assertEquals(HeroLayout.CLASSIC, HeroLayout.fromId("split"))
-        assertEquals(HeroLayout.CLASSIC, HeroLayout.fromId("{}"))
+        assertEquals(HeroLayout.DEFAULT, HeroLayout.fromId(""))
+        assertEquals(HeroLayout.DEFAULT, HeroLayout.fromId("split"))
+        assertEquals(HeroLayout.DEFAULT, HeroLayout.fromId("{}"))
     }
 
     @Test
@@ -55,9 +56,10 @@ class HeroLayoutTest {
     }
 
     @Test
-    fun `默认还是经典这一套`() {
-        // 用户 2026-11-05 明确要求：默认沿用现在的样子，另一套要自己挑
-        assertEquals("经典", HeroLayout.DEFAULT.label)
+    fun `默认是状态分置`() {
+        // 用户 2026-11-05 指定：「状态分置」作为默认方案；经典留着给想切回去的人
+        assertEquals("状态分置", HeroLayout.DEFAULT.label)
+        assertEquals("经典", HeroLayout.entries.first { it != HeroLayout.DEFAULT }.label)
     }
 
     // ---------------------------------------------------------- 右上角的状态行
@@ -71,12 +73,12 @@ class HeroLayoutTest {
             trunkOpen = null,
             sunshadeOpen = null,
         )
-        assertEquals("车辆已闭锁", rows[0].label)
-        assertEquals(listOf("车辆已闭锁", "车窗已开启", "空调已开启"), rows.map { it.label })
+        assertEquals("车辆已上锁", rows[0].label)
+        assertEquals(listOf("车辆已上锁", "车窗已开启", "空调已开启"), rows.map { it.label })
     }
 
     @Test
-    fun `未闭锁是红项`() {
+    fun `已解锁是红项`() {
         val rows = vehicleStatusRows(
             locked = false,
             acOn = null,
@@ -84,7 +86,7 @@ class HeroLayoutTest {
             trunkOpen = null,
             sunshadeOpen = null,
         )
-        assertEquals("车辆未闭锁", rows.single().label)
+        assertEquals("车辆已解锁", rows.single().label)
         assertTrue(rows.single().alert)
     }
 
@@ -102,7 +104,7 @@ class HeroLayoutTest {
         val byLabel = rows.associateBy { it.label }
         assertTrue(byLabel.getValue("车窗已开启").alert)
         assertTrue(byLabel.getValue("后备箱已开启").alert)
-        assertFalse(byLabel.getValue("车辆已闭锁").alert)
+        assertFalse(byLabel.getValue("车辆已上锁").alert)
         assertFalse(byLabel.getValue("空调已开启").alert)
         assertFalse(byLabel.getValue("遮阳帘已开启").alert)
     }
@@ -116,7 +118,7 @@ class HeroLayoutTest {
             trunkOpen = false,
             sunshadeOpen = false,
         )
-        assertEquals(listOf("车辆已闭锁"), rows.map { it.label })
+        assertEquals(listOf("车辆已上锁"), rows.map { it.label })
     }
 
     @Test
@@ -143,7 +145,7 @@ class HeroLayoutTest {
             sunshadeOpen = true,
         )
         assertEquals(
-            listOf("车辆已闭锁", "车窗已开启", "后备箱已开启", "遮阳帘已开启", "空调已开启"),
+            listOf("车辆已上锁", "车窗已开启", "后备箱已开启", "遮阳帘已开启", "空调已开启"),
             rows.map { it.label },
         )
         assertFalse(rows.isEmpty())

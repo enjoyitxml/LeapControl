@@ -79,7 +79,7 @@ fun JournalBackupRows(
                 lastExport = stamp
                 onMessage("零记数据已导出（$stamp）")
             } else {
-                result = "导出失败：${failure.message ?: "无法写入所选位置"}"
+                result = "导出失败：${UserMessage.of(failure, "无法写入所选位置")}"
             }
         }
     }
@@ -101,7 +101,7 @@ fun JournalBackupRows(
             busy = false
             decoded
                 .onSuccess { pending = it }
-                .onFailure { result = it.message ?: "这个文件读不出来" }
+                .onFailure { result = UserMessage.of(it, "这个文件读不出来") }
         }
     }
 
@@ -179,7 +179,7 @@ fun JournalBackupRows(
                                     result = text
                                     onMessage(text)
                                 }
-                                .onFailure { result = "导入失败：${it.message ?: "未知错误"}" }
+                                .onFailure { result = "导入失败：${UserMessage.of(it, "这个文件读不出来")}" }
                         }
                     },
                 ) { Text(if (busy) "导入中…" else "导入", color = C.accent) }

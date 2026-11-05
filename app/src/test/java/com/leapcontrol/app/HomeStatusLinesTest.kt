@@ -28,7 +28,7 @@ class HomeStatusLinesTest {
     fun `有主状态时闭锁降为从属项`() {
         val v = view()
         assertEquals("已驻车", v.primary)
-        assertEquals(listOf("已闭锁"), v.tokens.map { it.text })
+        assertEquals(listOf("已上锁"), v.tokens.map { it.text })
     }
 
     @Test
@@ -40,7 +40,7 @@ class HomeStatusLinesTest {
     }
 
     @Test
-    fun `未闭锁和车窗开着才算警示`() {
+    fun `已解锁和车窗开着才算警示`() {
         val v = view(locked = false, windowOpen = true, trunkOpen = true)
         v.tokens.forEach { assertEquals(StatusEmphasis.ALERT, it.emphasis) }
     }
@@ -54,21 +54,21 @@ class HomeStatusLinesTest {
     @Test
     fun `没有挡位车速时退回闭锁说法，不写状态未知`() {
         val v = view(badge = null, locked = true)
-        assertEquals("已闭锁", v.primary)
+        assertEquals("已上锁", v.primary)
         assertTrue(v.tokens.isEmpty())
     }
 
     @Test
     fun `什么都判不出来也不留空`() {
         val v = view(badge = null, locked = null)
-        assertEquals("闭锁未知", v.primary)
+        assertEquals("锁车未知", v.primary)
         assertTrue(v.tokens.isEmpty())
     }
 
     @Test
     fun `没有主状态时开启项仍然照常显示`() {
         val v = view(badge = null, locked = true, acOn = true, acTemp = "24")
-        assertEquals("已闭锁", v.primary)
+        assertEquals("已上锁", v.primary)
         assertEquals(listOf("空调 24°"), v.tokens.map { it.text })
     }
 
@@ -91,6 +91,6 @@ class HomeStatusLinesTest {
         )
         assertEquals("行驶中", v.primary)
         assertEquals("42 km/h", v.detail)
-        assertEquals(listOf("已闭锁"), v.tokens.map { it.text })
+        assertEquals(listOf("已上锁"), v.tokens.map { it.text })
     }
 }

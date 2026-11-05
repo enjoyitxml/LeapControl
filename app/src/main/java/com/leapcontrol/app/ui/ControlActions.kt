@@ -18,7 +18,12 @@ data class ControlAction(
     val label: String,
     /** 图标：与底部导航同一套自绘 drawable（1024 视口实心风格）。 */
     val iconRes: Int,
-    /** 是否按车况高亮，并在开启时下发关闭指令、关闭时下发开启指令。 */
+    /**
+     * 开 / 关一体的复合按钮（后备箱、车窗、遮阳帘…）。
+     *
+     * 以前用它决定「要不要按车况高亮」，现在亮灭统一由 [ControlActions.isActive] 判断
+     * （解锁和电池预热也要高亮，不能只看这个标记），它只剩「说明这颗按钮是双向的」这条语义。
+     */
     val toggle: Boolean = false,
     val available: (VehicleCapabilities) -> Boolean = { true },
 )
@@ -53,14 +58,25 @@ object ControlActions {
         return ordered.filter { it.available(caps) }
     }
 
-    /** 复合按钮是否处于「开启」状态（null 表示车况未知，不高亮）。 */
+    /**
+     * 这颗按钮此刻该不该高亮（null = 车况未知，不高亮，也不猜）。
+     *
+     * 用户 2026-11-05 定稿：
+     * - **解锁**：车没上锁时亮着 —— 看到解锁键亮，就知道车现在没锁；
+     * - **后备箱 / 车窗 / 遮阳帘 / 天窗 / 前备箱 / 哨兵 / 电池预热**：功能开着就亮，
+     *   亮着点=关、灭着点=开（电池预热看 [CarStatus.batteryPreheatOn]）；
+     * - **上锁 / 鸣笛**：单次动作，点完就结束，没有「开着的状态」可亮。
+     */
     fun isActive(id: String, status: CarStatus?): Boolean? = when (id) {
+        "unlock" -> status?.locked?.let { !it }
+        "batteryPreheat" -> status?.batteryPreheatOn
         "trunk" -> status?.trunkOpen
         "window" -> status?.windowOpen
         "sunshade" -> status?.sunshadeOpen
         "sunroof" -> status?.sunroofOpen
         "frunk" -> status?.frunkOpen
         "sentry" -> status?.sentryOn
+        // 上锁 / 鸣笛是单次动作：高亮只会被误读成「这个功能开着」
         else -> null
     }
 
@@ -76,6 +92,8 @@ object ControlActions {
         "sunroof" -> if (status?.sunroofOpen == true) "sunroofClose" else "sunroofOpen"
         "frunk" -> if (status?.frunkOpen == true) "frunkClose" else "frunkOpen"
         "sentry" -> if (status?.sentryOn == true) "sentryOff" else "sentryOn"
+        // 预热同样是开/关一体的：亮着点就是关（热着再发一次「开」等于没点）
+        "batteryPreheat" -> if (status?.batteryPreheatOn == true) "batteryPreheatOff" else "batteryPreheat"
         else -> id
     }
 

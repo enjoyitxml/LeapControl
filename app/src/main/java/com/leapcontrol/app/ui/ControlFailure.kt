@@ -44,17 +44,21 @@ object ControlFailure {
 
     // ---------------- 文案 ----------------
 
-    private val HINT_RELOGIN = ControlHint(
+    /**
+     * 这三条给入口侧的**前置校验**用（小组件广播 / 磁贴点击时就能判出来），
+     * 所以是 internal 而不是 private：文案只留一份，两个入口都念同一句。
+     */
+    internal val HINT_RELOGIN = ControlHint(
         message = "登录已失效，正在打开零控，请重新登录",
         short = "登录已失效",
         action = ControlFix.RELOGIN,
     )
-    private val HINT_PIN = ControlHint(
+    internal val HINT_PIN = ControlHint(
         message = "还没设置控车密码，正在打开零控",
         short = "未设密码",
         action = ControlFix.OPEN_PIN,
     )
-    private val HINT_NO_VEHICLE = ControlHint(
+    internal val HINT_NO_VEHICLE = ControlHint(
         message = "还没选择车辆，正在打开零控",
         short = "未选车辆",
         action = ControlFix.OPEN_APP,

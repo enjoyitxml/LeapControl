@@ -67,11 +67,19 @@ private const val STATUS_MAX_ROWS = 4
  * 判据仍然只看车况信号，拿不到的项直接不画（不留「未知」占位）。
  */
 @Composable
-internal fun VehicleStatusColumn(status: CarStatus?, modifier: Modifier = Modifier) {
+internal fun VehicleStatusColumn(
+    status: CarStatus?,
+    modifier: Modifier = Modifier,
+    flash: ControlFeedback.Flash? = null,
+) {
     val rows = rememberVehicleStatusRows(status)
-    if (rows.isEmpty()) return
-    val visible = if (rows.size > STATUS_MAX_ROWS) rows.take(STATUS_MAX_ROWS - 1) else rows
-    val hidden = rows.size - visible.size
+    // 刚控过车：先让「车辆解锁中… / 车辆已解锁」顶掉它对应的那一行，
+    // 车端报文要 5~15 秒才更新，这期间还写「车辆已闭锁」就是在骗人
+    // （2026-11-05 反馈：App 里控车后右上角不跟着变）。
+    val shown = remember(rows, flash) { withControlFlash(rows, flash) }
+    if (shown.isEmpty()) return
+    val visible = if (shown.size > STATUS_MAX_ROWS) shown.take(STATUS_MAX_ROWS - 1) else shown
+    val hidden = shown.size - visible.size
 
     Column(
         modifier = modifier.widthIn(max = STATUS_COLUMN_MAX),
@@ -100,13 +108,17 @@ private fun VehicleStatusRowView(row: VehicleStatusRow) {
         Icon(
             painter = painterResource(row.iconRes),
             contentDescription = null,
-            tint = if (row.alert) AlertRed else C.textPrimary,
+            tint = when {
+                row.alert -> AlertRed
+                row.accent -> C.accent
+                else -> C.textPrimary
+            },
             modifier = Modifier.size(16.dp),
         )
         Spacer(Modifier.width(6.dp))
         Text(
             text = row.label,
-            color = C.textPrimary,
+            color = if (row.accent) C.accent else C.textPrimary,
             fontSize = 15.sp,
             maxLines = 1,
             softWrap = false,
@@ -115,7 +127,46 @@ private fun VehicleStatusRowView(row: VehicleStatusRow) {
     }
 }
 
-internal data class VehicleStatusRow(val iconRes: Int, val label: String, val alert: Boolean)
+/**
+ * @param topic 这一行说的是车上的哪件事（[ControlFeedback.TOPIC_LOCK] 等）。
+ *   控车中的短句靠它找到该顶替的那一行，不会出现「车辆已闭锁」和「车辆解锁中…」并排打架。
+ * @param accent 正在执行 / 刚执行完的那一行用主色提亮，与常显车况区分开。
+ */
+internal data class VehicleStatusRow(
+    val iconRes: Int,
+    val label: String,
+    val alert: Boolean,
+    val topic: String? = null,
+    val accent: Boolean = false,
+)
+
+/**
+ * 把「刚控车」的那句插进状态列（纯函数，可单测）。
+ *
+ * 规则：顶替同 topic 的那一行；车况里本来没有这一行（例如空调关着时没有空调行）
+ * 就按 [vehicleStatusRows] 的顺序追加到末尾 —— 闭锁永远在第一行，不能被挤走。
+ */
+internal fun withControlFlash(
+    rows: List<VehicleStatusRow>,
+    flash: ControlFeedback.Flash?,
+): List<VehicleStatusRow> {
+    if (flash == null) return rows
+    val topic = ControlFeedback.topicOf(flash.command)
+    val row = VehicleStatusRow(
+        iconRes = ControlFeedback.iconOf(flash.command),
+        label = flash.text,
+        alert = flash.phase == ControlFeedback.Phase.FAILED,
+        topic = topic,
+        accent = flash.phase != ControlFeedback.Phase.FAILED,
+    )
+    if (topic == null) return rows
+    val index = rows.indexOfFirst { it.topic == topic }
+    return if (index >= 0) {
+        rows.toMutableList().also { it[index] = row }
+    } else {
+        rows + row
+    }
+}
 
 /**
  * 车况 → 右上角那几行（纯函数，可单测）。
@@ -131,15 +182,47 @@ internal fun vehicleStatusRows(
     sunshadeOpen: Boolean?,
 ): List<VehicleStatusRow> = buildList {
     when (locked) {
-        true -> add(VehicleStatusRow(R.drawable.ic_qc_lock, "车辆已闭锁", false))
-        false -> add(VehicleStatusRow(R.drawable.ic_qc_unlock, "车辆未闭锁", true))
+        true -> add(
+            VehicleStatusRow(
+                R.drawable.ic_qc_lock, "车辆已上锁", false, ControlFeedback.TOPIC_LOCK,
+            ),
+        )
+        false -> add(
+            VehicleStatusRow(
+                R.drawable.ic_qc_unlock, "车辆已解锁", true, ControlFeedback.TOPIC_LOCK,
+            ),
+        )
         // 闭锁信号缺失时不写「状态未知」：占一整行却没有可操作价值
         null -> Unit
     }
-    if (windowOpen == true) add(VehicleStatusRow(R.drawable.ic_qc_window, "车窗已开启", true))
-    if (trunkOpen == true) add(VehicleStatusRow(R.drawable.ic_qc_trunk, "后备箱已开启", true))
-    if (sunshadeOpen == true) add(VehicleStatusRow(R.drawable.ic_qc_sunshade, "遮阳帘已开启", false))
-    if (acOn == true) add(VehicleStatusRow(R.drawable.ic_qc_ac, "空调已开启", false))
+    if (windowOpen == true) {
+        add(
+            VehicleStatusRow(
+                R.drawable.ic_qc_window, "车窗已开启", true, ControlFeedback.TOPIC_WINDOW,
+            ),
+        )
+    }
+    if (trunkOpen == true) {
+        add(
+            VehicleStatusRow(
+                R.drawable.ic_qc_trunk, "后备箱已开启", true, ControlFeedback.TOPIC_TRUNK,
+            ),
+        )
+    }
+    if (sunshadeOpen == true) {
+        add(
+            VehicleStatusRow(
+                R.drawable.ic_qc_sunshade, "遮阳帘已开启", false, ControlFeedback.TOPIC_SUNSHADE,
+            ),
+        )
+    }
+    if (acOn == true) {
+        add(
+            VehicleStatusRow(
+                R.drawable.ic_qc_ac, "空调已开启", false, ControlFeedback.TOPIC_AC,
+            ),
+        )
+    }
 }
 
 @Composable

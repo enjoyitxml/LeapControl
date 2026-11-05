@@ -196,8 +196,8 @@ class BleKeyHost internal constructor(
                 // 以前这里一律显示「请检查网络」，把「路由 404」「签名被拒」「响应格式不对」
                 // 全伪装成网络问题，用户和我们都无从下手。现在把真实原因带出来。
                 if (!silent) {
-                    val reason = error.message?.takeIf { it.isNotBlank() }
-                    notice = if (reason != null) "钥匙同步失败：$reason" else "钥匙同步失败，请检查网络后重试"
+                    val reason = UserMessage.of(error, "请检查网络后重试")
+                    notice = "钥匙同步失败：$reason"
                 }
             } finally {
                 syncing = false
@@ -299,7 +299,7 @@ class BleKeyHost internal constructor(
                     if (linked) "设置已下发，等待车辆确认" else "设置已保存，连上车辆后自动同步"
                 else -> "设置已下发"
             }
-        }.onFailure { fallback(it.message ?: "设置下发失败") }
+        }.onFailure { fallback(UserMessage.of(it, "设置下发失败")) }
 
         // 车端确认之后必须把后台服务拉起来，否则一进后台连接就被断开 ——
         // 表现就是「配对时好好的，锁屏走到车边没反应」。

@@ -227,6 +227,23 @@ fun HomeScreen(
         // 这里只订阅，不再用 remember 存 —— 切到「我的」再回来不会先变成 null 而闪一下。
         val status by runtime.statusFlow.collectAsState()
         val lastUpdated by runtime.lastUpdatedFlow.collectAsState()
+        // 刚控过车的那句提示（「车辆解锁中… / 车辆已解锁」）。和桌面小组件同一套口径，
+        // 只是不落盘：前台界面在，它就在。见 ControlFeedback。
+        val controlFlash by ControlFeedback.flash.collectAsState()
+        /**
+         * 车况真的变成这次控车的结果后，立刻撤掉提示，交回真实车况。
+         *
+         * 例如解锁：点完先写「车辆解锁中…」→「车辆已解锁」，等闭锁信号翻成 false，
+         * 右上角自然变回「车辆未闭锁」。车端迟迟不上报时，提示靠自己的 TTL 兜底过期。
+         */
+        LaunchedEffect(controlFlash, status) {
+            val f = controlFlash ?: return@LaunchedEffect
+            if (f.phase != ControlFeedback.Phase.RUNNING &&
+                ControlFeedback.reached(f.command, status) == true
+            ) {
+                ControlFeedback.clear()
+            }
+        }
         // 蓝牙钥匙：宿主由 LeapControlApp 下发（进程级单例，设置页也共用同一份状态）
         val bleHost = LocalBleKeyHost.current
         val bleIconVisible by runtime.bleIconVisible
@@ -596,6 +613,8 @@ fun HomeScreen(
             val now = System.currentTimeMillis()
             if (!force && now - lastRequestAt < 2_000) return
             lastRequestAt = now
+            // 用户主动下拉刷新 = 想看真实车况，刚控车的那句提示立刻让位
+            if (!silent) ControlFeedback.clear()
             // 锁屏切回时网络可能尚未就绪：直接跳过，等网络恢复回调再刷，避免报 DNS 错误
             if (!runtime.isNetworkAvailable()) {
                 refreshError = "网络暂不可用，恢复后自动刷新"
@@ -622,6 +641,18 @@ fun HomeScreen(
         // 冷启动：进入首页刷新一次
         LaunchedEffect(Unit) {
             refresh(force = true)
+        }
+        /**
+         * 从二级页（充电中心 / 空调 / 找车 / 体检…）回到首页主界面：自动刷一次车况。
+         *
+         * 用户「返回零控页面」时看到的状态必须是最新的 —— 在二级页里可能刚控过车、
+         * 也可能在车里熄火 / 上锁了，回来还显示进去之前那一份就是在骗人。
+         * 首次进入不重复刷（上面那条冷启动已经刷过了）。
+         */
+        var wasMainPage by remember { mutableStateOf(true) }
+        LaunchedEffect(onMainPage) {
+            if (onMainPage && !wasMainPage) refresh(force = true)
+            wasMainPage = onMainPage
         }
         // 从后台切回前台时刷新：车况必刷，能耗走缓存（超过 15 分钟才会真的请求）
         LaunchedEffect(Unit) {
@@ -678,14 +709,23 @@ fun HomeScreen(
                 val command = ControlActions.resolveCommand(cellId, status)
                 controlling = cellId
                 actionMessage = null
+                // 点下去立刻在右上角说「车辆解锁中…」：车端 T-Box 唤醒 + 执行要 5~15 秒，
+                // 这期间若还写着「车辆已闭锁」，用户看到的就是「点了没反应」
+                ControlFeedback.running(command)
                 try {
-                    actionMessage = runtime.control(command)
-                    // 复合按钮执行后立刻回拉车况，让高亮状态跟着变
-                    if (ControlActions.find(cellId)?.toggle == true) refresh(force = true)
+                    val message = runtime.control(command)
+                    actionMessage = message
+                    // 车端确认了才是「车辆已解锁」，只下发没等到回执就说「解锁已下发」
+                    ControlFeedback.done(command, message)
+                    // 不管是不是开关型都回拉一次：提示撤掉后右上角要接上真实车况
+                    refresh(force = true)
                 } catch (e: NeedPinException) {
+                    // 弹出密码框，嘴上那句「正在解锁」得收回来，否则会一直挂着
+                    ControlFeedback.clear()
                     pendingCommand = cellId
                     showPinDialog = true
                 } catch (e: Exception) {
+                    ControlFeedback.failed(command)
                     actionMessage = friendlyError(e)
                 }
                 controlling = null
@@ -708,6 +748,7 @@ fun HomeScreen(
                 try {
                     val live = status
                     actionMessage = if (acOnNow) {
+                        // 开着只是调参数（acSetting:…），空调仍是开着的，右上角不用改口
                         val wind = live?.acWindLevel?.trim()?.toIntOrNull()
                             ?.coerceIn(Commands.MIN_AC_WIND_LEVEL, Commands.MAX_AC_WIND_LEVEL) ?: 2
                         runtime.control(
@@ -724,16 +765,21 @@ fun HomeScreen(
                             ),
                         )
                     } else {
-                        // 空调关着：这条本身就是「开机 + 设定温度」
-                        runtime.control("acOn", presetAcTemperature = temp)
+                        // 空调关着：这条本身就是「开机 + 设定温度」，右上角要跟着报进度
+                        ControlFeedback.running("acOn")
+                        val message = runtime.control("acOn", presetAcTemperature = temp)
+                        ControlFeedback.done("acOn", message)
+                        message
                     }
                     refresh(force = true)
                 } catch (e: NeedPinException) {
+                    ControlFeedback.clear()
                     pendingAcTemp = temp
                     showPinDialog = true
                 } catch (e: Exception) {
                     // 没发出去就把界面上刚跳的温度退回去，别让页面显示一个车上根本没有的温度
                     onFailed?.invoke()
+                    ControlFeedback.failed("acOn")
                     actionMessage = friendlyError(e)
                 } finally {
                     // 被取消（离开首页 / 切页）时也要复位，否则温度按钮会永久禁用
@@ -832,12 +878,17 @@ fun HomeScreen(
                         val command = if (target) "acOn" else "acOff"
                         controlling = command
                         actionMessage = null
+                        // 右上角先报「空调开启中…」，别让「空调已开启」停在上一轮状态上
+                        ControlFeedback.running(command)
                         try {
-                            actionMessage = runtime.control(
+                            val message = runtime.control(
                                 command,
                                 presetAcTemperature = if (target) presetTemp else null,
                             )
+                            actionMessage = message
+                            ControlFeedback.done(command, message)
                         } catch (e: NeedPinException) {
+                            ControlFeedback.clear()
                             pendingAcCommand = command
                             pendingAcOnTemp = if (target) presetTemp else null
                             showPinDialog = true
@@ -845,6 +896,7 @@ fun HomeScreen(
                         } catch (e: Exception) {
                             // 没发出去：撤掉意图，别让界面停在「已开 / 已关」的假状态
                             acSwitchIntent = null
+                            ControlFeedback.failed(command)
                             actionMessage = friendlyError(e)
                         }
                         refresh(force = true)
@@ -1595,11 +1647,13 @@ fun HomeScreen(
                     VehicleStatusColumn(
                         status = currentStatus,
                         modifier = Modifier.padding(top = 6.dp),
+                        flash = controlFlash,
                     )
                 } else {
                     HomeStatusText(
                         status = currentStatus,
                         modifier = Modifier.padding(top = 6.dp),
+                        flash = controlFlash,
                     )
                 }
             }
@@ -1668,7 +1722,8 @@ fun HomeScreen(
                             } else {
                                 val action = ControlActions.find(cellId)
                                 if (action != null) {
-                                    val active = if (action.toggle) ControlActions.isActive(cellId, status) else null
+                                    // 亮灭统一交给 isActive：解锁 / 开关型跟车况走，上锁 / 鸣笛恒不亮
+                                    val active = ControlActions.isActive(cellId, status)
                                     QuickButton(
                                         label = action.label,
                                         iconRes = action.iconRes,
@@ -2682,30 +2737,14 @@ private fun ModuleRow(
     }
 }
 
-/** 把底层网络异常转换为用户可读文案。 */
-private fun friendlyError(e: Throwable): String {
-    val msg = e.message.orEmpty()
-    // 登录失效排在最前：这类请求换成网络文案（「稍后自动重试」）会一直重试到天荒地老，
-    // 而用户真正该做的是重新登录（2026-11-05 那波「控车全部失效」就是这么被误读成 App 坏了的）
-    if (ControlFailure.isAuthFailure(msg.lowercase())) {
-        return "登录已失效，请到「我的」退出后重新登录"
-    }
-    return when {
-        msg.contains("Unable to resolve host", ignoreCase = true) ||
-            msg.contains("No address associated with hostname", ignoreCase = true) ->
-            "网络连接不稳定，正在重试…"
-        msg.contains("timeout", ignoreCase = true) -> "请求超时，稍后自动重试"
-        msg.contains("timed out", ignoreCase = true) -> "请求超时，稍后自动重试"
-        msg.contains("Failed to connect", ignoreCase = true) -> "无法连接服务器，请检查网络"
-        msg.contains("unexpected end of stream", ignoreCase = true) -> "连接被中断，正在重试…"
-        msg.isBlank() -> "请求失败，请稍后重试"
-        else -> when (val detail = serverReason(msg)) {
-            // 拿不到原因（只有错误码，或夹了内部参数）：别把码糊给用户
-            null -> if (msg.startsWith("控车失败")) "指令未完成，请稍后重试" else msg.lines().first().take(80)
-            else -> "未完成：$detail"
-        }
-    }
-}
+/**
+ * 把底层异常转成用户能读的一句话。
+ *
+ * 原来这里是一串 contains 判定，最后一条兜底直接把异常原文的第一行贴到卡片上，
+ * 于是首页出现过「网关登录响应缺少 accessToken/signParam: {...}」（2026-11-05 的截图）。
+ * 现在统一交给 [UserMessage]：认得的翻译，认不得的换成通用说明，技术细节不上屏。
+ */
+private fun friendlyError(e: Throwable): String = UserMessage.of(e)
 
 /**
  * 从「控车失败(1234): xxx」里揪出车端 / 网关给的原因。
