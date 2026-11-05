@@ -17,6 +17,7 @@ import com.leapcontrol.app.ApkUpdater
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.ChargingControlRules
+import com.leapcontrol.app.ChassisPhotoQuery
 import com.leapcontrol.app.GitHubUpdate
 import com.leapcontrol.app.HomeCardId
 import com.leapcontrol.app.HomeCardLayout
@@ -37,6 +38,11 @@ import com.leapcontrol.app.LeapmotorApi
 import com.leapcontrol.app.MileageEnergyParser
 import com.leapcontrol.app.OwnershipStats
 import com.leapcontrol.app.ParkingPhotoStore
+import com.leapcontrol.app.ParkingPhotoSource
+import com.leapcontrol.app.ParkingPhotoSourceRules
+import com.leapcontrol.app.OfficialParkingPhotoStore
+import com.leapcontrol.app.OfficialPhotoStatus
+import com.leapcontrol.app.OfficialThumbMemory
 import com.leapcontrol.app.MileageEnergySummary
 import com.leapcontrol.app.ScheduledAcPlan
 import com.leapcontrol.app.ScheduledAcState
@@ -63,6 +69,9 @@ import com.leapcontrol.app.VehicleLocationDomain
 import com.leapcontrol.app.VehicleLocationStore
 import com.leapcontrol.app.LocationAnchor
 import com.leapcontrol.app.LocationAnchorRule
+import com.leapcontrol.app.LocationCalibration
+import com.leapcontrol.app.LocationCalibrationStore
+import com.leapcontrol.app.LocationCalibrator
 import com.leapcontrol.app.VehicleLocationAnchorStore
 import com.leapcontrol.app.VehicleLocationRules
 import com.leapcontrol.app.VehicleOtaInfo
@@ -505,6 +514,21 @@ class AppRuntime(context: Context) {
     }
 
     /**
+     * 首页主区用哪套布局（个性化 → 首页布局，见 [HeroLayout]）。
+     *
+     * 挂在 AppRuntime 而不是页面本地 remembered 状态：切 tab 会把首页整棵子树重建，
+     * 本地状态会跟着丢，而这块恰好是「用户挑过的样子」，丢了就等于每次回来都跳回经典。
+     */
+    private val _heroLayout = MutableStateFlow(HeroLayoutPrefs.load(appContext))
+    val heroLayout: StateFlow<HeroLayout> = _heroLayout.asStateFlow()
+
+    fun setHeroLayout(layout: HeroLayout) {
+        if (_heroLayout.value == layout) return
+        HeroLayoutPrefs.save(appContext, layout)
+        _heroLayout.value = layout
+    }
+
+    /**
      * 是否开启「滑动性能日志」采集（设置 → 显示）。
      *
      * 默认关闭。开着的时候，每次首页上下滑动都会在 filesDir/perf/ 下留一份
@@ -797,7 +821,12 @@ class AppRuntime(context: Context) {
                 // 内存里那份也要清：留着的话，换车后第一次进首页会先亮上一辆车的地图（见 VehiclePlaceMemory）
                 VehiclePlaceMemory.clear()
                 ParkingThumbMemory.clear()
+                // 车端照片是「上一辆车停在哪」，绝不能留给下一辆车看
+                clearOfficialPhoto()
                 resetLocationAnchor()
+                // 校准是按 VIN 存的：换成新车要把这一辆自己的读出来。
+                // 沿用上一辆的偏移会让好车看着像坏了 —— 两辆车的偏差根本没有关系
+                _locationCalibration.value = LocationCalibrationStore.load(appContext, vehicle.vin)
                 // 换车时把充电采样闹钟撤掉：它是给上一辆车的 VIN 排的，
                 // 留着会拿新车的账号去读旧车的充电状态
                 runCatching { ChargeWatch.cancel(appContext) }
@@ -828,9 +857,14 @@ class AppRuntime(context: Context) {
         // 内存里那份同理，而且要一起清：否则退出后重新登录，首页会先亮别人的位置（见 VehiclePlaceMemory）
         VehiclePlaceMemory.clear()
         resetLocationAnchor()
+        // 校准也一起清：它记着「这辆车的位置要怎么挪」，换账号后不该留给下一个人
+        LocationCalibrationStore.clear(appContext)
+        _locationCalibration.value = LocationCalibration.NONE
         // 停车位照片同理，而且它更直接：照片里常能看到车牌、车位号、甚至车库门牌
         ParkingPhotoStore.clear(appContext)
         ParkingThumbMemory.clear()
+        // 车端照片同样是这辆车的位置实景，连 VIN 记录一起清
+        clearOfficialPhoto()
         // 充电采样闹钟也要撤：登出后它再响也只是个没登录的空转
         runCatching { ChargeWatch.cancel(appContext) }
         // 桌面小组件也要立刻变成「点此登录」，别把上一辆车的车况留在锁屏外
@@ -977,6 +1011,159 @@ class AppRuntime(context: Context) {
     private val _lastUpdated = MutableStateFlow(0L)
     /** 最近一次车况更新时刻（毫秒）。 */
     val lastUpdatedFlow: StateFlow<Long> = _lastUpdated.asStateFlow()
+
+    /**
+     * 当前位置校准（见 [LocationCalibration]），按 VIN 存，跟着车走。
+     *
+     * 放在这一层而不是 UI 状态里：首页卡、找车页地图、导航目的地、地址逆地理、
+     * 桌面小组件读的都是 [buildStatus] 产出的那两个数字。只有在这里生效，
+     * 「地图上的钉子和导航过去的点是不是同一个」才靠得住。
+     */
+    private val _locationCalibration = MutableStateFlow(
+        LocationCalibrationStore.load(appContext, session.selectedVin),
+    )
+    val locationCalibration: StateFlow<LocationCalibration> = _locationCalibration.asStateFlow()
+
+    /**
+     * 改校准值。**不联网重拉车况** —— 校准只是坐标的显示换算，车况报文里
+     * 那些数字一个都没变，为此叫醒一次车机不值得。
+     */
+    fun setLocationCalibration(next: LocationCalibration) {
+        val clean = LocationCalibrator.sanitize(next)
+        if (clean == _locationCalibration.value) return
+        _locationCalibration.value = clean
+        LocationCalibrationStore.save(appContext, session.selectedVin, clean)
+        // 缓存里的地址和地图是按旧坐标取的：留着会让用户以为「调了没生效」，
+        // 而且地址与钉子会各说各话（一个按新点请求、一个还是旧图）
+        VehicleLocationStore.clear(appContext)
+        VehiclePlaceMemory.clear()
+        remapCachedStatus()
+    }
+
+    /**
+     * 用磁盘里那份**原始报文**按新校准重新映射一遍车况。
+     *
+     * 只重算展示，不发请求：坐标换了，钉子立刻落到新位置，地址则由下一次
+     * 进页面时按新坐标重新取（缓存已经清了）。
+     */
+    private fun remapCachedStatus() {
+        val raw = runCatching {
+            statusPrefs.getString(statusCacheKey(session.selectedVin), null)
+        }.getOrNull()
+        if (raw.isNullOrBlank()) return
+        val st = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        _status.value = runCatching { buildStatus(st, observeCaps = false) }.getOrNull()
+    }
+
+    // ---------------- 驻车拍照：手机拍照 / 车端照片 ----------------
+    //
+    // 官方 App 那套「驻车后自动上传环视俯视图」不是全系都有（见 ParkingPhotoSource 的说明），
+    // 所以这里是**两选一**：默认手机拍照（老行为），用户自己切到车端照片。
+
+    private val parkingPhotoPrefs =
+        appContext.getSharedPreferences("leapcontrol_parking_photo", Context.MODE_PRIVATE)
+
+    /** 车端照片成功落盘的次数，UI 靠它决定什么时候重新读盘。 */
+    private var officialPhotoRevision = 0
+
+    /** 已经为哪个 VIN 自动取过一次（每次启动、每辆车只自动试一次，别反复打接口）。 */
+    private var officialAutoFetchVin: String? = null
+
+    private val _parkingPhotoSource = MutableStateFlow(
+        ParkingPhotoSource.fromId(parkingPhotoPrefs.getString(ParkingPhotoSourceRules.PREF_KEY, null)),
+    )
+    /** 当前选用的驻车拍照方案。 */
+    val parkingPhotoSource: StateFlow<ParkingPhotoSource> = _parkingPhotoSource.asStateFlow()
+
+    private val _officialPhotoStatus = MutableStateFlow(seedOfficialPhotoStatus())
+    /** 车端照片的获取进度（取到了 / 还没上传 / 不支持 / 网络失败）。 */
+    val officialPhotoStatus: StateFlow<OfficialPhotoStatus> = _officialPhotoStatus.asStateFlow()
+
+    /**
+     * 冷启动/换车后先用磁盘上那张把状态填上，免得首帧一律显示「还没取到」。
+     * 只有 VIN 对得上才算数（见 [OfficialParkingPhotoStore.belongsTo]）。
+     */
+    private fun seedOfficialPhotoStatus(): OfficialPhotoStatus {
+        val vin = session.selectedVin
+        if (vin.isBlank()) return OfficialPhotoStatus.Idle
+        if (!OfficialParkingPhotoStore.hasPhoto(appContext, vin)) return OfficialPhotoStatus.Idle
+        officialPhotoRevision += 1
+        return OfficialPhotoStatus.Ready(
+            uploadTimeMs = OfficialParkingPhotoStore.uploadTime(appContext, vin),
+            revision = officialPhotoRevision,
+        )
+    }
+
+    fun setParkingPhotoSource(source: ParkingPhotoSource) {
+        if (_parkingPhotoSource.value == source) return
+        _parkingPhotoSource.value = source
+        parkingPhotoPrefs.edit().putString(ParkingPhotoSourceRules.PREF_KEY, source.name).apply()
+        // 首页右上角那一格存的是「当前来源」的缩略图，切来源后必须重新解码
+        ParkingThumbMemory.clear()
+    }
+
+    /**
+     * 取一次车端驻车照片。
+     *
+     * [force] = false 时是「进页面顺手试一下」：**每辆车每次启动只试一次**，本地已经有
+     * 这张车的照片时直接跳过 —— 车端照片是停车那一刻上传的，短时间内重复问同一件事
+     * 既没有新结果，也会让用户在流量/电耗上多付一次。用户点「重新获取」时才走 [force]。
+     */
+    suspend fun refreshOfficialPhoto(force: Boolean = false): Unit = withContext(Dispatchers.IO) {
+        val vin = session.selectedVin
+        if (vin.isBlank()) {
+            _officialPhotoStatus.value = OfficialPhotoStatus.Failed("未登录")
+            return@withContext
+        }
+        if (!force) {
+            if (officialAutoFetchVin == vin) return@withContext
+            officialAutoFetchVin = vin
+            if (OfficialParkingPhotoStore.hasPhoto(appContext, vin)) return@withContext
+        }
+        _officialPhotoStatus.value = OfficialPhotoStatus.Loading
+        val api = LeapmotorApi(session)
+        val query = runCatching { withNetworkRetry { api.queryParkingPhoto() } }
+            .getOrElse { ChassisPhotoQuery.Failed(it.message ?: "请求失败") }
+        _officialPhotoStatus.value = when (query) {
+            is ChassisPhotoQuery.Found -> {
+                val bitmap = runCatching {
+                    api.downloadParkingPhotoBitmap(query.photo.secureUrl)
+                }.getOrNull()
+                if (bitmap != null &&
+                    OfficialParkingPhotoStore.save(appContext, vin, bitmap, query.photo.uploadTimeMs)
+                ) {
+                    officialPhotoRevision += 1
+                    OfficialPhotoStatus.Ready(query.photo.uploadTimeMs, officialPhotoRevision)
+                } else {
+                    OfficialPhotoStatus.Failed("照片下载失败")
+                }
+            }
+            ChassisPhotoQuery.Empty -> OfficialPhotoStatus.Empty
+            is ChassisPhotoQuery.Unsupported -> OfficialPhotoStatus.Unsupported(query.message)
+            is ChassisPhotoQuery.Failed -> OfficialPhotoStatus.Failed(query.message)
+        }
+    }
+
+    /**
+     * 清掉车端照片（换车 / 退出登录）。
+     *
+     * 手机拍的那张**不动**：它是用户自己的实物记录，换车删掉属于丢数据；
+     * 车端这张是「这辆车停在哪」的信息，留给下一辆车就是彻底的错误。
+     */
+    private fun clearOfficialPhoto() {
+        runCatching { OfficialParkingPhotoStore.clear(appContext) }
+        OfficialThumbMemory.clear()
+        officialAutoFetchVin = null
+        _officialPhotoStatus.value = OfficialPhotoStatus.Idle
+    }
+
+    /** 用户在界面上「清除车端照片」：只清本地缓存，方案选择保留。 */
+    fun deleteOfficialPhoto() {
+        runCatching { OfficialParkingPhotoStore.delete(appContext) }
+        OfficialThumbMemory.clear()
+        _officialPhotoStatus.value = OfficialPhotoStatus.Idle
+    }
+
 
     /**
      * 舒适件（座椅 / 方向盘 / 后视镜）的乐观覆盖记录，见 [ComfortOptimistic]。
@@ -1645,9 +1832,17 @@ class AppRuntime(context: Context) {
         val rawLatitude = selected.pair.latitude?.toString()?.toDoubleOrNull()
         val rawLongitude = selected.pair.longitude?.toString()?.toDoubleOrNull()
         val valid = VehicleLocationRules.isValid(rawLatitude, rawLongitude)
+        // 校准（坐标系换算 + 手调偏移，见 [LocationCalibration]）只作用在**输出**上：
+        // 车况里 rawLatitude 那一对仍然是车端原话，后面判「位置有没有变过」也用它 ——
+        // 否则用户调一次校准，就会被当成「车挪了」，时间的锚点直接归零
+        val shown = if (valid) {
+            LocationCalibrator.apply(rawLatitude!!, rawLongitude!!, _locationCalibration.value)
+        } else {
+            null
+        }
         return ResolvedLocation(
-            latitude = rawLatitude,
-            longitude = rawLongitude,
+            latitude = shown?.first ?: rawLatitude,
+            longitude = shown?.second ?: rawLongitude,
             hint = VehicleLocationDiagnostics.describe(values),
             seenAt = if (valid) {
                 trackLocationAnchor(rawLatitude!!, rawLongitude!!, System.currentTimeMillis())

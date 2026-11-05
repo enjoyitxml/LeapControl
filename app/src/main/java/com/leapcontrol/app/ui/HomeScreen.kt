@@ -1,5 +1,6 @@
 package com.leapcontrol.app.ui
 
+import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -1183,8 +1184,9 @@ fun HomeScreen(
             )
         } else if (showParkingPhoto) {
             // 驻车拍照：首页胶囊的落点。存储与拍照流程和找车页共用（同一个 space.jpg），
-            // 这一页只是把照片摆成主角，并能直接重拍 / 删除
+            // 这一页只是把照片摆成主角，并能直接重拍 / 删除，或者在两种来源之间切换
             ParkingPhotoScreen(
+                runtime = runtime,
                 onBack = { showParkingPhoto = false },
                 onMessage = { actionMessage = it },
             )
@@ -1498,13 +1500,19 @@ fun HomeScreen(
                     .heightIn(min = pageHeight),
             ) {
 
-            // ---- 续航区：左半（大字续航 + 电/油里程行），右半（车辆状态面板）----
-            Spacer(Modifier.height(16.dp))
+            // ---- 主区：两套布局只差两处（个性化 → 首页布局，默认经典）----
+            // 不再有整块 if/else 分叉：经典这一段是唯一的主干，[HeroLayout.SEPARATE]
+            // 只在两处插话 —— 右上角换成带图标的逐行状态、车模下面多一条行驶状态。
+            // 这样经典那条路径连编译产物都不变，也就不存在「切回去发现少了点什么」。
+            val heroLayout by runtime.heroLayout.collectAsState()
             val currentStatus = status
             val soc = currentStatus?.soc
-            // 充电中判定与充电中心页保持一致：以 chargeState 为准，缺失时退回布尔信号
+            // 充电中判定与充电中心页保持一致：以 chargeState 为准，缺失时退回布尔信号。
+            // 下面卡片区（空调条 / 胎压卡）也要用它，所以放在主干上。
             val chargingNow = currentStatus?.chargeState == 1 ||
                 (currentStatus?.chargeState == null && currentStatus?.charging == true)
+            // ---- 续航区：左半（大字续航 + 电/油里程行），右半（车辆状态面板）----
+            Spacer(Modifier.height(16.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Top,
@@ -1580,15 +1588,20 @@ fun HomeScreen(
                     }
                 }
                 Spacer(Modifier.width(12.dp))
-                // 右：车辆状态区（方案 02「双行文本流」，用户 2026-11-05 定稿）。
-                // 第一行是主状态（圆点 + 结论 + 可选数值），第二行把闭锁 / 空调 /
-                // 车窗 / 后备箱 / 遮阳帘用「 · 」串成一句灰色小字 —— 不再有胶囊外框，
-                // 也不再有图标行：这块以前三种外形（胶囊 + 裸图标 + 裸文字）堆在一列，
-                // 右边缘参差、又悬在夜景上，看着最乱的就是它。
-                HomeStatusText(
-                    status = currentStatus,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
+                // 右：车辆状态区。经典是「双行文本流」——第一行主状态，
+                // 第二行把闭锁 / 空调 / 车窗用「 · 」串成一句；分置版换成带图标的
+                // 逐行列表，且**不含行驶状态**（那条归车模下面的 [DrivingStatusBadge]）。
+                if (heroLayout == HeroLayout.SEPARATE) {
+                    VehicleStatusColumn(
+                        status = currentStatus,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                } else {
+                    HomeStatusText(
+                        status = currentStatus,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
             }
 
             // ---- 胶囊入口行（续航下方，样式参考官网 App）：充电中心 / 驻车拍照 ----
@@ -1600,71 +1613,32 @@ fun HomeScreen(
             // ---- 车模：显示官方接口图（默认常开，不再提供关闭开关）----
             if (carBitmap != null) {
                 Spacer(Modifier.height(4.dp))
-                // 快捷换壁纸的触发方式由设置决定：小白点 / 点车模本体 / 不提供。
-                // 用户自己的壁纸正在生效时再压一层（themeCustomLocked）：一律不提供入口，
-                // 免得一次误触把挑好裁好的图换成内置主题。
-                val carQuick = quickSwitch.effectiveTarget(QuickPart.CAR, themeCustomLocked)
+                CarModelBox(
+                    bitmap = carBitmap!!,
+                    quickTarget = quickSwitch.effectiveTarget(QuickPart.CAR, themeCustomLocked),
+                    interaction = carTapInteraction,
+                    onTap = onRandomTheme,
+                    shouldSkipMeasure = { carModelBottomY > 0f && homeScrollState.value != 0 },
+                    onBottom = { carModelBottomY = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // 分置版下面要坐一条 30dp 的状态胶囊，车模让出 14dp
+                        // （不是 30dp）：整体只下移约 22dp，首屏节奏基本不变
+                        .height(if (heroLayout == HeroLayout.SEPARATE) 186.dp else 200.dp),
+                )
+            }
+
+            // ---- 行驶状态：只有分置版放在车模正下方居中 ----
+            // 经典版它在右上角第一行（[HomeStatusText] 的 primary），这里就不重复。
+            if (heroLayout == HeroLayout.SEPARATE) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(200.dp)
-                        // 点车模本体换壁纸时不要涟漪：车模是透明底 PNG，
-                        // 一圈方形涟漪会盖出"这块是个按钮"的方框，很难看
-                        .then(
-                            if (carQuick == QuickTarget.TAP) {
-                                Modifier.clickable(
-                                    interactionSource = carTapInteraction,
-                                    indication = null,
-                                    onClick = onRandomTheme,
-                                )
-                            } else {
-                                Modifier
-                            },
-                        )
-                        .onGloballyPositioned { coords ->
-                            // 车模底部在「滚动内容」（父 Column）坐标系里的 y：
-                            // 这是固定布局位置，不随滚动偏移变化，正好和 homeScrollState.value
-                            // 处于同一坐标空间，可直接比较判断是否滑出视口。
-                            //
-                            // 但这个回调在滚动时**每一帧都会来**（内容整体平移，全局坐标一直在变），
-                            // 而车模在内容里的位置此刻根本不会变 —— 每帧白做一次矩阵换算。
-                            // 所以只在「还没量到」或「停在顶部」时校正：用户都是从顶部开始滑的，
-                            // 那一刻取到的值一定准，滑到中间也不会再用到别的值。
-                            if (carModelBottomY > 0f && homeScrollState.value != 0) {
-                                return@onGloballyPositioned
-                            }
-                            coords.parentLayoutCoordinates?.let { parent ->
-                                carModelBottomY = parent.localBoundingBoxOf(coords).bottom
-                            }
-                        },
+                        // 车模被关掉（carBitmap 为空）时补一点上间距，不然会贴着胶囊入口行
+                        .padding(top = if (carBitmap != null) 6.dp else 12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Image(
-                        bitmap = carBitmap!!.asImageBitmap(),
-                        contentDescription = "车模",
-                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            // 千像素级的透明位图，滚动时父级每帧重绘都会重做一次缩放采样。
-                            // 单独提一层 graphicsLayer 之后，滚动只更新这块的平移矩阵，
-                            // 位图本身不再重绘 —— 这是首页上下滑时最实的一笔开销。
-                            //
-                            // 【别改成 CompositingStrategy.Offscreen】那会强制走离屏缓冲：
-                            // 每次失效都要先把整张图重新画进一块独立纹理再合成回去，
-                            // 比不加这层还贵，正好把这层原本要省的开销又赔了进去。
-                            // 这里没有 alpha / BlendMode 的合成需求，Auto 就是最优解。
-                            .graphicsLayer(),
-                    )
-                    // 快捷换壁纸：小白点放在车模右上角，正好落在车顶右侧的空画面上。
-                    // 车模上的点换的是「主题壁纸」，相伴卡上的点换的是「相伴卡背景」，两者互不影响。
-                    if (carQuick == QuickTarget.DOT) {
-                        QuickThemeButton(
-                            onClick = onRandomTheme,
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(top = 4.dp, end = 2.dp),
-                        )
-                    }
+                    DrivingStatusBadge(status = currentStatus)
                 }
             }
 
@@ -3018,7 +2992,7 @@ private val STATUS_ALERT_RED = Color(0xFFE5484D)
  * 底下的「充电中心」也跟着挤在一起。所以槽位宽度按 fontScale 放大，并且禁止折行。
  */
 @Composable
-private fun MileageRow(
+internal fun MileageRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     fraction: Float,
@@ -3326,3 +3300,72 @@ private fun BatteryIcon(
     }
 }
 
+
+/**
+ * 车模本体的唯一一份绘制（经典 / 分栏 / 状态下移三套布局共用）。
+ *
+ * 以前这段是直接写在主区里的：改一次布局就得复制一遍位图、手势、换壁纸白点和
+ * 「滚动时只更新平移矩阵」那层 graphicsLayer —— 复制三份必然走样。抽出来之后，
+ * 各布局只决定它占多大、摆在哪，画法永远只有这一处。
+ *
+ * @param shouldSkipMeasure 滚动回调每秒会来几十次，但车模在内容里的位置这时根本不变；
+ *   返回 true 时跳过换算，省掉每帧一次矩阵运算。
+ */
+@Composable
+private fun CarModelBox(
+    bitmap: Bitmap,
+    quickTarget: QuickTarget,
+    interaction: MutableInteractionSource,
+    onTap: () -> Unit,
+    shouldSkipMeasure: () -> Boolean,
+    onBottom: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            // 点车模本体换壁纸时不要涟漪：车模是透明底 PNG，
+            // 一圈方形涟漪会盖出「这块是个按钮」的方框，很难看
+            .then(
+                if (quickTarget == QuickTarget.TAP) {
+                    Modifier.clickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        onClick = onTap,
+                    )
+                } else {
+                    Modifier
+                },
+            )
+            .onGloballyPositioned { coords ->
+                if (shouldSkipMeasure()) return@onGloballyPositioned
+                coords.parentLayoutCoordinates?.let { parent ->
+                    onBottom(parent.localBoundingBoxOf(coords).bottom)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "车模",
+            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxSize()
+                // 千像素级的透明位图，滚动时父级每帧重绘都会重做一次缩放采样。
+                // 单独提一层 graphicsLayer 之后，滚动只更新这块的平移矩阵，位图不再重绘。
+                //
+                // 【别改成 CompositingStrategy.Offscreen】那会强制走离屏缓冲：
+                // 每次失效都要先把整张图重新画进一块独立纹理再合成回去，比不加还贵。
+                .graphicsLayer(),
+        )
+        // 快捷换壁纸：小白点放在车模右上角，正好落在车顶右侧的空画面上。
+        // 车模上的点换的是「主题壁纸」，相伴卡上的点换的是「相伴卡背景」，两者互不影响。
+        if (quickTarget == QuickTarget.DOT) {
+            QuickThemeButton(
+                onClick = onTap,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 4.dp, end = 2.dp),
+            )
+        }
+    }
+}

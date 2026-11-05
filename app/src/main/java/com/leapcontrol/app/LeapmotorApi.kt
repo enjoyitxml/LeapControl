@@ -1869,31 +1869,64 @@ class LeapmotorApi internal constructor(
         return decoded
     }
 
-    /** 获取驻车实景环视照片信息（调用 GET /carownerservice/v3/api/chassis/query）。 */
-    fun getChassisParkingPhoto(): ChassisParkingPhoto? {
-        requireVin()
-        val signed = oldSignedParams(
-            params = mapOf("vin" to session.selectedVin),
-            includeTimespan = true
-        )
-        val headers = combinedAppAndGatewayHeaders(signed, needLogin = true)
-        val candidates = listOf(
-            "https://iov-api.leapmotor.com/carownerservice/v3/api/chassis/query",
-            "https://appgateway.leapmotor.com/carownerservice/v3/api/chassis/query",
-            "${ensureRoute().appRegion}/carownerservice/v3/api/chassis/query"
-        ).distinct()
+    /**
+     * 查车端驻车实景照片（GET `/carownerservice/v3/api/chassis/query`）。
+     *
+     * ## 为什么要返回「结论」而不是可空对象
+     * 这个接口在三种情况下都拿不到图：车还没上传、车型不支持、网络/签名失败。
+     * 用 `null` 一锅端，界面就只能写「获取失败，请重试」—— 而「车型不支持」这种情况
+     * 重试一万次也没用，用户应该做的是改用手机拍照。所以这里把结论分类带出去
+     * （分类规则见 [ChassisPhotoRules]，纯逻辑、有单测）。
+     *
+     * ## 为什么要挨个试域名
+     * 官方 App 走 `iov-api`；部分账号/大区的网关只认 `appgateway` 或车辆专属大区域名。
+     * 三条都试，命中即返回；只有「明确答复」（有图 / 没图 / 不支持）才提前结束，
+     * 网络异常继续试下一条。
+     */
+    fun queryParkingPhoto(): ChassisPhotoQuery {
+        val vin = session.selectedVin
+        if (vin.isBlank()) return ChassisPhotoQuery.Failed("未登录")
+        // 签名在未登录 / 未完成网关登录时会抛：这里也要变成「失败」返回，
+        // 不能让它冒到 UI 线程 —— 车端照片只是锦上添花，不该把整页搞崩
+        val signed = runCatching {
+            oldSignedParams(params = mapOf("vin" to vin), includeTimespan = true)
+        }.getOrElse { return ChassisPhotoQuery.Failed(it.message ?: "签名失败") }
+        val headers = runCatching {
+            combinedAppAndGatewayHeaders(signed, needLogin = true)
+        }.getOrElse { return ChassisPhotoQuery.Failed(it.message ?: "登录状态异常") }
+        val candidates = buildList {
+            add("https://iov-api.leapmotor.com/carownerservice/v3/api/chassis/query")
+            add("https://appgateway.leapmotor.com/carownerservice/v3/api/chassis/query")
+            session.route?.appRegion?.takeIf { it.isNotBlank() }?.let {
+                add("$it/carownerservice/v3/api/chassis/query")
+            }
+        }.distinct()
 
+        var last: ChassisPhotoQuery = ChassisPhotoQuery.Failed("无法连接车辆服务")
         for (url in candidates) {
-            try {
+            last = try {
                 val resp = http(url, method = "GET", headers = headers, query = signed)
-                val data = resp.optJSONObject("data") ?: continue
-                val rawUrl = data.optString("fileUrl", "").takeIf { it.isNotBlank() } ?: continue
-                val uploadTime = data.optLong("uploadTime", 0L)
-                return ChassisParkingPhoto(fileUrl = rawUrl, uploadTimeMs = uploadTime)
-            } catch (_: Exception) {}
+                val code = resp.optInt("code", resp.optInt("result", -1))
+                val message = resp.optString("message").ifBlank { resp.optString("msg") }
+                val data = resp.optJSONObject("data")
+                ChassisPhotoRules.classify(
+                    code = code,
+                    message = message,
+                    fileUrl = data?.optString("fileUrl").orEmpty(),
+                    uploadTimeMs = data?.optLong("uploadTime", 0L) ?: 0L,
+                )
+            } catch (e: Exception) {
+                ChassisPhotoQuery.Failed(e.message ?: "请求失败")
+            }
+            // 有图 / 明确说没有 / 明确说不支持 —— 都不必再问下一个域名
+            if (last !is ChassisPhotoQuery.Failed) return last
         }
-        return null
+        return last
     }
+
+    /** 只要 URL 的老入口（保留给「有没有照片」这种不关心原因的调用方）。 */
+    fun getChassisParkingPhoto(): ChassisParkingPhoto? =
+        (queryParkingPhoto() as? ChassisPhotoQuery.Found)?.photo
 
     /** 下载驻车照片并解码为 Bitmap。 */
     fun downloadParkingPhotoBitmap(secureUrl: String): android.graphics.Bitmap? {

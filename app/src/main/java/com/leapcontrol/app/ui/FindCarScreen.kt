@@ -26,14 +26,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,8 +46,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -55,10 +61,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.leapcontrol.app.LocationCalibrator
 import com.leapcontrol.app.MapIntents
+import com.leapcontrol.app.OfficialPhotoStatus
 import com.leapcontrol.app.ParkingPhotoRules
+import com.leapcontrol.app.ParkingPhotoSource
+import com.leapcontrol.app.ParkingPhotoSourceRules
 import com.leapcontrol.app.R
 import com.leapcontrol.app.VehicleLocationRules
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -136,6 +147,25 @@ fun FindCarScreen(
     val age = VehicleLocationRules.ageText(ageMs)
 
     var refreshing by remember { mutableStateOf(false) }
+    // 位置校准：面板放在地图下面、地图全程可见（见 [LocationCalibratePanel]）
+    val calibration by runtime.locationCalibration.collectAsState()
+    var calibrating by remember { mutableStateOf(false) }
+    // 「视角回到车上」的计数。**不能拿坐标当 key**：校准时每按一下方向键坐标都会变，
+    // 那样每按一下地图就跳回默认缩放 —— 用户永远没法放大着微调
+    var recenterTick by remember { mutableStateOf(0) }
+    // 校准改动很密（拖着车标一直在变、连按方向键也是一下一条），地址请求必须防抖：
+    // 每变一次就发一次逆地理，连按五下就是五次请求，额度白烧、地址还会一路闪。
+    // 用 LaunchedEffect 当防抖器 —— 每次变化都会取消上一个协程，停在 700ms 才发一次。
+    var calibrationTouched by remember { mutableStateOf(false) }
+    LaunchedEffect(calibration) {
+        // 首次组合不该算「用户改过」，否则进页面就白多一次请求
+        if (!calibrationTouched) {
+            calibrationTouched = true
+            return@LaunchedEffect
+        }
+        delay(700)
+        retry += 1
+    }
     // 目的地搜索弹层挂在这一页上：用户在这一页想「把地址发过去」时不必退回首页
     var showDestination by remember { mutableStateOf(false) }
     // 出行方式弹层：和首页卡同一个，步行排在第一位（见 [NavModeDialog]）
@@ -148,12 +178,14 @@ fun FindCarScreen(
     var showKeyHelp by remember { mutableStateOf(false) }
 
     // 停车位照片：和首页卡共用同一套存储与拍照流程，这一页只是把图放大到 1400 好认
-    val photo = rememberParkingPhoto(onMessage, thumbSize = 1400)
+    val photo = rememberParkingPhoto(runtime, onMessage, thumbSize = 1400)
     var previewPhoto by remember { mutableStateOf(false) }
 
     // 返回键先把全屏照片 / 搜索弹层收掉，再退出本页 —— 否则一按就整页返回，
     // 用户以为「退出了找车」，其实只想关掉那张大图
     BackHandler(enabled = previewPhoto) { previewPhoto = false }
+    // 校准模式也挂一层：按返回是「退出校准」，不是退出整个找车页
+    BackHandler(enabled = calibrating) { calibrating = false }
 
     // 地图不进滚动容器：MapView 要吃掉单指拖动，塞在 verticalScroll 里会变成
     // 「想拖地图，结果整页跟着滚」。所以顶栏 + 地图固定在上面（地图占上半屏），
@@ -207,9 +239,23 @@ fun FindCarScreen(
                     FindCarMap(
                         latitude = shownLat,
                         longitude = shownLng,
-                        // 坐标真变了 / 用户点了刷新 → 视角回到车上；
-                        // 用户自己拖到别处看路的时候不会被拽回来
-                        recenterKey = "$shownLat,$shownLng,$retry",
+                        // 车真的动了（seenAt 变）/ 用户点了刷新 → 视角回到车上；
+                        // 用户自己拖到别处看路、或者在微调校准时不会被拽回来
+                        recenterKey = "${seenAt}_$recenterTick",
+                        calibrating = calibrating,
+                        onMarkerDragEnd = { lat, lng ->
+                            // 拖到的点与当前显示点之差，就是还要补的偏移：**叠加**而不是覆盖
+                            // —— 用户拖的是「已经校准过」的那个钉子。少了这一步，
+                            // 第二次拖动会把第一次调好的量抹平
+                            val (dEast, dNorth) =
+                                LocationCalibrator.deltaEastNorth(shownLat, shownLng, lat, lng)
+                            runtime.setLocationCalibration(
+                                calibration.copy(
+                                    east = calibration.east + dEast,
+                                    north = calibration.north + dNorth,
+                                ),
+                            )
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
@@ -233,6 +279,7 @@ fun FindCarScreen(
                                 // 无论车况是否取到都重试一次地址 / 地图：
                                 // 上一次可能只是高德请求超时，和车况没有关系
                                 retry += 1
+                                recenterTick += 1
                                 refreshing = false
                                 if (!ok) {
                                     Toast.makeText(context, "刷新失败，请检查网络", Toast.LENGTH_SHORT).show()
@@ -256,133 +303,194 @@ fun FindCarScreen(
                         )
                     }
                 }
+
+                // 校准入口：左下角。不放到顶栏 —— 它是「位置看着不对」时才需要的东西。
+                // 但也不能做成图例：初版是 11sp 灰字 + 半透明白底 + 无描边无投影，
+                // 压在瓦片地图上跟「© 高德地图」那行水印长得一模一样，用户直接当版权信息忽略。
+                // 现在只靠**不透明底 + 轻投影**把它从地图上托起来，主题色只用在字和图标上；
+                // 描边试过、被否了（一圈金线太跳），所以别再给这颗补边。
+                // 校准过之后退成中性灰：这时用户已经知道它在哪，
+                // 需要被看见的是「已校准 120m」这句话本身 —— 半年后没人记得自己动过，
+                // 不给提示的话「地图为什么偏了 120 米」永远查不出来
+                if (canNavigate && !calibrating) {
+                    val calibrated = !calibration.isIdentity
+                    val pillShape = RoundedCornerShape(50)
+                    // 浅底 + 主题色字：浅色模式下主题色偏浅、直接当字色对比不够，
+                    // 压深一档；深色模式主题色已提亮，原样用
+                    val pillInk = when {
+                        calibrated -> C.textSecondary
+                        C.isDark -> C.accent
+                        else -> lerp(C.accent, Color.Black, 0.12f)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(10.dp)
+                            .shadow(elevation = if (calibrated) 1.dp else 2.dp, shape = pillShape)
+                            .clip(pillShape)
+                            // 必须是不透明底：试过主题色 18% 的浅底，混出来跟瓦片地图的米白
+                            // 几乎同色（#F5EDE0 vs #F7F4EC），等于没画
+                            .background(C.panelBg)
+                            .clickable { calibrating = true }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Filled.Tune,
+                            contentDescription = null,
+                            tint = if (calibrated) C.textSecondary else pillInk,
+                            modifier = Modifier.size(12.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = LocationCalibrator.shortLabel(calibration),
+                            color = if (calibrated) C.textSecondary else pillInk,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
             Spacer(Modifier.height(14.dp))
 
-            // 下半部分自己滚：内容比一屏长（车位照片能到 300dp），整体滚动会把地图顶走
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp),
-            ) {
-                // ---- 地址与时间 ----
-                InfoCard {
-                    Text(
-                        text = place?.address ?: coordinate ?: "还没有可用的车辆位置",
-                        color = C.textPrimary,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = when (ui) {
-                            VehiclePlaceUi.NoLocation -> "车机还没上报过位置，下次上车启动一次后再看"
-                            VehiclePlaceUi.NoKey ->
-                                "地图不再依赖 Key，但中文地址还缺一把：点右上角「?」，" +
-                                    "填两分钟就有地址和目的地搜索"
-                            // 走到这里只有地址失败（底图是瓦片、不经过这两个接口）
-                            VehiclePlaceUi.Failed ->
-                                "中文地址没取到：检查网络，或确认高德 Key 还有额度，再点右上角刷新"
-                            else -> when {
-                                fromCache && age != null -> "上次记录的位置 · 更新于 $age"
-                                fromCache -> "上次记录的位置"
-                                age != null -> "位置更新于 $age"
-                                else -> "位置更新时间未知"
-                            }
-                        },
-                        color = C.textSecondary,
-                        fontSize = 12.sp,
-                    )
-
-                    if (coordinate != null) {
-                        Spacer(Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable {
-                                    clipboard.setText(AnnotatedString(coordinate))
-                                    Toast.makeText(context, "坐标已复制", Toast.LENGTH_SHORT).show()
-                                },
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text(
-                                text = coordinate,
-                                color = C.textSecondary,
-                                fontSize = 12.sp,
-                            )
-                            Text(
-                                text = "复制坐标",
-                                color = C.accent,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                // ---- 两个出口：导航到车辆（有坐标才给）+ 发送目的地（与坐标无关） ----
-                // 和首页卡同一套动作，只是放大到整行。两个都没有时才什么都不显示。
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    if (canNavigate) {
-                        BigAction(
-                            text = if (navPreparing) "正在取最新位置" else "导航到车辆",
-                            primary = true,
-                            modifier = Modifier.weight(1f),
-                            icon = { Icon(Icons.Filled.Navigation, contentDescription = null, tint = C.accent, modifier = Modifier.size(17.dp)) },
-                        ) {
-                            if (navPreparing) return@BigAction
-                            // 走到车位还是开过去，先问一句。开车去「找车」在楼下这个位置上说不通。
-                            // 问之前先查一次车况：车可能是几小时前停的，手上这份坐标是那时拉到的
-                            navPreparing = true
-                            scope.launch {
-                                runCatching { runtime.refreshStatus() }
-                                // 顺手把地址/地图也重取一次：位置真变了，那张图就是旧地方
-                                retry += 1
-                                navPreparing = false
-                                navPicker = true
-                            }
-                        }
-                    }
-                    BigAction(
-                        text = "发送目的地",
-                        primary = !canNavigate,
-                        modifier = Modifier.weight(1f),
-                        icon = {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_send_to_car),
-                                contentDescription = null,
-                                tint = C.accent,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        },
-                    ) { showDestination = true }
-                }
-
-                Spacer(Modifier.height(14.dp))
-
-                // ---- 停车位照片 ----
-                // 排在两个出口**之后**：这张卡有图时接近 300dp，放在按钮前面会把「导航到车辆」
-                // 推到第二屏 —— 而那两个才是到楼下时第一时间要按的。照片是确认具体车位的第二步。
-                ParkingPhotoCard(photo = photo, onPreview = { previewPhoto = true })
-
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    text = "位置来自车机最后一次上报。熄火后车机休眠，位置会停在熄火的地方；" +
-                        "若车停放较久，请注意上方的时间。",
-                    color = C.textSecondary,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
+            // 校准模式：下半屏整块换成面板，地图保持原位（同一个 slot、同一个 MapView，
+            // 不会因为切模式而重建重下瓦片）。用户一边按方向键，一边看着钉子在地图上动。
+            if (calibrating) {
+                LocationCalibratePanel(
+                    calibration = calibration,
+                    onChange = { next -> runtime.setLocationCalibration(next) },
+                    onDone = { calibrating = false },
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 20.dp),
                 )
+            } else {
+                // 下半部分自己滚：内容比一屏长（车位照片能到 300dp），整体滚动会把地图顶走
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp),
+                ) {
+                    // ---- 地址与时间 ----
+                    InfoCard {
+                        Text(
+                            text = place?.address ?: coordinate ?: "还没有可用的车辆位置",
+                            color = C.textPrimary,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = when (ui) {
+                                VehiclePlaceUi.NoLocation -> "车机还没上报过位置，下次上车启动一次后再看"
+                                VehiclePlaceUi.NoKey ->
+                                    "地图不再依赖 Key，但中文地址还缺一把：点右上角「?」，" +
+                                        "填两分钟就有地址和目的地搜索"
+                                // 走到这里只有地址失败（底图是瓦片、不经过这两个接口）
+                                VehiclePlaceUi.Failed ->
+                                    "中文地址没取到：检查网络，或确认高德 Key 还有额度，再点右上角刷新"
+                                else -> when {
+                                    fromCache && age != null -> "上次记录的位置 · 更新于 $age"
+                                    fromCache -> "上次记录的位置"
+                                    age != null -> "位置更新于 $age"
+                                    else -> "位置更新时间未知"
+                                }
+                            },
+                            color = C.textSecondary,
+                            fontSize = 12.sp,
+                        )
+
+                        if (coordinate != null) {
+                            Spacer(Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        clipboard.setText(AnnotatedString(coordinate))
+                                        Toast.makeText(context, "坐标已复制", Toast.LENGTH_SHORT).show()
+                                    },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = coordinate,
+                                    color = C.textSecondary,
+                                    fontSize = 12.sp,
+                                )
+                                Text(
+                                    text = "复制坐标",
+                                    color = C.accent,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    // ---- 两个出口：导航到车辆（有坐标才给）+ 发送目的地（与坐标无关） ----
+                    // 和首页卡同一套动作，只是放大到整行。两个都没有时才什么都不显示。
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        if (canNavigate) {
+                            BigAction(
+                                text = if (navPreparing) "正在取最新位置" else "导航到车辆",
+                                primary = true,
+                                modifier = Modifier.weight(1f),
+                                icon = { Icon(Icons.Filled.Navigation, contentDescription = null, tint = C.accent, modifier = Modifier.size(17.dp)) },
+                            ) {
+                                if (navPreparing) return@BigAction
+                                // 走到车位还是开过去，先问一句。开车去「找车」在楼下这个位置上说不通。
+                                // 问之前先查一次车况：车可能是几小时前停的，手上这份坐标是那时拉到的
+                                navPreparing = true
+                                scope.launch {
+                                    runCatching { runtime.refreshStatus() }
+                                    // 顺手把地址/地图也重取一次：位置真变了，那张图就是旧地方
+                                    retry += 1
+                                    navPreparing = false
+                                    navPicker = true
+                                }
+                            }
+                        }
+                        BigAction(
+                            text = "发送目的地",
+                            primary = !canNavigate,
+                            modifier = Modifier.weight(1f),
+                            icon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_send_to_car),
+                                    contentDescription = null,
+                                    tint = C.accent,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            },
+                        ) { showDestination = true }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+
+                    // ---- 停车位照片 ----
+                    // 排在两个出口**之后**：这张卡有图时接近 300dp，放在按钮前面会把「导航到车辆」
+                    // 推到第二屏 —— 而那两个才是到楼下时第一时间要按的。照片是确认具体车位的第二步。
+                    ParkingPhotoCard(photo = photo, onPreview = { previewPhoto = true })
+
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = "位置来自车机最后一次上报。熄火后车机休眠，位置会停在熄火的地方；" +
+                            "若车停放较久，请注意上方的时间。",
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
             }
         }
     }
@@ -500,6 +608,50 @@ private fun FindCarPlaceholder(ui: VehiclePlaceUi) {
 }
 
 /**
+ * 「换用车端照片」的文字入口（只在手机模式的卡里出现）。
+ *
+ * 这一条是补漏补出来的：车端卡上有「改用手机拍照」，切过去之后手机卡上却没有反向入口，
+ * 而找车页又是最常进的一页 —— 结果就是**切过去就回不来了**，只能退到设置里改。
+ * 它和驻车拍照页顶部那颗切换链接是同一件事，所以也只留一个、只做切换，
+ * 不在卡里再并排一组按钮。
+ */
+@Composable
+private fun UseOfficialLink(onSwitch: () -> Unit) {
+    val C = LocalAppColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onSwitch)
+            // 竖向内边距 9dp：11.5sp 的小字不撑高一点很难点中
+            .padding(vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.CloudDownload,
+            contentDescription = null,
+            tint = C.accent,
+            modifier = Modifier.size(15.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            // 「部分车型」要在这里说：点下去之后才知道取不到，人已经站在空卡前面了
+            text = "换用车端照片（部分车型）",
+            color = C.accent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = C.accent,
+            modifier = Modifier.size(15.dp),
+        )
+    }
+}
+
+/**
  * 停车位照片卡。
  *
  * 两副面孔：
@@ -514,6 +666,10 @@ private fun ParkingPhotoCard(photo: ParkingPhotoState, onPreview: () -> Unit) {
     val C = LocalAppColors.current
 
     if (!photo.hasPhoto) {
+        if (photo.source == ParkingPhotoSource.OFFICIAL) {
+            OfficialPhotoCard(photo)
+            return
+        }
         InfoCard {
             Row(
                 modifier = Modifier
@@ -559,11 +715,22 @@ private fun ParkingPhotoCard(photo: ParkingPhotoState, onPreview: () -> Unit) {
                     modifier = Modifier.size(19.dp),
                 )
             }
+            Spacer(Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(C.border),
+            )
+            UseOfficialLink(onSwitch = { photo.useSource(ParkingPhotoSource.OFFICIAL) })
         }
         return
     }
 
-    val caption = ParkingPhotoRules.caption(
+    // 照片本身说的是「哪一刻的哪一格」，来源不同，时刻的含义也不同：
+    // 手机照片是快门时间，车端照片是车辆上传时间 —— 用同一个函数按 source 分派
+    val caption = ParkingPhotoRules.captionFor(
+        source = photo.source,
         hasPhoto = true,
         savedAt = photo.savedAt,
         now = System.currentTimeMillis(),
@@ -604,12 +771,22 @@ private fun ParkingPhotoCard(photo: ParkingPhotoState, onPreview: () -> Unit) {
                     bitmap = remember(thumb) { thumb.asImageBitmap() },
                     contentDescription = "停车位照片，点击放大",
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
+                    // 车端那张是环视俯视图，车位号常在画面边角 —— Fit 会留白但一个字不切，
+                    // 手机照片是我们自己裁成 4:3 的，照旧 Crop 更像一张「照片」
+                    contentScale = if (photo.source == ParkingPhotoSource.OFFICIAL) {
+                        ContentScale.Fit
+                    } else {
+                        ContentScale.Crop
+                    },
                 )
             } else {
                 // 文件在但解码失败（极少数机型写出的 HEIC 之类）：给出可操作的出路
                 Text(
-                    text = "照片读取失败，重拍一张",
+                    text = if (photo.source == ParkingPhotoSource.OFFICIAL) {
+                        "照片读取失败，点「重新获取」"
+                    } else {
+                        "照片读取失败，重拍一张"
+                    },
                     color = C.textSecondary,
                     fontSize = 12.sp,
                     modifier = Modifier.align(Alignment.Center),
@@ -623,17 +800,118 @@ private fun ParkingPhotoCard(photo: ParkingPhotoState, onPreview: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            if (photo.source == ParkingPhotoSource.OFFICIAL) {
+                PhotoAction(
+                    text = "重新获取",
+                    primary = true,
+                    modifier = Modifier.weight(1f),
+                    onClick = { photo.refreshOfficial() },
+                )
+                PhotoAction(
+                    text = "改用手机拍照",
+                    primary = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = { photo.useSource(ParkingPhotoSource.PHONE) },
+                )
+            } else {
+                PhotoAction(
+                    text = "重拍",
+                    primary = true,
+                    modifier = Modifier.weight(1f),
+                    onClick = { photo.capture() },
+                )
+                PhotoAction(
+                    text = "删除",
+                    primary = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = { photo.remove() },
+                )
+            }
+        }
+        // 车端模式那边按钮区已经给了「改用手机拍照」，这里只需要反向那一条，
+        // 否则「切过去就回不来」（见 [UseOfficialLink]）
+        if (photo.source != ParkingPhotoSource.OFFICIAL) {
+            UseOfficialLink(onSwitch = { photo.useSource(ParkingPhotoSource.OFFICIAL) })
+        }
+    }
+}
+
+/**
+ * 车端方案下「还没有照片」的卡。
+ *
+ * 这里最容易让用户以为功能坏了，所以除了状态那句话，一定给出**两条出路**：
+ * 重新获取（可能只是还没上传）、改用手机拍照（车型不支持时的唯一办法）。
+ * 车型是否支持没法在本地判断，只能靠接口回答，所以这里不写死「你的车不支持」。
+ */
+@Composable
+private fun OfficialPhotoCard(photo: ParkingPhotoState) {
+    val C = LocalAppColors.current
+    val status = ParkingPhotoSourceRules.statusText(photo.officialStatus)
+    val loading = photo.officialStatus == OfficialPhotoStatus.Loading
+
+    InfoCard {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(enabled = !loading) { photo.refreshOfficial() },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(C.accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.CloudDownload,
+                    contentDescription = null,
+                    tint = C.accent,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "车端驻车照片",
+                    color = C.textPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = status ?: "点这里获取车辆驻车后自动上传的俯视图",
+                    color = if (status == null) C.textSecondary else C.accent,
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+            Icon(
+                if (loading) Icons.Filled.Refresh else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = C.textSecondary,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             PhotoAction(
-                text = "重拍",
+                text = if (loading) "获取中…" else "重新获取",
                 primary = true,
                 modifier = Modifier.weight(1f),
-                onClick = { photo.capture() },
+                onClick = { if (!loading) photo.refreshOfficial() },
             )
             PhotoAction(
-                text = "删除",
+                text = "改用手机拍照",
                 primary = false,
                 modifier = Modifier.weight(1f),
-                onClick = { photo.remove() },
+                onClick = { photo.useSource(ParkingPhotoSource.PHONE) },
             )
         }
     }

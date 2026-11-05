@@ -52,27 +52,7 @@ import java.util.Locale
 @Composable
 internal fun HomeStatusText(status: CarStatus?, modifier: Modifier = Modifier) {
     val C = LocalAppColors.current
-    // 数据类做 key：车况刷新时整体换一个新对象，等价于按内容比对
-    val view = remember(status) {
-        HomeStatusLines.build(
-            badge = status?.let {
-                DrivingStateRules.badge(
-                    gearStatus = it.gearStatus,
-                    speedKmh = DrivingStateRules.parseSpeed(it.speed),
-                    chargeState = it.chargeState,
-                    chargeRemainMinutes = it.chargeRemainMinutes,
-                    chargeTimeLeft = it.chargeTimeLeft,
-                    isShutDown = it.isShutDown,
-                )
-            },
-            locked = status?.locked,
-            acOn = status?.acOn,
-            acTemp = status?.acTargetTemp,
-            windowOpen = status?.windowOpen,
-            trunkOpen = status?.trunkOpen,
-            sunshadeOpen = status?.sunshadeOpen,
-        )
-    }
+    val view = rememberHomeStatusView(status)
 
     Column(
         modifier = modifier.widthIn(max = MAX_WIDTH),
@@ -137,14 +117,45 @@ internal fun HomeStatusText(status: CarStatus?, modifier: Modifier = Modifier) {
 /** 右列宽度上限：约为页面的一半，超长的「剩 1 小时 15 分钟」宁可省略也不挤左边。 */
 private val MAX_WIDTH = 168.dp
 
+/**
+ * 把车况折成状态区要渲染的内容。
+ *
+ * 抽出来是因为有两个调用方（经典右上角的 [HomeStatusText]、分置版车模下方的
+ * [DrivingStatusBadge]），两处必须**同源**：以后加一项状态只改 [HomeStatusLines.build]
+ * 一处，不会出现「车模下能看到、右上角看不到」这种分裂。
+ */
+@Composable
+internal fun rememberHomeStatusView(status: CarStatus?): HomeStatusView =
+    // 数据类做 key：车况刷新时整体换一个新对象，等价于按内容比对
+    remember(status) {
+        HomeStatusLines.build(
+            badge = status?.let {
+                DrivingStateRules.badge(
+                    gearStatus = it.gearStatus,
+                    speedKmh = DrivingStateRules.parseSpeed(it.speed),
+                    chargeState = it.chargeState,
+                    chargeRemainMinutes = it.chargeRemainMinutes,
+                    chargeTimeLeft = it.chargeTimeLeft,
+                    isShutDown = it.isShutDown,
+                )
+            },
+            locked = status?.locked,
+            acOn = status?.acOn,
+            acTemp = status?.acTargetTemp,
+            windowOpen = status?.windowOpen,
+            trunkOpen = status?.trunkOpen,
+            sunshadeOpen = status?.sunshadeOpen,
+        )
+    }
+
 /** 行驶中不抢眼但要有生气；充电沿用首页电量条的绿；倒车 / 故障用琥珀。 */
 private val ChargeGreen = Color(0xFF2FCC71)
 private val Amber = Color(0xFFE0A048)
 
-/** 真需要看一眼的问题（未闭锁 / 车窗开 / 后备箱开）。 */
-private val AlertRed = Color(0xFFE5484D)
+/** 真需要看一眼的问题（未闭锁 / 车窗开 / 后备箱开）。三个布局共用同一个红。 */
+internal val AlertRed = Color(0xFFE5484D)
 
-private fun toneColor(tone: DrivingTone?, C: AppColors): Color = when (tone) {
+internal fun toneColor(tone: DrivingTone?, C: AppColors): Color = when (tone) {
     DrivingTone.MOVING -> C.accent
     DrivingTone.PARKED, null -> C.accent
     DrivingTone.CHARGING -> ChargeGreen
@@ -167,7 +178,6 @@ internal data class HomeStatusView(
 
 /**
  * 把车况字段折成「一行结论 + 一行从属项」（纯函数，可单测）。
- *
  * 规则：
  * - 有 [DrivingBadge] → 结论取它，闭锁降级为从属项；
  * - 没有 → 说明挡位和车速都没有，这时只靠闭锁也能说清（`已闭锁` / `未闭锁`），

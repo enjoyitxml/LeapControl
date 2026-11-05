@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,12 +65,12 @@ import java.io.File
  * 改取景，放大会糊，更没法拖动。想「看看车停在哪条路、周边是什么」时，只能跳高德 App。
  * 换成瓦片地图之后这些都不再是限制。
  *
- * ## 坐标系：不要纠偏
+ * ## 坐标系与校准
  * 车端上报的坐标是 GCJ-02，高德瓦片也是 GCJ-02 切图，**原样交给 MapView 就是对的**。
- * 这里绝不能套 [com.leapcontrol.app.ChinaCoordinate]（那是 WGS-84 → GCJ-02 的换算），
- * 否则整张图和车点会一起偏掉几百米。找车页原来那个「整张图偏了几百米？点这里纠偏」
- * 的手动开关也随这次换方案一起删了：地图、地址、导航目的地现在用的是同一套坐标，
- * 屏幕上不会有「车标压着马路却整体漂移」这种现象需要用户自救。
+ * 这一层**不做任何换算**：校准（坐标系换算 + 手调偏移）已经在
+ * [com.leapcontrol.app.ui.AppRuntime.resolveLocation] 里做完，传进来的就是最终坐标。
+ * 换句话说，屏幕上这个钉子和首页卡、导航目的地、地址逆地理用的是同一个点 ——
+ * 这正是这里绝不能自己再偏移一次的原因。
  *
  * ## 深色主题
  * 高德瓦片只有白天的图，没有夜间样式参数。静态图时代是逐像素翻明度（[com.leapcontrol.app.MapDarkTint]），
@@ -90,6 +91,10 @@ internal fun FindCarMap(
      * 用它当 key：车真的挪了才动画过去，用户自己拖到别处看路时不会被拽回来。
      */
     recenterKey: Any,
+    /** 校准模式：车标变成可拖动，用户直接把钉子放到车真正停的地方。 */
+    calibrating: Boolean = false,
+    /** 拖动结束时的落点。调用方据此算「还要补多少米」。 */
+    onMarkerDragEnd: (Double, Double) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val C = LocalAppColors.current
@@ -150,23 +155,52 @@ internal fun FindCarMap(
             },
         )
 
-        // 车辆标记：主题色圆底 + 白色车形。坐标变了重建一个，别只改 position ——
-        // 图标颜色跟着主题走，重建比维护两套状态简单。
-        // **必须把 mapView 写进 key**：首帧组合时它还是 null（factory 还没跑），
-        // 少了这一项，factory 赋值引发的重组不会让本 effect 重跑，标记就永远加不上。
-        LaunchedEffect(latitude, longitude, C.accent, mapView) {
+        // 车辆标记：**只创建一次**，坐标变化只挪位置、不重建。
+        // 老写法把坐标当 key，每变一次就删了重加 —— 校准模式下用户正拖着它，
+        // 手指还没松开标记就被换掉，拖动会当场断掉。
+        var marker by remember { mutableStateOf<Marker?>(null) }
+        // 拖动回调会随组合不断换新闭包，而标记只建一次：必须走 rememberUpdatedState，
+        // 否则拿到的是首次组合那个（那时校准值还是旧的，算出来的偏移会一路错下去）
+        val latestDragEnd by rememberUpdatedState(onMarkerDragEnd)
+        LaunchedEffect(C.accent, mapView) {
             val view = mapView ?: return@LaunchedEffect
             view.overlays.removeAll { it is Marker }
-            view.overlays.add(
-                Marker(view).apply {
-                    position = GeoPoint(latitude, longitude)
-                    icon = carMarkerIcon(context, C.accent.toArgb())
-                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    // 点了不弹气泡：这里只有一个点，弹出来也是空的
-                    setOnMarkerClickListener { _, _ -> true }
-                },
-            )
+            val created = Marker(view).apply {
+                position = GeoPoint(latitude, longitude)
+                icon = carMarkerIcon(context, C.accent.toArgb())
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                // 点了不弹气泡：这里只有一个点，弹出来也是空的
+                setOnMarkerClickListener { _, _ -> true }
+                setOnMarkerDragListener(object : Marker.OnMarkerDragListener {
+                    override fun onMarkerDragStart(marker: Marker) = Unit
+                    override fun onMarkerDrag(marker: Marker) = Unit
+                    override fun onMarkerDragEnd(marker: Marker) {
+                        latestDragEnd(marker.position.latitude, marker.position.longitude)
+                    }
+                })
+            }
+            view.overlays.add(created)
+            marker = created
             view.invalidate()
+        }
+
+        // 校准模式：车标可拖，并放大到 44dp —— 36dp 的圆点在缩放 17 的图上
+        // 手指盖住就看不见边缘了，很难精准落点
+        LaunchedEffect(calibrating, C.accent, marker) {
+            val m = marker ?: return@LaunchedEffect
+            m.isDraggable = calibrating
+            m.icon = carMarkerIcon(context, C.accent.toArgb(), if (calibrating) 44 else 36)
+            mapView?.invalidate()
+        }
+
+        // 坐标 / 校准变了：把钉子挪过去。**不重建、不动缩放**
+        LaunchedEffect(latitude, longitude, marker) {
+            val m = marker ?: return@LaunchedEffect
+            if (m.position.latitude == latitude && m.position.longitude == longitude) {
+                return@LaunchedEffect
+            }
+            m.position = GeoPoint(latitude, longitude)
+            mapView?.invalidate()
         }
 
         // 车挪了 / 用户点了刷新：把视野拉回车上
@@ -175,6 +209,15 @@ internal fun FindCarMap(
             view.post {
                 view.controller.animateTo(GeoPoint(latitude, longitude), MapScale.DEFAULT_ZOOM, 450L)
             }
+        }
+
+        // 校准或换算可能一下把钉子挪出视野（500 米的坐标系差值足够挪出屏幕）。
+        // 出门了就把它拉回来，但**不改缩放** —— 用户可能正放大看着车位那一格。
+        LaunchedEffect(latitude, longitude, mapView) {
+            val view = mapView ?: return@LaunchedEffect
+            val target = GeoPoint(latitude, longitude)
+            val visible = runCatching { view.boundingBox.contains(target) }.getOrDefault(true)
+            if (!visible) view.post { view.controller.animateTo(target) }
         }
 
         MapControls(

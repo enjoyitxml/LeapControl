@@ -138,4 +138,50 @@ object ParkingPhotoRules {
         val age = VehicleLocationRules.ageText(ageMs) ?: return null
         return String.format(Locale.CHINA, "拍摄于 %s", age)
     }
+
+    // ---- 两种来源共用的说法 ----
+
+    /**
+     * 卡片上那一行「有没有照片」：手机拍的与车端上传的要说清是哪一种。
+     *
+     * 时间取的是**这张照片本身**的时刻：手机照片是快门时间，车端照片是车辆上传时间。
+     * 两者都可能读到 0（文件 mtime 丢失 / 接口没给 uploadTime），此时只说来源、不编时间。
+     */
+    fun captionFor(
+        source: ParkingPhotoSource,
+        hasPhoto: Boolean,
+        savedAt: Long,
+        now: Long,
+    ): String? = when (source) {
+        ParkingPhotoSource.PHONE -> caption(hasPhoto, savedAt, now)
+        ParkingPhotoSource.OFFICIAL -> officialCaption(hasPhoto, savedAt, now)
+    }
+
+    /**
+     * 「车端照片 · 12 分钟前」。
+     *
+     * 不写「车位已拍照」：用户选的就是车端方案，这张图不是他拍的，
+     * 说「已拍照」会让他以为是手机相册里那一张。
+     */
+    fun officialCaption(hasPhoto: Boolean, savedAt: Long, now: Long): String? {
+        if (!hasPhoto) return null
+        val ageMs = if (savedAt > 0L && savedAt <= now) now - savedAt else null
+        val age = VehicleLocationRules.ageText(ageMs) ?: return "车端照片"
+        return String.format(Locale.CHINA, "车端照片 · %s", age)
+    }
+
+    /**
+     * 详情页的「拍摄于 x 前」在车端方案下换成「车辆上传于 x 前」。
+     *
+     * 「拍摄」对用户意味着自己按了快门；车端这张是车辆自己拍的，
+     * 用「上传」才说得清它是怎么来的，也提醒了这张图的时效性。
+     */
+    fun officialTakenAt(hasPhoto: Boolean, uploadTime: Long, now: Long): String? {
+        if (!hasPhoto) return null
+        if (uploadTime <= 0L || uploadTime > now) return null
+        val ageMs = now - uploadTime
+        if (ageMs < 60_000L) return "刚刚由车辆上传"
+        val age = VehicleLocationRules.ageText(ageMs) ?: return null
+        return String.format(Locale.CHINA, "车辆上传于 %s", age)
+    }
 }

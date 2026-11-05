@@ -40,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -105,6 +106,8 @@ fun PersonalizationScreen(
     val C = LocalAppColors.current
     val context = LocalContext.current
     val activeTheme = SeasonThemes.byId(activeThemeId)
+    // 首页主区布局：切 tab 会重建首页子树，所以它挂在 AppRuntime 上，这里只读
+    val heroLayout by runtime.heroLayout.collectAsState()
     // 进页面直接落在「当前生效主题」所在的分类上，不用先自己找
     var tab by remember { mutableStateOf(ThemeTab.entries.first { activeTheme in it.themes }) }
     // 切到「始终浅色 / 始终深色」后，如果当前 tab 整组都不可选，自动挪到能用的那一组
@@ -359,6 +362,30 @@ fun PersonalizationScreen(
                     desc = "颜色跟实车不一样？在这里换车漆，或导入自己改好的图片",
                     icon = Icons.Filled.DirectionsCar,
                     onClick = onOpenCarAppearance,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 首页布局 ----
+        // 两套只改「右上角状态 / 车模下面那条行驶状态」，续航、入口、下方卡片一律不动，
+        // 所以放心的换。默认经典 —— 存量用户升级后看到的样子不该变。
+        SettingsSection(title = "首页布局", desc = "两套排法 · 随时换回经典") {
+            SettingsCard {
+                HeroLayoutCards(
+                    selected = heroLayout,
+                    onSelect = { runtime.setHeroLayout(it) },
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = heroLayout.desc + "。" + when (heroLayout) {
+                        HeroLayout.CLASSIC -> "行驶状态和闭锁、车窗合成两行，都放在右上角。"
+                        HeroLayout.SEPARATE -> "行驶状态单独挪到车模正下方，右上角只留闭锁、车窗、空调。"
+                    },
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
                 )
             }
         }

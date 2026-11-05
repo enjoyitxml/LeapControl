@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TouchApp
@@ -44,6 +45,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,6 +66,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.ConfirmActions
+import com.leapcontrol.app.ParkingPhotoSource
+import com.leapcontrol.app.ParkingPhotoSourceRules
 import com.leapcontrol.app.QuickSwitchLock
 import com.leapcontrol.app.QuickSwitchMode
 import com.leapcontrol.app.SessionStore
@@ -101,6 +105,8 @@ fun SettingsScreen(
     var showDestination by remember { mutableStateOf(false) }
     var showAsrKey by remember { mutableStateOf(false) }
     var showPowerType by remember { mutableStateOf(false) }
+    // 驻车拍照方案（手机拍照 / 车端照片）
+    var showPhotoSource by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmGate by remember { mutableStateOf(runtime.biometricConfirmEnabled()) }
     // 蓝牙钥匙详情页（从本页进入时以整页覆盖的形式出现，返回即回到设置）
@@ -137,6 +143,8 @@ fun SettingsScreen(
     val journalOn by runtime.journalEnabled
     // 动力类型：null = 自动推断（按车型名 + 燃油信号），否则为用户手动指定
     val powerOverride by runtime.powerTypeOverride
+    // 驻车拍照方案：手机拍照（默认）/ 车端照片（部分车型）
+    val photoSource by runtime.parkingPhotoSource.collectAsState()
     // 排查「滑动卡不卡」用的：能区分「掉帧」和「屏幕本来就只有 60Hz」两件事
     val frameStatsOn by runtime.frameStatsVisible
     // 滑动性能日志开关：开着时每次首页滑动都会落一份逐帧日志，供排查掉帧
@@ -416,7 +424,7 @@ fun SettingsScreen(
                     "用的是你自己的 Key（免费额度足够日常使用）。\n" +
                     "配好之后：位置卡上显示车停在哪条街几号院，搜到目的地还能一键发到车机。\n" +
                     "不想从设置里进也行 —— 找车页右上角那颗「?」是同一个入口。\n" +
-                    "卡片右上角拍停车位照片不需要 Key，也不联网。",
+                    "卡片右上角的驻车拍照不需要高德 Key。",
                 color = C.textSecondary,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -433,6 +441,17 @@ fun SettingsScreen(
                 desc = "不用回首页，直接在这里搜地点并发送到车机",
                 iconRes = R.drawable.ic_nav_map,
             ) { showDestination = true }
+            Spacer(Modifier.height(10.dp))
+            // 驻车拍照：两种来源二选一。默认手机拍照（任何车型都能用），
+            // 车端照片要看车型是否支持 —— 说明里必须点到这一层，不能只写「更清晰」
+            ClickRow(
+                title = "驻车拍照方案",
+                desc = when (photoSource) {
+                    ParkingPhotoSource.PHONE -> "手机拍照 · 任何车型可用（默认）"
+                    ParkingPhotoSource.OFFICIAL -> "车端照片 · 车辆自动上传，部分车型支持"
+                },
+                icon = Icons.Filled.PhotoCamera,
+            ) { showPhotoSource = true }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -667,6 +686,62 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showPowerType = false }) { Text("关闭", color = C.textSecondary) }
+            },
+        )
+    }
+
+    // ---- 驻车拍照方案 ----
+    // 两种来源只能选一种：手机拍的是用户自己的记录，车端是车辆自动上传的俯视图。
+    // 这里把「部分车型不支持」写在选项里，而不是等用户选了以后才发现取不到。
+    if (showPhotoSource) {
+        AlertDialog(
+            onDismissRequest = { showPhotoSource = false },
+            containerColor = C.panelBg,
+            title = { Text("驻车拍照方案", color = C.textPrimary) },
+            text = {
+                Column {
+                    Text(
+                        "决定首页「驻车拍照」和找车页里那张照片从哪儿来，两种只能选一种。",
+                        color = C.textSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    ParkingPhotoSource.entries.forEachIndexed { index, option ->
+                        if (index > 0) Spacer(Modifier.height(2.dp))
+                        SettingOptionRow(
+                            label = ParkingPhotoSourceRules.label(option),
+                            desc = ParkingPhotoSourceRules.description(option),
+                            selected = photoSource == option,
+                        ) {
+                            runtime.setParkingPhotoSource(option)
+                            showPhotoSource = false
+                            message = when (option) {
+                                ParkingPhotoSource.PHONE -> "已改用手机拍照"
+                                ParkingPhotoSource.OFFICIAL ->
+                                    "已改用车辆驻车照片，取不到时可在拍照页切回手机"
+                            }
+                            if (option == ParkingPhotoSource.OFFICIAL) {
+                                // 用户刚切过来，别让他自己再找一次「重新获取」：
+                                // 这里主动取一次，失败也会在拍照页写清原因
+                                scope.launch { runtime.refreshOfficialPhoto(force = true) }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    // 这句话是这项功能最要紧的一句：车端照片不是全系都有
+                    Text(
+                        ParkingPhotoSourceRules.SUPPORT_NOTE,
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPhotoSource = false }) {
+                    Text("关闭", color = C.textSecondary)
+                }
             },
         )
     }

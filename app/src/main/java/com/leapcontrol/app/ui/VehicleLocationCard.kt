@@ -29,7 +29,9 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +56,10 @@ import androidx.core.content.FileProvider
 import com.leapcontrol.app.AmapWebApi
 import com.leapcontrol.app.MapFraming
 import com.leapcontrol.app.MapIntents
+import com.leapcontrol.app.OfficialParkingPhotoStore
+import com.leapcontrol.app.OfficialPhotoStatus
+import com.leapcontrol.app.OfficialThumbMemory
+import com.leapcontrol.app.ParkingPhotoSource
 import com.leapcontrol.app.ParkingPhotoStore
 import com.leapcontrol.app.R
 import com.leapcontrol.app.VehicleLocationRules
@@ -189,7 +195,7 @@ fun VehicleLocationCard(
 
     // 停车位照片和位置是两条线：车在地库里坐标再准也没用，
     // 照片里那个「B2 · C 区 · 12 号柱」才是找车时真正要看的东西
-    val photo = rememberParkingPhoto(onMessage)
+    val photo = rememberParkingPhoto(runtime, onMessage)
 
     // 出行方式弹层：「导航到车辆」的第一步
     var navPicker by remember { mutableStateOf(false) }
@@ -337,9 +343,15 @@ fun VehicleLocationCard(
         PhotoCornerButton(
             thumb = photo.thumb,
             onClick = {
-                // 有照片 = 已拍过，这一点进的是「看/管理」，不是直接覆盖 ——
-                // 站在车边手一抖就把唯一一张照片盖掉，代价太大
-                if (photo.hasPhoto) onOpen() else photo.capture()
+                // 有照片 = 已有记录，这一点进的是「看/管理」，不是直接覆盖 ——
+                // 站在车边手一抖就把唯一一张照片盖掉，代价太大。
+                // 车端方案下没取到图时也进页面：那里能重试、能换回手机拍照，
+                // 直接在首页拉起相机等于擅自替用户改了方案。
+                if (photo.hasPhoto || photo.source == ParkingPhotoSource.OFFICIAL) {
+                    onOpen()
+                } else {
+                    photo.capture()
+                }
             },
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -742,31 +754,43 @@ internal fun rememberVehiclePlace(
 }
 
 /**
- * 停车位照片的状态与三个动作，首页卡和找车页共用这一份。
+ * 停车位照片的状态与动作，首页卡、找车页、驻车拍照页共用这一份。
  *
- * 做成对象而不是三个平行参数：两处都要「有没有 / 缩略图 / 拍 / 删」，
- * 散着传迟早两边各写一套，最后一边忘了刷新状态。
+ * 做成对象而不是一堆平行参数：三处都要「有没有 / 缩略图 / 拍 / 删 / 换来源」，
+ * 散着传迟早各写一套，最后一边忘了刷新状态。
+ *
+ * 两种来源共用同一个对象（见 [ParkingPhotoSource]）：[source] 决定 [hasPhoto] /
+ * [savedAt] / [thumb] 读的是手机照片还是车端照片，界面不必自己判断该看哪个文件。
  */
 @Stable
 internal class ParkingPhotoState(
+    /** 当前选用的方案（用户设置里选的，不是这张图碰巧来自哪里）。 */
+    val source: ParkingPhotoSource,
+    /** 当前方案下有没有照片。手机方案 = 本地拍过；车端方案 = 本地缓存着这辆车的图。 */
     val hasPhoto: Boolean,
-    /** 拍摄时间（毫秒），没有照片是 0。 */
+    /** 这张照片本身的时刻（毫秒）：手机是快门时间，车端是车辆上传时间。没有照片是 0。 */
     val savedAt: Long,
     /** 已解码的缩略图；[thumbSize] 决定分辨率。 */
     val thumb: Bitmap?,
+    /** 车端照片的获取进度；手机方案下恒为 [OfficialPhotoStatus.Idle]。 */
+    val officialStatus: OfficialPhotoStatus,
     /** 调起系统相机拍一张（覆盖旧照，但旧照要等新照落盘成功才被替换）。 */
     val capture: () -> Unit,
-    /** 删掉照片（找车页的「删除」用）。 */
+    /** 删掉当前方案下的照片。 */
     val remove: () -> Unit,
     /** 磁盘上的照片被别处改动时强制重读。 */
     val refresh: () -> Unit,
+    /** 向车辆重新要一次车端照片（会覆盖本地缓存）。 */
+    val refreshOfficial: () -> Unit,
+    /** 切换方案（手机拍照 / 车端照片）。 */
+    val useSource: (ParkingPhotoSource) -> Unit,
 )
 
 /** 一次磁盘读取的结果，只用来当 [remember] 的 key。 */
 private data class ParkingPhotoSlot(val hasPhoto: Boolean, val savedAt: Long)
 
 /**
- * 停车位照片：读状态 + 拉起系统相机 + 拍完转正。
+ * 停车位照片：读状态 + 拉起系统相机 + 拍完转正 + 取车端照片。
  *
  * ## 为什么走系统相机而不是 CameraX
  * 我们只需要「拍一张、存下来」，不需要实时滤镜、也不需要预览界面。
@@ -778,16 +802,26 @@ private data class ParkingPhotoSlot(val hasPhoto: Boolean, val savedAt: Long)
  * 相机把照片写进 `parking/capture.jpg`，成功后才 rename 成 `space.jpg`。
  * 这样用户中途取消、或者相机写失败时，上一次拍的旧照片还在 ——
  * 直接往 `space.jpg` 上覆盖的话，一次误触就把唯一那张车位照毁了。
+ *
+ * ## 车端照片（部分车型）
+ * 选了 [ParkingPhotoSource.OFFICIAL] 时，第一次组合会**顺手要一次**（每次启动每辆车只试一次，
+ * 见 `AppRuntime.refreshOfficialPhoto`）；本地已有这辆车的照片就不再打扰接口 ——
+ * 车端照片是停车那一刻上传的，反复问同一件事只会白耗流量。
  */
 @Composable
 internal fun rememberParkingPhoto(
+    runtime: AppRuntime,
     onMessage: (String) -> Unit = {},
-    /** 解码尺寸：首页卡 240 够用，找车页给 1400（整行大图）。 */
+    /** 解码尺寸：首页卡 240 够用，找车页与拍照页给 1400（整行大图）。 */
     thumbSize: Int = 240,
 ): ParkingPhotoState {
     val context = LocalContext.current
     val latestMessage by rememberUpdatedState(onMessage)
     val version = remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val source by runtime.parkingPhotoSource.collectAsState()
+    val officialStatus by runtime.officialPhotoStatus.collectAsState()
+    val vin = runtime.session.selectedVin
 
     // 回调在 Activity 返回结果时执行，此时组合可能已经重建过，
     // 所以消息用 rememberUpdatedState 取最新那份 lambda（见 latestMessage）
@@ -807,28 +841,67 @@ internal fun rememberParkingPhoto(
         }
     }
 
-    val slot = remember(version.intValue) {
-        ParkingPhotoSlot(
-            hasPhoto = ParkingPhotoStore.hasPhoto(context),
-            savedAt = ParkingPhotoStore.savedAt(context),
-        )
+    val slot = remember(source, version.intValue, officialStatus, vin) {
+        if (source == ParkingPhotoSource.OFFICIAL) {
+            ParkingPhotoSlot(
+                hasPhoto = OfficialParkingPhotoStore.hasPhoto(context, vin),
+                // 车端照片的时间优先用**车辆上传时刻**；接口没给就退回取回时刻，
+                // 都读不到才是 0（界面据此不写时间，而不是编一个出来）
+                savedAt = OfficialParkingPhotoStore.uploadTime(context, vin)
+                    .takeIf { it > 0L }
+                    ?: OfficialParkingPhotoStore.savedAt(context, vin),
+            )
+        } else {
+            ParkingPhotoSlot(
+                hasPhoto = ParkingPhotoStore.hasPhoto(context),
+                savedAt = ParkingPhotoStore.savedAt(context),
+            )
+        }
     }
+
     // 同 [rememberVehiclePlace]：切回首页时整棵子树重建，若从 null 起手，右上角这个按钮
     // 会先画一帧相机图标再变成照片 —— 同一张卡上第二处「闪」。起手值取进程内上次解码的那张。
+    // 车端照片另有一个 revision：每次成功取回都要重读，否则刷新完看到的还是旧图。
     val thumb by produceState<Bitmap?>(
-        initialValue = remember(thumbSize) { ParkingThumbMemory.get(thumbSize) },
-        version.intValue,
+        initialValue = remember(source, thumbSize, vin) {
+            if (source == ParkingPhotoSource.OFFICIAL) {
+                OfficialThumbMemory.get(vin, thumbSize)
+            } else {
+                ParkingThumbMemory.get(thumbSize)
+            }
+        },
+        source, version.intValue, officialStatus, thumbSize, vin,
     ) {
-        val loaded = withContext(Dispatchers.IO) { ParkingPhotoStore.load(context, thumbSize) }
-        ParkingThumbMemory.put(thumbSize, loaded)
+        val loaded = withContext(Dispatchers.IO) {
+            if (source == ParkingPhotoSource.OFFICIAL) {
+                OfficialParkingPhotoStore.load(context, vin, thumbSize)
+            } else {
+                ParkingPhotoStore.load(context, thumbSize)
+            }
+        }
+        if (source == ParkingPhotoSource.OFFICIAL) {
+            OfficialThumbMemory.put(vin, thumbSize, loaded)
+        } else {
+            ParkingThumbMemory.put(thumbSize, loaded)
+        }
         value = loaded
     }
 
-    return remember(slot, thumb) {
+    // 选了车端照片、本地还没有这台车的图 → 进页面顺手要一次。
+    // 重复调用由 runtime 挡住（每辆车每次启动只自动试一次），这里不必加判断。
+    LaunchedEffect(source, vin) {
+        if (source == ParkingPhotoSource.OFFICIAL && !slot.hasPhoto) {
+            runtime.refreshOfficialPhoto(force = false)
+        }
+    }
+
+    return remember(slot, thumb, source, officialStatus, vin) {
         ParkingPhotoState(
+            source = source,
             hasPhoto = slot.hasPhoto,
             savedAt = slot.savedAt,
             thumb = thumb,
+            officialStatus = officialStatus,
             capture = {
                 val file = ParkingPhotoStore.captureFile(context)
                 // FileProvider：Android 7+ 不能把 file:// 交给别的应用，
@@ -849,11 +922,18 @@ internal fun rememberParkingPhoto(
                 }
             },
             remove = {
-                ParkingPhotoStore.delete(context)
+                if (source == ParkingPhotoSource.OFFICIAL) {
+                    runtime.deleteOfficialPhoto()
+                    latestMessage("已清除车端照片")
+                } else {
+                    ParkingPhotoStore.delete(context)
+                    latestMessage("已删除停车位照片")
+                }
                 version.intValue++
-                latestMessage("已删除停车位照片")
             },
             refresh = { version.intValue++ },
+            refreshOfficial = { scope.launch { runtime.refreshOfficialPhoto(force = true) } },
+            useSource = { next -> runtime.setParkingPhotoSource(next) },
         )
     }
 }
