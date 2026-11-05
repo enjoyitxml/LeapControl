@@ -3,6 +3,7 @@ package com.leapcontrol.app.journal
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
+import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 
@@ -27,10 +28,26 @@ enum class CostRange(val label: String, val desc: String, val trendTitle: String
 }
 
 /**
+ * 某一个区间下的「日均」口径与数值。
+ *
+ * [divisor] 对日均是天数、对笔均是笔数 —— 今日没有「日均」可言（分母恒为 1，
+ * 算出来就等于总支出，白白占一格），所以那一格显示笔均。
+ */
+data class DailyAverage(
+    val amount: Double,
+    /** 分母。 */
+    val divisor: Int,
+    /** 口径说明，直接当卡片第一格的 label 用。 */
+    val label: String,
+) {
+    val value: Double get() = if (divisor > 0) amount / divisor else 0.0
+}
+
+/**
  * 用车花销的汇总口径。
  *
- * [perDay] 的分母是**用车天数**（提车至今），不是「记账覆盖的天数」——
- * 用户想知道的是「这辆车每天花我多少钱」，没记账的那几天也是要摊的。
+ * [perDay] 是**提车以来**的日均，用在零记首页那种「这辆车每天花我多少钱」的场合；
+ * 成本页顶部那排药丸有自己的口径（见 [averageOf]），别拿 [perDay] 去顶。
  * 没有设置用车目标时，退化成「最早一条记录 → 今天」，并在文案里说明。
  */
 data class CostSummary(
@@ -50,6 +67,8 @@ data class CostSummary(
     val months: List<MonthPoint>,
     /** 日均的分母是不是「提车至今」（false = 用最早记录推算的近似值）。 */
     val daysFromDelivery: Boolean,
+    /** 各区间的日均 / 笔均。 */
+    private val averages: Map<CostRange, DailyAverage>,
 ) {
     val empty: Boolean get() = entryCount == 0
 
@@ -82,6 +101,22 @@ data class CostSummary(
         CostRange.YEAR -> "较去年"
         CostRange.ALL -> "较上期"
     }
+
+    /**
+     * 某个区间下的日均。
+     *
+     * 本周 / 本月 / 今年都是**还没走完的一期**，分母只能算「这一期已经过去的天数」。
+     * 拿提车以来的天数去除本月支出，算出来的是「这辆车每天花多少」而不是
+     * 「本月每天花多少」—— 11 月 5 号花掉 200 元，本月日均本该是 40，
+     * 按 1022 天摊下来只剩 0.20，看上去像这个月根本没花钱。
+     * 全部 = 提车至今，那是它本来就该用的分母。
+     * 今日的分母恒为 1，日均永远等于总支出，占着一格没有信息量，改成今日笔均。
+     */
+    fun averageOf(range: CostRange): DailyAverage = averages[range] ?: DailyAverage(
+        amount = amountOf(range),
+        divisor = days,
+        label = if (daysFromDelivery) "日均（$days 天）" else "日均（记账 $days 天）",
+    )
 }
 
 object CostStats {
@@ -112,23 +147,92 @@ object CostStats {
         val todayStart = JournalDates.startOfDay(today)
         val weekStart = startOfWeek(today)
         val months = buildMonths(data, today)
+        val todaySpend = data.costBetween(todayStart, todayStart + DAY_MS)
+        val thisWeekSpend = data.costBetween(weekStart, weekStart + 7 * DAY_MS)
+        val thisMonthSpend = data.costOfMonth(thisMonthKey)
+        val thisYearSpend = data.costOfYear(today.year)
+        val counts = CostRange.entries.associateWith { range ->
+            val (from, to) = boundsOf(range, today)
+            data.costs.count { it.date in from until to }
+        }
         return CostSummary(
             total = total,
             days = days,
             perDay = if (days > 0) total / days else 0.0,
-            thisMonth = data.costOfMonth(thisMonthKey),
+            thisMonth = thisMonthSpend,
             lastMonth = data.costOfMonth(lastMonthKey),
-            thisYear = data.costOfYear(today.year),
-            today = data.costBetween(todayStart, todayStart + DAY_MS),
+            thisYear = thisYearSpend,
+            today = todaySpend,
             yesterday = data.costBetween(todayStart - DAY_MS, todayStart),
-            thisWeek = data.costBetween(weekStart, weekStart + 7 * DAY_MS),
+            thisWeek = thisWeekSpend,
             lastWeek = data.costBetween(weekStart - 7 * DAY_MS, weekStart),
             lastYear = data.costOfYear(today.year - 1),
             entryCount = data.costs.size,
             byCategory = data.costByCategory(),
             months = months,
             daysFromDelivery = deliveryDays != null,
+            averages = buildAverages(
+                today = today,
+                counts = counts,
+                amounts = mapOf(
+                    CostRange.DAY to todaySpend,
+                    CostRange.WEEK to thisWeekSpend,
+                    CostRange.MONTH to thisMonthSpend,
+                    CostRange.YEAR to thisYearSpend,
+                    CostRange.ALL to total,
+                ),
+                allDays = days,
+                allDaysFromDelivery = deliveryDays != null,
+            ),
         )
+    }
+
+    /**
+     * 各区间的日均表。
+     *
+     * 天数一律只算「已经过去的部分」：本周从周一数到今天、本月从 1 号数到今天、
+     * 今年从元旦数到今天 —— 拿整周 / 整月 / 整年当分母的话，月初看这个数字会
+     * 凭空缩水成 1/30，越早看越失真。
+     */
+    private fun buildAverages(
+        today: LocalDate,
+        counts: Map<CostRange, Int>,
+        amounts: Map<CostRange, Double>,
+        allDays: Int,
+        allDaysFromDelivery: Boolean,
+    ): Map<CostRange, DailyAverage> {
+        val elapsed = mapOf(
+            CostRange.DAY to 1,
+            // 周一 0 点到今天含今天：周四就是 4 天
+            CostRange.WEEK to (ChronoUnit.DAYS.between(
+                today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)),
+                today,
+            ) + 1).toInt(),
+            CostRange.MONTH to today.dayOfMonth,
+            CostRange.YEAR to today.dayOfYear,
+            CostRange.ALL to allDays,
+        ).mapValues { it.value.coerceAtLeast(1) }
+
+        return CostRange.entries.associateWith { range ->
+            val amount = amounts[range] ?: 0.0
+            if (range == CostRange.DAY) {
+                // 今日分摊到一天就是它本身，没有信息量；改看「今天这几笔平均多少」
+                DailyAverage(amount, counts[range] ?: 0, "今日笔均")
+            } else {
+                val n = elapsed.getValue(range)
+                val label = when (range) {
+                    CostRange.WEEK -> "本周日均（$n 天）"
+                    CostRange.MONTH -> "本月日均（$n 天）"
+                    CostRange.YEAR -> "今年日均（$n 天）"
+                    else -> if (allDaysFromDelivery) {
+                        "日均（$n 天）"
+                    } else {
+                        "日均（记账 $n 天）"
+                    }
+                }
+                DailyAverage(amount, n, label)
+            }
+        }
     }
 
     /** 本周一 0 点。Compose 侧不需要知道「周从哪天开始」，统一按周一切。 */

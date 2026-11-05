@@ -22,6 +22,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -181,6 +182,24 @@ fun MainScreen(
             settingsStack.removeAt(settingsStack.lastIndex)
         }
     }
+
+    // 「从 App 外面点进来」要直达的页面：桌面小组件 / 磁贴发现没设控车密码时，
+    // 会带着 extra 把 App 拉起来，这里接住并直接落到密码设置。
+    // 只弹 toast 不够 —— 后台 toast 在不少 ROM 上会被吞掉，用户看到的就是「点了没反应」。
+    var startWithPin by remember { mutableStateOf(false) }
+    val navTarget by AppNavRequest.target.collectAsState()
+    LaunchedEffect(navTarget) {
+        val target = navTarget ?: return@LaunchedEffect
+        AppNavRequest.consume()
+        when (target) {
+            AppNavRequest.OP_PASSWORD -> {
+                // 先切到「我的」，这样从设置退回时人是站在对的 tab 上
+                tab = 2
+                startWithPin = true
+                openSettings(SettingsPage.SETTINGS)
+            }
+        }
+    }
     // 首页是否停在「主界面」（打开充电中心 / 空调 / 体检等二级页时为 false）。
     // 动态场景只在零控首页主界面跑动画，其余界面一律用主题色渐变。
     var homeOnMainPage by remember { mutableStateOf(true) }
@@ -337,6 +356,8 @@ fun MainScreen(
                         SettingsPage.SETTINGS -> SettingsScreen(
                             runtime = runtime,
                             onBack = { closeSettings() },
+                            startWithPin = startWithPin,
+                            onPinDialogShown = { startWithPin = false },
                         )
 
                         SettingsPage.PERSONALIZATION -> PersonalizationScreen(

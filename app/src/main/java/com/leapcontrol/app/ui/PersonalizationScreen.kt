@@ -36,8 +36,10 @@ import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -110,6 +112,9 @@ fun PersonalizationScreen(
     val heroLayout by runtime.heroLayout.collectAsState()
     // 进页面直接落在「当前生效主题」所在的分类上，不用先自己找
     var tab by remember { mutableStateOf(ThemeTab.entries.first { activeTheme in it.themes }) }
+    // 打开蓝牙钥匙入口前先摆一次风险说明：这功能依赖车型硬件与钥匙协议，
+    // 不是每辆车都能用，直接静默开关等于骗人
+    var showBleNotice by remember { mutableStateOf(false) }
     // 切到「始终浅色 / 始终深色」后，如果当前 tab 整组都不可选，自动挪到能用的那一组
     LaunchedEffect(mode) {
         val usable = tab.themes.any { ThemeResolver.canPick(mode, it) }
@@ -399,10 +404,24 @@ fun PersonalizationScreen(
             SettingsCard {
                 SwitchRow(
                     label = "蓝牙钥匙",
-                    desc = "在「个性化」图标左边显示蓝牙钥匙入口，关掉后只能从设置进入",
+                    // 默认显示（常用入口）；风险说明靠这段常驻小字和功能页里的「兼容性说明」
+                    desc = "在「个性化」图标左边显示入口。并非所有车型都带这项硬件，" +
+                        "适配程度也参差，建议优先使用官方蓝牙钥匙。",
                     checked = runtime.bleIconVisible.value,
-                    onCheckedChange = { runtime.setBleIconVisible(it) },
+                    onCheckedChange = { on ->
+                        if (on) showBleNotice = true else runtime.setBleIconVisible(false)
+                    },
                 )
+                if (runtime.bleIconVisible.value) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "蓝牙钥匙适配性一般，请自行测试靠近解锁、离车落锁是否正常；" +
+                            "遇到问题可在「我的 → 意见反馈」提交，我会尽量修。",
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
                 SwitchRow(
                     label = "玩法说明",
@@ -526,6 +545,57 @@ fun PersonalizationScreen(
             onCancel = {
                 cropUri = null
                 cropKind = null
+            },
+        )
+    }
+
+    // ---- 打开蓝牙钥匙前的风险说明 ----
+    // 开关本身是「显示入口」，但入口背后是一整套跟车通信的功能，先说清楚再放行。
+    // 默认关着也是这个道理：没确认「我知道要用它」的人，不该在首页看到这个按钮。
+    if (showBleNotice) {
+        AlertDialog(
+            onDismissRequest = { showBleNotice = false },
+            containerColor = C.panelBg,
+            title = { Text("开启蓝牙钥匙入口", color = C.textPrimary) },
+            text = {
+                Column {
+                    Text(
+                        "蓝牙钥匙靠手机与车辆直接通信来解锁、落锁。",
+                        color = C.textPrimary,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "1. 并非所有零跑车型都带这项功能，部分车型没有对应的蓝牙模块；\n" +
+                            "2. 目前这一套的适配性一般，不同车型表现可能不一样；\n" +
+                            "3. 建议优先使用官方 App 的蓝牙钥匙，本入口只作为补充；\n" +
+                            "4. 开启后请先自己试一遍（靠近解锁、离车落锁），确认正常再依赖它。",
+                        color = C.textSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "遇到问题可以在「我的 → 意见反馈」提交，我会尽量修。",
+                        color = C.textSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        runtime.setBleIconVisible(true)
+                        showBleNotice = false
+                    },
+                ) { Text("知道了，开启", color = C.accent, fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBleNotice = false }) {
+                    Text("再想想", color = C.textSecondary)
+                }
             },
         )
     }

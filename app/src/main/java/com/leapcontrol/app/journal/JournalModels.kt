@@ -23,21 +23,32 @@ object JournalDates {
 
     private val ZONE: ZoneId = ZoneId.systemDefault()
 
+    /**
+     * 时间戳 → 本地日期。
+     *
+     * **不要**换成 `LocalDate.ofInstant(instant, zone)`：那是 Java 9 才有的方法，
+     * Android 直到 **API 31（Android 12）** 才补进系统运行库，API 26~30 的设备一调
+     * 就 `NoSuchMethodError: No static method ofInstant` 原地闪退（1.0.17 在
+     * Android 10 的 OPPO 上就是这么崩的）。`Instant.atZone(zone).toLocalDate()`
+     * 结果完全等价，且 API 26 起就存在 —— 全 App 的日期换算都走这一个口子。
+     */
+    private fun dateOf(millis: Long): LocalDate =
+        Instant.ofEpochMilli(millis).atZone(ZONE).toLocalDate()
+
     /** 当天 0 点的时间戳（毫秒），所有「按天」的判定都以它为基准。 */
     fun startOfDay(millis: Long): Long =
-        LocalDate.ofInstant(Instant.ofEpochMilli(millis), ZONE)
-            .atStartOfDay(ZONE).toInstant().toEpochMilli()
+        dateOf(millis).atStartOfDay(ZONE).toInstant().toEpochMilli()
 
     fun today(): LocalDate = LocalDate.now(ZONE)
 
     fun todayStart(): Long = today().atStartOfDay(ZONE).toInstant().toEpochMilli()
 
-    fun toLocalDate(millis: Long): LocalDate = LocalDate.ofInstant(Instant.ofEpochMilli(millis), ZONE)
+    fun toLocalDate(millis: Long): LocalDate = dateOf(millis)
 
     /** `2026-10-28`，与里程接口的 day 字段同一口径，便于直接对齐。 */
     fun dayKey(date: LocalDate): String = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
 
-    fun dayKey(millis: Long): String = dayKey(LocalDate.ofInstant(Instant.ofEpochMilli(millis), ZONE))
+    fun dayKey(millis: Long): String = dayKey(dateOf(millis))
 
     /** 宽容地解析服务端返回的 day：`2026-10-28` / `2026/10/28` / `20261028`。 */
     fun parseDayKey(raw: String?): LocalDate? {
@@ -63,19 +74,19 @@ object JournalDates {
 
     /** 在某个时间戳上加减月份，回到当天 0 点（保养/保险的「N 个月后」都靠它）。 */
     fun addMonths(millis: Long, months: Int): Long =
-        LocalDate.ofInstant(Instant.ofEpochMilli(millis), ZONE)
+        dateOf(millis)
             .plusMonths(months.toLong())
             .atStartOfDay(ZONE).toInstant().toEpochMilli()
 
     /** 到目标日期还剩多少天（负数 = 已经过了）。 */
     fun daysUntil(targetMillis: Long, today: LocalDate = today()): Int =
         java.time.temporal.ChronoUnit.DAYS
-            .between(today, LocalDate.ofInstant(Instant.ofEpochMilli(targetMillis), ZONE))
+            .between(today, dateOf(targetMillis))
             .toInt()
 
     /** `10月28日`；跨年时带年份。 */
     fun shortLabel(millis: Long, today: LocalDate = today()): String {
-        val date = LocalDate.ofInstant(Instant.ofEpochMilli(millis), ZONE)
+        val date = dateOf(millis)
         return if (date.year == today.year) {
             String.format(Locale.CHINA, "%d月%d日", date.monthValue, date.dayOfMonth)
         } else {
@@ -84,7 +95,7 @@ object JournalDates {
     }
 
     fun yearMonthKey(millis: Long): String {
-        val date = LocalDate.ofInstant(Instant.ofEpochMilli(millis), ZONE)
+        val date = dateOf(millis)
         return String.format(Locale.CHINA, "%04d-%02d", date.year, date.monthValue)
     }
 
@@ -470,7 +481,7 @@ data class JournalData(
 
     fun costOfYear(year: Int): Double =
         costs.filter {
-            LocalDate.ofInstant(Instant.ofEpochMilli(it.date), ZoneId.systemDefault()).year == year
+            JournalDates.toLocalDate(it.date).year == year
         }.fold(0.0) { acc, e -> acc + e.amount }
 
     /** 区间统计：`[fromInclusive, toExclusive)`，日 / 周 / 月 / 年都基于它。 */

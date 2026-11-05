@@ -278,8 +278,8 @@ class Session(
     var deviceId: String,
     var phone: String = "",
     var smDeviceId: String = "",
-    var oldAuth: OldAuth? = null,
-    var newAuth: NewAuth? = null,
+    oldAuth: OldAuth? = null,
+    newAuth: NewAuth? = null,
     var selectedVin: String = "",
     var selectedCarType: String = "",
     var selectedNickname: String = "",
@@ -288,6 +288,20 @@ class Session(
     var hvacCapability: HvacCapability = HvacCapability.fallback(),
     val generation: Long = 0L
 ) {
+    /*
+     * 凭据是唯一一处「后台线程写、UI 线程读」的字段：令牌续期发生在 IO 线程
+     * （首页刷新 / 桌面小组件 / 磁贴 / 充电采样都各自会续期一次），而界面随时在读
+     * `oldAuth == null` 判登录态。普通 var 没有可见性保证，别的线程可能读到一个
+     * 已经失效的旧值，表现为「明明登录着却提示请先登录」。getter / setter 都过锁，
+     * 至少保证读到的是最近一次写完的值（上游 4.4.2 同样处理）。
+     */
+    var oldAuth: OldAuth? = oldAuth
+        @Synchronized get
+        @Synchronized set
+    var newAuth: NewAuth? = newAuth
+        @Synchronized get
+        @Synchronized set
+
     val appVersion = "1.23.00"
     val subVersion = "3.24.5-1"
 }

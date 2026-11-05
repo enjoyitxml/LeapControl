@@ -2694,8 +2694,36 @@ private fun friendlyError(e: Throwable): String {
         msg.contains("Failed to connect", ignoreCase = true) -> "无法连接服务器，请检查网络"
         msg.contains("unexpected end of stream", ignoreCase = true) -> "连接被中断，正在重试…"
         msg.isBlank() -> "请求失败，请稍后重试"
-        else -> msg.lines().first().take(80)
+        else -> when (val detail = serverReason(msg)) {
+            // 拿不到原因（只有错误码，或夹了内部参数）：别把码糊给用户
+            null -> if (msg.startsWith("控车失败")) "指令未完成，请稍后重试" else msg.lines().first().take(80)
+            else -> "未完成：$detail"
+        }
     }
+}
+
+/**
+ * 从「控车失败(1234): xxx」里揪出车端 / 网关给的原因。
+ *
+ * 原来把整条原样丢给用户，界面上就是一句「控车失败(3021): 车辆不在线」——
+ * 数字码对用户没意义，反而像是 App 崩了。现在只留原因那句；
+ * 原因里夹着 VIN / token / 堆栈（内部诊断用）时宁可不显示，退回通用文案。
+ */
+internal fun serverReason(message: String): String? {
+    if (!message.startsWith("控车失败")) return null
+    val reason = message
+        .removePrefix("控车失败")
+        .trim()
+        .removePrefix("(")
+        .let { if (it.contains(")")) it.substringAfter(")") else it }
+        .trim()
+        .removePrefix(":")
+        .removePrefix("：")
+        .trim()
+    if (reason.isBlank()) return null
+    if (reason.startsWith("java.") || reason.startsWith("kotlin.")) return null
+    listOf("VIN=", "token=", "oppwd=", "carvin=").forEach { if (reason.contains(it)) return null }
+    return reason.lines().first().take(60)
 }
 
 @Composable

@@ -28,6 +28,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -273,10 +284,19 @@ private fun GoalForm(
             .padding(vertical = 15.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text("保存目标", color = androidx.compose.ui.graphics.Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Text("保存目标", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
+/**
+ * 进度视图（刻度版）。
+ *
+ * 原来是一圈 168dp 的圆环 + 三格数字 + 两张价格小卡：圆环只能表达「占比」，
+ * 而用户真正想知道的是「我在这十年里的哪一段」。所以换成一把刻度尺 ——
+ * 每小格一季度、每 4 格一年，指针落在当前位置，尺子本身就是信息，不是装饰。
+ *
+ * 价格从两张独立小卡降级成主卡底部的一格读数：它不该和进度抢同一个视觉层级。
+ */
 @Composable
 private fun GoalProgressView(
     goal: CarGoal,
@@ -287,87 +307,74 @@ private fun GoalProgressView(
     val unlockedIds = Medals.unlockedIds(stats)
     val next = Medals.next(stats)
 
-    // ---- 进度环 ----
+    // ---- 主卡：读数 + 十年刻度 ----
     JournalCard {
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(contentAlignment = Alignment.Center) {
-                JournalRing(
-                    fraction = progress.barFraction,
-                    modifier = Modifier.size(168.dp),
-                    stroke = 13.dp,
-                    // 环形底槽别用默认的 20% 黑：一大圈深灰在浅色卡上就是「脏」的主因
-                    track = C.textSecondary.copy(alpha = 0.16f),
-                )
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        "${progress.percent}%",
-                        color = C.textPrimary,
-                        fontSize = 38.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "第 ${progress.daysOwned} 天",
-                        color = C.textSecondary,
-                        fontSize = 12.sp,
-                    )
-                }
-            }
-            Spacer(Modifier.height(18.dp))
-            Row(Modifier.fillMaxWidth()) {
-                JournalStat(
-                    value = "${progress.daysOwned}",
-                    label = "已陪伴（天）",
-                    modifier = Modifier.weight(1f),
-                )
-                JournalStat(
-                    value = "${goal.targetDays}",
-                    label = "目标（天）",
-                    modifier = Modifier.weight(1f),
-                )
-                JournalStat(
-                    value = if (progress.reached) "已达" else "${progress.remainingDays}",
-                    label = if (progress.reached) "目标已达成" else "还差（天）",
-                    modifier = Modifier.weight(1f),
-                    valueColor = if (progress.reached) C.accent else C.textPrimary,
-                )
-            }
-            Spacer(Modifier.height(14.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("已陪伴", color = C.textSecondary, fontSize = 11.sp)
+            Text("目标 ${goal.targetDays} 天", color = C.textSecondary, fontSize = 11.sp)
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.Bottom) {
             Text(
-                buildString {
-                    append("提车于 ${JournalDates.shortLabel(goal.deliveryDate)}")
-                    progress.etaDate?.let { append(" · 预计 ${JournalDates.shortLabel(it)} 达成") }
-                },
+                "${progress.daysOwned}",
+                color = C.textPrimary,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = (-1.2).sp,
+                modifier = Modifier.alignByBaseline(),
+            )
+            Text(
+                "天",
                 color = C.textSecondary,
-                fontSize = 11.sp,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .padding(start = 5.dp)
+                    .alignByBaseline(),
             )
         }
-    }
-
-    Spacer(Modifier.height(12.dp))
-
-    // ---- 落地价摊到每天 ----
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        JournalCard(modifier = Modifier.weight(1f), padding = 14.dp) {
-            Text("落地价", color = C.textSecondary, fontSize = 11.sp)
-            Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(6.dp))
+        GoalRuler(fraction = progress.barFraction, years = goal.targetYears)
+        Spacer(Modifier.height(11.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
-                "¥${CostStats.money(goal.landingPrice)}",
-                color = C.textPrimary,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+                JournalDates.shortLabel(goal.deliveryDate),
+                color = C.textSecondary,
+                fontSize = 10.sp,
+            )
+            Text("${goal.targetYears} 年为期", color = C.textSecondary, fontSize = 10.sp)
+            Text(
+                progress.etaDate?.let { JournalDates.shortLabel(it) } ?: "已达成年限",
+                color = C.textSecondary,
+                fontSize = 10.sp,
             )
         }
-        JournalCard(modifier = Modifier.weight(1f), padding = 14.dp) {
-            Text("每天摊掉", color = C.textSecondary, fontSize = 11.sp)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "¥${CostStats.moneyFine(progress.pricePerDay)}",
-                color = C.textPrimary,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+        Spacer(Modifier.height(15.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(C.border),
+        )
+        Spacer(Modifier.height(14.dp))
+        Row(Modifier.fillMaxWidth()) {
+            GoalReading(
+                label = if (progress.reached) "目标" else "还差",
+                value = if (progress.reached) "已达成" else "${progress.remainingDays}",
+                unit = if (progress.reached) "" else "天",
+                valueColor = if (progress.reached) C.accent else C.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            GoalReading(
+                label = "每天摊掉",
+                value = CostStats.moneyFine(progress.pricePerDay),
+                unit = "元",
+                modifier = Modifier.weight(1f),
+            )
+            GoalReading(
+                label = "落地价",
+                value = String.format(Locale.CHINA, "%.1f", goal.landingPrice / 10000.0),
+                unit = "万",
+                modifier = Modifier.weight(1f),
             )
         }
     }
@@ -376,36 +383,201 @@ private fun GoalProgressView(
 
     // ---- 下一枚勋章 ----
     if (next != null) {
-        JournalCard {
+        JournalCard(padding = 14.dp) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                MedalBadge(medal = next, unlocked = false, size = 46.dp)
-                Spacer(Modifier.width(14.dp))
+                MedalBadge(medal = next, unlocked = false, size = 42.dp)
+                Spacer(Modifier.width(13.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "下一枚：${next.title}",
+                        "下一枚 · ${next.title}",
                         color = C.textPrimary,
-                        fontSize = 14.sp,
+                        fontSize = 13.5.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        next.gapText(stats) ?: "只差一点点",
+                        listOfNotNull(
+                            next.gapText(stats),
+                            next.group.label + "组",
+                            tierLabel(next.tier),
+                        ).joinToString(" · "),
                         color = C.textSecondary,
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                     )
                 }
+                val ratio = next.ratio(stats) ?: 0f
                 Text(
-                    "${next.group.label} · ${tierLabel(next.tier)}",
+                    "${(ratio * 100f).roundToInt()}%",
                     color = C.textSecondary,
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
                 )
             }
+            Spacer(Modifier.height(11.dp))
+            // 用这枚章自己的档位色做进度条：青铜 -> 白银 -> 黄金 -> 铂金，
+            // 「还差多少」和「这枚有多贵重」合进同一根线里。
+            JournalProgressLine(
+                fraction = next.ratio(stats) ?: 0f,
+                height = 3.dp,
+                color = medalPalette(next.tier, C.isDark).plateDeep,
+                track = C.barTrack,
+            )
         }
         Spacer(Modifier.height(12.dp))
     }
 
     // ---- 勋章墙 ----
     MedalWall(unlockedIds = unlockedIds, stats = stats)
+}
+
+/**
+ * 刻度尺的分格数。
+ *
+ * 每 4 格一年是固定语义（一格一个季度）；20 年以上格子会挤成一条灰带，退化成 40 格。
+ */
+internal fun goalRulerDivisions(years: Int): Int {
+    val quarters = years.coerceIn(1, 40) * 4
+    return if (quarters <= 80) quarters else 40
+}
+
+/**
+ * 十年刻度尺。
+ *
+ * 单位是「格」不是像素：每 4 格一年，格子数 = 目标年数 × 4，
+ * 所以 3 年目标的后半段不会因为尺子太长而失真。已走过的格子转成主题色，
+ * 指针位置同时给出百分比读数 —— 尺子量位置，百分比量程度。
+ */
+@Composable
+private fun GoalRuler(
+    fraction: Float,
+    years: Int,
+    modifier: Modifier = Modifier,
+) {
+    val C = LocalAppColors.current
+    val measurer = rememberTextMeasurer()
+    val f = fraction.coerceIn(0f, 1f)
+    val label = "${(f * 100f).roundToInt()}%"
+    val labelStyle = TextStyle(
+        color = C.accent,
+        fontSize = 10.5.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+    val divisions = goalRulerDivisions(years)
+    val majorEvery = if (divisions % 4 == 0) 4 else 5
+
+    Canvas(
+        modifier
+            .fillMaxWidth()
+            .height(54.dp),
+    ) {
+        val w = size.width
+        val rulerH = 38.dp.toPx()
+        val top = size.height - rulerH
+        val s = rulerH / 40f            // 设计稿以 40 单位为高度，这里等比缩放
+        val base = top + 33f * s
+        val x = f * w
+
+        // 已走过的区间：一层极淡的底色，让「到这儿了」在扫一眼时就成立
+        if (x > 0f) {
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    listOf(C.accent.copy(alpha = 0.11f), C.accent.copy(alpha = 0.03f)),
+                    startX = 0f,
+                    endX = x,
+                ),
+                topLeft = Offset(0f, base - 15f * s),
+                size = Size(x, 15f * s),
+            )
+        }
+
+        // 基线
+        drawLine(
+            color = C.border,
+            start = Offset(0f, base),
+            end = Offset(w, base),
+            strokeWidth = 1.dp.toPx(),
+        )
+
+        for (i in 0..divisions) {
+            val tx = w * i / divisions
+            val major = i % majorEvery == 0
+            val th = (if (major) 12f else 5.5f) * s
+            val on = tx <= x + 0.5f
+            drawLine(
+                color = if (on) {
+                    C.accent.copy(alpha = 0.72f)
+                } else {
+                    C.textSecondary.copy(alpha = 0.38f)
+                },
+                start = Offset(tx, base),
+                end = Offset(tx, base - th),
+                strokeWidth = 1.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+        }
+
+        // 已用进度：压在基线上，3dp 圆头
+        if (x > 0f) {
+            drawLine(
+                color = C.accent,
+                start = Offset(0f, base),
+                end = Offset(x, base),
+                strokeWidth = 3.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+        }
+
+        // 指针 + 游标：一圈白底套主题色描边，压在瓦片/卡面上也看得清
+        drawLine(
+            color = C.accent,
+            start = Offset(x, top + 1f * s),
+            end = Offset(x, base + 4f * s),
+            strokeWidth = 1.8.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
+        val dot = 3.4f * s
+        drawCircle(C.panelBg, dot, Offset(x, base))
+        drawCircle(C.accent, dot, Offset(x, base), style = Stroke(2.dp.toPx()))
+
+        // 百分比读数：贴着指针，靠边时夹住不让它出界
+        val laid = measurer.measure(AnnotatedString(label), labelStyle)
+        val lx = (x - laid.size.width / 2f).coerceIn(0f, (w - laid.size.width).coerceAtLeast(0f))
+        drawText(laid, topLeft = Offset(lx, 0f))
+    }
+}
+
+/** 主卡底部的一格读数：小标签 + 大数字 + 单位。 */
+@Composable
+private fun GoalReading(
+    label: String,
+    value: String,
+    unit: String,
+    modifier: Modifier = Modifier,
+    valueColor: Color = LocalAppColors.current.textPrimary,
+) {
+    val C = LocalAppColors.current
+    Column(modifier) {
+        Text(label, color = C.textSecondary, fontSize = 10.sp, maxLines = 1)
+        Spacer(Modifier.height(5.dp))
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                value,
+                color = valueColor,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.alignByBaseline(),
+            )
+            Text(
+                unit,
+                color = C.textSecondary,
+                fontSize = 9.5.sp,
+                modifier = Modifier
+                    .padding(start = 2.dp)
+                    .alignByBaseline(),
+            )
+        }
+    }
 }
 
 /**

@@ -421,10 +421,12 @@ class AppRuntime(context: Context) {
     }
 
     /**
-     * 首页顶部「蓝牙钥匙」图标是否显示（个性化 → 首页）。
+     * 首页顶部「蓝牙钥匙」图标是否显示（个性化 → 首页图标）。
      *
-     * 默认显示：这是车主的常用入口，藏起来反而要翻两层设置才能打开。
-     * 和壁纸的 `quick_dot_*` 一样放在 namingPrefs 里，跟着本机走、登出不丢。
+     * 默认显示：这是车主的常用入口，藏起来要翻两层设置才找得到。
+     * 但蓝牙钥匙靠手机与车端直接通信，不是每辆车都带这套硬件，适配程度也参差 ——
+     * 所以功能本身的风险说明放在两处常驻：个性化开关旁的小字、蓝牙钥匙页的「兼容性说明」。
+     * 放在 namingPrefs 里，跟着本机走、登出不丢。
      */
     private val _bleIconVisible = mutableStateOf(namingPrefs.getBoolean("ble_key_icon_visible", true))
     val bleIconVisible: State<Boolean> get() = _bleIconVisible
@@ -1696,14 +1698,32 @@ class AppRuntime(context: Context) {
         }
     }
 
-    /** 充电枪是否连接（枪插着但没在充也算已连接）。 */
+    /**
+     * 充电枪是否连接（枪插着但没在充也算已连接）。
+     *
+     * 优先用专用的枪状态信号；车型不上报这几路时，退到
+     * [ChargeStatus.gunConnected] 的「交直流输入 + chargeState」口径 ——
+     * 以前这里直接给 null，于是充电中心只能自己拿 `chargeState != 0` 兜底，
+     * 把「预约了充电但还没插枪（state=4）」也算成插枪，冒出一排点了没用的按钮。
+     */
     private fun parseChargeCableConnected(st: JSONObject): Boolean? {
         val raw = pick(st, "chargeGunStatus", "gunStatus", "chargeCableStatus", "chargeConnectorStatus")
-        return when (raw?.toString()?.trim()?.lowercase()) {
+        val named = when (raw?.toString()?.trim()?.lowercase()) {
             "1", "2", "true", "connected" -> true
             "0", "false", "disconnected" -> false
             else -> null
         }
+        if (named != null) return named
+        val state = ChargeStatus.state(st)
+        // 三路信号一个都没有：结论是「不知道」，别硬猜成未插枪
+        if (state == null && st.opt("acInputSlowCharge") == null && st.opt("dcInputFastCharge") == null) {
+            return null
+        }
+        return ChargeStatus.gunConnected(
+            acInputSlowCharge = st.opt("acInputSlowCharge"),
+            dcInputFastCharge = st.opt("dcInputFastCharge"),
+            state = state,
+        )
     }
 
     /** 座椅/方向盘等档位：依次尝试字段名与信号号，取 0-3。 */

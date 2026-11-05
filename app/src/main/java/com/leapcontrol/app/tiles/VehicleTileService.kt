@@ -12,7 +12,9 @@ import android.widget.Toast
 import com.leapcontrol.app.ConfirmActions
 import com.leapcontrol.app.ConfirmGate
 import com.leapcontrol.app.DoubleConfirmRules
+import com.leapcontrol.app.MainActivity
 import com.leapcontrol.app.SessionStore
+import com.leapcontrol.app.ui.AppNavRequest
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
 import com.leapcontrol.app.ui.StatusSnapshot
@@ -97,8 +99,8 @@ abstract class VehicleTileService : TileService() {
         }
         if (store.loadOpPassword().isNullOrBlank()) {
             render("未设置密码", active = false)
-            toast("请先在「我的」里设置控车密码")
-            openApp()
+            toast("还没设置控车密码，正在打开零控")
+            openApp(AppNavRequest.OP_PASSWORD)
             return
         }
 
@@ -240,10 +242,15 @@ abstract class VehicleTileService : TileService() {
     }
 
     @SuppressLint("StartActivityAndCollapseDeprecated")
-    private fun openApp() {
+    private fun openApp(nav: String? = null) {
         runCatching {
             val intent = packageManager.getLaunchIntentForPackage(packageName)
                 ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) ?: return
+            if (nav != null) {
+                // 直达某个二级页：复用已有实例，别叠第二个 Activity
+                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                intent.putExtra(MainActivity.EXTRA_NAV, nav)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 val pending = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
                 startActivityAndCollapse(pending)

@@ -97,25 +97,59 @@ object ChargeStatus {
     fun type(values: Map<String, Any?>): String? = type(values["dcInputFastCharge"])
 
     /**
-     * 判断当前是否已插上充电枪（包括交流慢充枪、直流快充枪、或处于充电工况中）。
+     * 判断当前是否已插上充电枪。
      *
-     * `1` 充电中 / `2` 充满 / `4` 预约等待 / `5` 直流充电中 / `6` 暂停 都算插着枪
-     * （与上游一致）；只有 `0` 未插枪和 `3` 故障不算 —— 否则车端一进入预约等待、
-     * 或手动停充后停在 `6`，整排「解锁充电枪 / 开始充电」按钮就会消失。
+     * 最硬的证据是交流 / 直流输入信号（`acInputSlowCharge` / `dcInputFastCharge`）：
+     * 任一为真就是插着枪。两路都没有信号时只能靠 `chargeState` 猜，这时按宽松口径
+     * 认 `1` 充电中 / `2` 充满 / `4` 预约等待 / `5` 直流充电中 / `6` 暂停 ——
+     * 否则车端一进预约等待、或手动停充后停在 `6`，整排「解锁充电枪 / 开始充电」会消失。
+     *
+     * **但车端明确报了「两路都没插」（ac、dc 都是 0）时要收紧**（上游 4.5.12 的修法）：
+     * 这时只剩 `1` / `2` / `6` 三种「插着枪才可能出现」的状态可信，
+     * `4` 预约等待不再当作插枪证据 —— 预约了充电但人还没插枪的车，
+     * 以前会凭 `chargeState=4` 在充电中心冒出一排按钮，点了必然空转。
      */
+    fun gunConnected(acInputSlowCharge: Any?, dcInputFastCharge: Any?, state: Int?): Boolean {
+        val ac = boolean(acInputSlowCharge)
+        val dc = boolean(dcInputFastCharge)
+        if (ac == true || dc == true) return true
+        // 明确「两路都没插」：只认插着枪才可能出现的状态
+        if (ac == false && dc == false) return state != null && state in GUN_PLUGGED_STATES
+        // 信号缺失（车型不上报）：退回宽松口径
+        return state != null && state in GUN_CONNECTED_STATES
+    }
+
     fun isGunConnected(status: JSONObject?): Boolean {
         if (status == null) return false
-        val ac = boolean(status.opt("acInputSlowCharge")) == true
-        val dc = boolean(status.opt("dcInputFastCharge")) == true
-        return ac || dc || state(status)?.let { it in GUN_CONNECTED_STATES } == true
+        return gunConnected(
+            acInputSlowCharge = status.opt("acInputSlowCharge"),
+            dcInputFastCharge = status.opt("dcInputFastCharge"),
+            state = state(status),
+        )
     }
 
     fun isGunConnected(values: Map<String, Any?>?): Boolean {
         if (values == null) return false
-        val ac = boolean(values["acInputSlowCharge"]) == true
-        val dc = boolean(values["dcInputFastCharge"]) == true
-        return ac || dc || state(values)?.let { it in GUN_CONNECTED_STATES } == true
+        return gunConnected(
+            acInputSlowCharge = values["acInputSlowCharge"],
+            dcInputFastCharge = values["dcInputFastCharge"],
+            state = state(values),
+        )
     }
+
+    /**
+     * 电池是否真的到顶。
+     *
+     * `chargeState=2` 只代表「这次充电结束了」，不代表 100%：开了健康充电
+     * （充电上限 90%）的车充到 90% 就停在 `2`，被拔枪 / 手动停充也会停在 `2`。
+     * 文案只在电量确实到 100% 时才敢写「已充满」，其余一律按「充电结束」说。
+     */
+    fun fullConfirmed(state: Int?, soc: Int?): Boolean = state == FULL_STATE && soc != null && soc >= 100
+
+    private const val FULL_STATE = 2
+
+    /** 车端明确未插枪时，仍然可信的「插着枪才会出现」状态。 */
+    private val GUN_PLUGGED_STATES = setOf(1, 2, 6)
 
     private val GUN_CONNECTED_STATES = setOf(1, 2, 4, 5, 6)
 

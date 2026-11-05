@@ -142,9 +142,12 @@ fun JournalCostScreen(runtime: AppRuntime, onBack: () -> Unit) {
                 )
                 Spacer(Modifier.height(14.dp))
                 Row(Modifier.fillMaxWidth()) {
+                    // 日均跟着区间走：本周 / 本月 / 今年只除「已经过去的天数」，
+                    // 用提车以来的总天数去除本月支出会算出 0.20 这种看着像没花钱的数
+                    val avg = summary.averageOf(range)
                     JournalStat(
-                        value = "¥${CostStats.moneyFine(summary.perDay)}",
-                        label = if (summary.daysFromDelivery) "日均（${summary.days} 天）" else "日均（记账 ${summary.days} 天）",
+                        value = "¥${CostStats.moneyFine(avg.value)}",
+                        label = avg.label,
                         modifier = Modifier.weight(1f),
                     )
                     JournalStat(

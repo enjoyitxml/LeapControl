@@ -45,6 +45,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +74,7 @@ import com.leapcontrol.app.QuickSwitchMode
 import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.R
 import com.leapcontrol.app.tiles.QuickTiles
+import com.leapcontrol.app.widget.VehicleWidget
 import com.leapcontrol.app.journal.BaiduAsr
 import kotlinx.coroutines.launch
 
@@ -91,6 +93,10 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     runtime: AppRuntime,
     onBack: () -> Unit,
+    /** 进来就弹出控车密码录入框（桌面小组件发现没设密码时把用户送到这里）。 */
+    startWithPin: Boolean = false,
+    /** 已经弹过了，让调用方把一次性标记清掉，避免退出再进又弹一次。 */
+    onPinDialogShown: () -> Unit = {},
 ) {
     val C = LocalAppColors.current
     val scope = rememberCoroutineScope()
@@ -98,6 +104,13 @@ fun SettingsScreen(
     var showRename by remember { mutableStateOf(false) }
     var showPin by remember { mutableStateOf(false) }
     var showAmapKey by remember { mutableStateOf(false) }
+    // 由外部请求打开密码框：只在进来那一刻处理一次
+    LaunchedEffect(startWithPin) {
+        if (startWithPin) {
+            showPin = true
+            onPinDialogShown()
+        }
+    }
     // 「快捷控制再点一次」子页：勾选哪些动作要确认（桌面小组件 / 控制中心磁贴）
     var showConfirmActions by remember { mutableStateOf(false) }
     var confirmSummary by remember { mutableStateOf(ConfirmActions.summary(context)) }
@@ -143,6 +156,9 @@ fun SettingsScreen(
     val journalOn by runtime.journalEnabled
     // 动力类型：null = 自动推断（按车型名 + 燃油信号），否则为用户手动指定
     val powerOverride by runtime.powerTypeOverride
+    // 「自动识别」那行文案要跟着车况变，所以必须 collectAsState；
+    // 直接读 statusFlow.value 在组合里不会触发重组（Lint: StateFlowValueCalledInComposition）
+    val liveStatus by runtime.statusFlow.collectAsState()
     // 驻车拍照方案：手机拍照（默认）/ 车端照片（部分车型）
     val photoSource by runtime.parkingPhotoSource.collectAsState()
     // 排查「滑动卡不卡」用的：能区分「掉帧」和「屏幕本来就只有 60Hz」两件事
@@ -183,7 +199,7 @@ fun SettingsScreen(
                 desc = when (powerOverride) {
                     SessionStore.VehiclePowerType.PURE_ELECTRIC -> "已手动设为纯电（只显示电量）"
                     SessionStore.VehiclePowerType.RANGE_EXTENDER -> "已手动设为增程（电量 + 燃油）"
-                    null -> "自动识别：" + when (runtime.statusFlow.value?.isRangeExtender) {
+                    null -> "自动识别：" + when (liveStatus?.isRangeExtender) {
                         true -> "增程"
                         false -> "纯电"
                         null -> "待读取车况"
@@ -871,6 +887,9 @@ fun SettingsScreen(
                             val ok = runCatching { runtime.verifyAndSavePin(pin) }.getOrDefault(false)
                             message = if (ok) "控车密码已保存" else "密码校验失败"
                             showPin = false
+                            // 桌面小组件在「没设密码」时把五颗按键换成了「去设置」，
+                            // 设完之后必须马上重画一次，否则回到桌面点按键还是只会打开 App
+                            if (ok) runCatching { VehicleWidget.render(context) }
                         }
                     },
                 ) {

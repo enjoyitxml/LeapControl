@@ -10,8 +10,11 @@ import android.net.Uri
 import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
+import com.leapcontrol.app.ChargeStatus
+import com.leapcontrol.app.MainActivity
 import com.leapcontrol.app.R
 import com.leapcontrol.app.tiles.QuickTiles
+import com.leapcontrol.app.ui.AppNavRequest
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
 import kotlinx.coroutines.CoroutineScope
@@ -83,6 +86,9 @@ object VehicleWidget {
     private const val RC_AC = 93
     private const val RC_TRUNK = 94
     private const val RC_HORN = 95
+
+    /** 「打开 App 并直达某个页面」用独立 requestCode，别和上面那颗普通打开混成同一个。 */
+    private const val RC_OPEN_APP_NAV = 96
 
     // 浅色卡上的字色
     private const val INK_LIGHT = 0xFF12141A.toInt()
@@ -216,6 +222,9 @@ object VehicleWidget {
                             title = title,
                             car = car,
                             heightDp = heightDp,
+                            // 增量只改文案，但「未设控车密码」这行字必须在，
+                            // 否则每次刷新都会把它盖回「12:30 更新」
+                            pinReady = r.hasPin,
                         ),
                     )
                 } else {
@@ -231,6 +240,9 @@ object VehicleWidget {
                             car = car,
                             widthDp = widthDp,
                             heightDp = heightDp,
+                            // 没设控车密码 → 五颗按键改成「打开 App 去设置」，
+                            // 否则用户点了之后只看到卡片闪一下，什么也没发生
+                            pinReady = r.hasPin,
                         ),
                     )
                     lastFullNight = night
@@ -390,6 +402,8 @@ object VehicleWidget {
         car: Bitmap? = null,
         widthDp: Int = 320,
         heightDp: Int = 150,
+        /** 控车密码是否已设置；没设置时五个按键改成「打开 App 去设置密码」。 */
+        pinReady: Boolean = true,
     ): RemoteViews {
         val style = WidgetStyle.style(context)
         val night = WidgetStyle.isNight(context)
@@ -426,16 +440,21 @@ object VehicleWidget {
         // 五个格子的图标不按同一套留白：空调那个压缩机符号笔画密，撑满会比邻居看着大一圈，
         // 多留一档边收小；鸣笛的喇叭是横长形，少留一点边才不至于显小，另外整体顶高一点点。
         val cellBg = cellBackgroundRes(context)
+        // 没设控车密码时，这五颗按键点下去注定什么都不发生（指令层会直接抛 NeedPin）。
+        // 与其弹一句很可能被 ROM 吞掉的 toast，不如让按键本身变成入口：
+        // 点任意一颗都打开 App 并直接弹密码录入框 —— Activity 型的 PendingIntent
+        // 由桌面发起，不受「后台启动 Activity」限制，比广播里 startActivity 可靠得多。
+        val pinIntent = if (pinReady) null else openAppIntent(context, AppNavRequest.OP_PASSWORD)
         bindCellShell(views, R.id.wg_cell_unlock, R.id.wg_icon_unlock, R.drawable.ic_qc_unlock,
-            broadcast(context, ACTION_UNLOCK, RC_UNLOCK), cellBg, BASE_ICON_PAD, density)
+            pinIntent ?: broadcast(context, ACTION_UNLOCK, RC_UNLOCK), cellBg, BASE_ICON_PAD, density)
         bindCellShell(views, R.id.wg_cell_lock, R.id.wg_icon_lock, R.drawable.ic_qc_lock,
-            broadcast(context, ACTION_LOCK, RC_LOCK), cellBg, BASE_ICON_PAD, density)
+            pinIntent ?: broadcast(context, ACTION_LOCK, RC_LOCK), cellBg, BASE_ICON_PAD, density)
         bindCellShell(views, R.id.wg_cell_ac, R.id.wg_icon_ac, R.drawable.ic_qc_ac,
-            broadcast(context, ACTION_TOGGLE_AC, RC_AC), cellBg, BASE_ICON_PAD + AC_ICON_SHRINK, density)
+            pinIntent ?: broadcast(context, ACTION_TOGGLE_AC, RC_AC), cellBg, BASE_ICON_PAD + AC_ICON_SHRINK, density)
         bindCellShell(views, R.id.wg_cell_trunk, R.id.wg_icon_trunk, R.drawable.ic_qc_trunk,
-            broadcast(context, ACTION_TOGGLE_TRUNK, RC_TRUNK), cellBg, BASE_ICON_PAD, density)
+            pinIntent ?: broadcast(context, ACTION_TOGGLE_TRUNK, RC_TRUNK), cellBg, BASE_ICON_PAD, density)
         bindCellShell(views, R.id.wg_cell_horn, R.id.wg_icon_horn, R.drawable.ic_qc_horn,
-            broadcast(context, ACTION_HORN, RC_HORN), cellBg,
+            pinIntent ?: broadcast(context, ACTION_HORN, RC_HORN), cellBg,
             (BASE_ICON_PAD - HORN_ICON_GROW).coerceAtLeast(0f), density,
             liftDp = HORN_ICON_LIFT)
 
@@ -446,7 +465,7 @@ object VehicleWidget {
         }
 
         // ---- 所有会变的内容 ----
-        bindLive(views, context, p, status, updatedAt, busy, signedIn, title, car, heightDp)
+        bindLive(views, context, p, status, updatedAt, busy, signedIn, title, car, heightDp, pinReady)
 
         // 字号跟尺寸走，是结构属性：只在全量里设
         applyTextScale(views = views, scale = textScale(widthDp, heightDp))
@@ -468,11 +487,15 @@ object VehicleWidget {
         title: String = "我的零跑",
         car: Bitmap? = null,
         heightDp: Int = 150,
+        pinReady: Boolean = true,
     ): RemoteViews {
         val glass = WidgetStyle.style(context) == WidgetStyle.STYLE_D
         val layout = if (glass) R.layout.widget_d else R.layout.widget_a
         val views = RemoteViews(context.packageName, layout)
-        bindLive(views, context, paletteFor(context), status, updatedAt, busy, signedIn, title, car, heightDp)
+        bindLive(
+            views, context, paletteFor(context), status, updatedAt, busy, signedIn,
+            title, car, heightDp, pinReady,
+        )
         return views
     }
 
@@ -493,6 +516,7 @@ object VehicleWidget {
         title: String,
         car: Bitmap?,
         heightDp: Int,
+        pinReady: Boolean = true,
     ) {
         // ---- 车标 + 车名 ----
         views.setTextViewText(R.id.wg_title, title.ifBlank { "我的零跑" })
@@ -515,11 +539,28 @@ object VehicleWidget {
                 stateText = "点此登录"
                 stateColor = p.sub
             }
+            // 没设控车密码：五颗按键点了也不会下发（指令层直接抛 NeedPin），
+            // 提前在卡片上说清楚，用户就不用靠「点了没反应」去猜。
+            // 文案不写「点按去设置」：右上角这块要与车名抢宽度，短一句才不会被省略号切掉
+            !pinReady -> {
+                stateText = "未设控车密码"
+                stateColor = p.warn
+            }
             status == null -> {
                 stateText = "正在同步…"
                 stateColor = p.sub
             }
-            status.charging == true -> {
+            // 充电状态按 chargeState 判，不能只看 status.charging：
+            // 那个字段把「充电结束（2）」也算成 true，充满拔枪前卡片永远写「充电中」。
+            status.chargeState == 1 -> {
+                stateText = "充电中" + clock?.let { " · $it" }.orEmpty()
+                stateColor = p.active
+            }
+            status.chargeState == 2 -> {
+                stateText = if (ChargeStatus.fullConfirmed(status.chargeState, status.soc)) "已充满" else "充电完成"
+                stateColor = p.active
+            }
+            status.chargeState == null && status.charging == true -> {
                 stateText = "充电中" + clock?.let { " · $it" }.orEmpty()
                 stateColor = p.active
             }
@@ -705,12 +746,20 @@ object VehicleWidget {
         return PendingIntent.getBroadcast(context.applicationContext, requestCode, intent, flags)
     }
 
-    private fun openAppIntent(context: Context): PendingIntent? {
+    private fun openAppIntent(context: Context, nav: String? = null): PendingIntent? {
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
             ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) ?: return null
+        if (nav != null) {
+            // 复用已经在跑的那个实例，而不是再叠一层 Activity
+            launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            launch.putExtra(MainActivity.EXTRA_NAV, nav)
+        }
         return PendingIntent.getActivity(
             context.applicationContext,
-            RC_OPEN_APP,
+            // 带目标的版本必须换一个 requestCode：FLAG_UPDATE_CURRENT 会把
+            // 「打开 App」和「打开 App 并跳到密码页」当成同一个 PendingIntent 互相覆盖，
+            // 结果就是点按键只打开了首页
+            if (nav != null) RC_OPEN_APP_NAV else RC_OPEN_APP,
             launch,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

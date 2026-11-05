@@ -12,7 +12,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -93,12 +92,13 @@ fun PlaybookCoachMark(
     // 本层在 root 里的原点：首帧还没测出来就什么都不画，避免先闪一下错位的光环
     var origin by remember { mutableStateOf<Offset?>(null) }
 
-    BoxWithConstraints(
+    // 只需要一个满屏的定位容器，不读约束 —— 用 Box 就够（BoxWithConstraints 会多一层 subcompose）
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .onGloballyPositioned { origin = it.boundsInRoot().topLeft },
     ) {
-        val o = origin ?: return@BoxWithConstraints
+        val o = origin ?: return@Box
 
         val cx = anchor.center.x - o.x
         val cy = anchor.center.y - o.y

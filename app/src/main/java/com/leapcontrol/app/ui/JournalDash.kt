@@ -442,8 +442,13 @@ private fun DashCost(summary: CostSummary, onClick: () -> Unit) {
             }
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // 这张卡的标题是「本月用车」，日均只能按**本月已经过去的天数**摊。
+                // 用提车以来的 1022 天去除本月支出，11 月 5 号那天 200 元会被摊成
+                // 0.20 元/天，看着像这个月压根没花钱
+                val monthAvg = summary.averageOf(CostRange.MONTH)
                 Text(
-                    "日均 ¥${CostStats.moneyFine(summary.perDay)} · 共 ${summary.entryCount} 笔",
+                    // 「本月 5 天」把分母摊开写：不然「日均 40」会让人以为是按提车天数算的
+                    "日均 ¥${CostStats.moneyFine(monthAvg.value)} · 本月 ${monthAvg.divisor} 天",
                     color = C.textSecondary,
                     fontSize = 10.5.sp,
                     maxLines = 1,

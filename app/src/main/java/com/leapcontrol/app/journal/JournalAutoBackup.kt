@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.annotation.RequiresApi
 import java.io.File
 import java.io.IOException
 import java.time.Instant
@@ -108,6 +109,8 @@ object JournalAutoBackup {
         }
     }
 
+    /** 只有 [writeInternal] 在 `SDK_INT >= Q` 时才会走到这里（`MediaStore.Downloads` 是 API 29 才有的集合）。 */
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun writeViaMediaStore(context: Context, name: String, bytes: ByteArray) {
         val resolver = context.contentResolver
         val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)

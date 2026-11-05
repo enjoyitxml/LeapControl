@@ -1,6 +1,7 @@
 package com.leapcontrol.app
 
 import android.app.Activity
+import android.os.Build
 import android.view.Display
 
 /**
@@ -37,6 +38,22 @@ object DisplayRefresh {
     }.getOrNull() ?: 60f
 
     /**
+     * 当前窗口所在的 Display。
+     *
+     * **不能直接读 `activity.display`**：那是 `Context.getDisplay()`，Android **API 30**
+     * 才加进公开接口，API 26~29 上调用会 `NoSuchMethodError` 直接闪退
+     * （1.0.17 在 Android 10 上启动即崩，就是 `onResume` 里这次调用）。
+     * 低版本退回 `WindowManager.defaultDisplay`：虽然已标废弃，但 API 1 起就有、行为一致。
+     */
+    private fun displayOf(activity: Activity): Display? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            activity.display
+        } else {
+            @Suppress("DEPRECATION")
+            activity.windowManager?.defaultDisplay
+        }
+
+    /**
      * 声明「本窗口希望按最高刷新率出帧」。
      *
      * 为什么需要它：系统的动态刷新率会盯着应用出帧的节奏判断该给多少 Hz。
@@ -49,7 +66,7 @@ object DisplayRefresh {
      * 无意义的重复设置反而可能引入抖动。
      */
     fun applyMaxFrameRate(activity: Activity) {
-        val peak = peakOf(activity.display)
+        val peak = peakOf(displayOf(activity))
         // 60Hz 的屏没什么可声明的，跳过省一次窗口属性更新
         if (peak <= 60f) return
         val window = activity.window ?: return

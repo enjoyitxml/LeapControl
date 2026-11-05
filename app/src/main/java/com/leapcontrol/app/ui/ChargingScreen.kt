@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.ChargeSchedule
+import com.leapcontrol.app.ChargeStatus
 import com.leapcontrol.app.ChargeCenterDraft
 import com.leapcontrol.app.ui.theme.statusGood
 import com.leapcontrol.app.ui.theme.statusGoodDark
@@ -95,18 +96,23 @@ fun ChargingScreen(
 
     val chargeState = status?.chargeState
     val charging = chargeState == 1 || (chargeState == null && status?.charging == true)
-    val charged = chargeState == 2
+    // 2 = 「这次充电结束」，不是「电池到顶」：健康充电上限 90% 停充、被拔枪、
+    // 手动停充都会停在 2。只有电量确实 100% 才写「已充满」，其余按「已停止」说，
+    // 免得 90% 的电量配一句「已充满」让用户以为车坏了（上游 4.4.2 同样修法）。
+    val charged = ChargeStatus.fullConfirmed(chargeState, soc)
+    val chargeEnded = chargeState == 2 && !charged
     // 插着枪才显示「解锁充电枪 / 开始充电」——没插枪时这两颗按钮点了也是空转。
-    // 车况的 chargeState 只有 0（未插枪）才算没插；预约等待 4 / 暂停 6 都还插着枪。
-    // 另外交流/直流输入信号也是「插着枪」的直接证据，免得某些车型 chargeState 给 0 时按钮整排消失。
-    val gunConnected = status?.chargeCableConnected == true || when {
-        chargeState != null -> chargeState != 0
-        else -> false
-    }
+    // 口径统一在 [ChargeStatus.gunConnected]：车端明确没插时，预约等待（state=4）
+    // 不再算插枪；信号齐全的交直流输入才是硬证据。
+    val gunConnected = status?.chargeCableConnected == true
 
     // 功率 / 剩余时间：充电中才有意义，其余状态明确写「未充电」「已充满」，
     // 而不是留一个「--」让人以为信号丢了
-    val idleText = if (charged) "已充满" else "未充电"
+    val idleText = when {
+        charged -> "已充满"
+        chargeEnded -> "已停止"
+        else -> "未充电"
+    }
     val powerText = if (charging) status?.chargingPower ?: "充电中" else idleText
     val remainText = if (charging) status?.chargeTimeLeft ?: "--" else idleText
     val tempText = status?.batteryTemp ?: "--"

@@ -361,6 +361,23 @@ fun BluetoothKeyScreen(
             )
         }
 
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 兼容性说明 ----
+        // 放在页尾而不是页首：进来第一眼该看到的是「现在连没连上」，不是免责声明。
+        // 但这条必须常驻 —— 从「设置 → 蓝牙钥匙」直接进来的人，看不到个性化里那次确认。
+        SettingsCard("兼容性说明") {
+            Text(
+                text = "并非所有零跑车型都带蓝牙钥匙所需的硬件，目前这套实现适配程度一般，" +
+                    "不同车型表现可能不一样。建议优先使用官方 App 的蓝牙钥匙，" +
+                    "本入口只作为补充；使用前请自行测试靠近解锁与离车落锁是否正常。\n" +
+                    "遇到问题可在「我的 → 意见反馈」提交，我会尽量修。",
+                color = C.textSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        }
+
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.navigationBarsPadding())
     }

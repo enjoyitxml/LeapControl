@@ -10,8 +10,10 @@ import com.leapcontrol.app.ConfirmAction
 import com.leapcontrol.app.ConfirmActions
 import com.leapcontrol.app.ConfirmGate
 import com.leapcontrol.app.DoubleConfirmRules
+import com.leapcontrol.app.MainActivity
 import com.leapcontrol.app.tiles.QuickTiles
 import com.leapcontrol.app.tiles.TileSpec
+import com.leapcontrol.app.ui.AppNavRequest
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.CarStatus
 import kotlinx.coroutines.CoroutineScope
@@ -61,6 +63,13 @@ class VehicleWidgetProvider : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         val action = intent.action ?: return
+        // 覆盖安装之后：桌面上已有的卡片还是旧 APK 里的 RemoteViews，
+        // 系统不会自己按新资源重画。这里立刻用本地缓存的车况重推一帧，
+        // 否则这版改过的版式 / 图标要等用户把卡片删掉重加才出现（上游 4.4.11 同样修法）。
+        if (action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            runCatching { VehicleWidget.render(context) }
+            return
+        }
         if (action !in VehicleWidget.ACTIONS) return
         runCatching { handleAction(context, action) }
     }
@@ -85,7 +94,11 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         }
         if (runtime.sessionStore.loadOpPassword().isNullOrBlank()) {
             pending.finish()
-            toast(appContext, "请先在「我的」里设置 4 位控车密码")
+            // 光弹一句 toast 不够：桌面广播里弹的 toast 在不少 ROM 上会被直接吞掉，
+            // 用户看到的就是「点了按钮毫无反应」。这里直接把 App 拉到前台并落到密码设置页，
+            // 让他看见一个确定的结果。
+            toast(appContext, "还没设置 4 位控车密码，正在打开零控")
+            openAppForPin(appContext)
             return
         }
 
@@ -250,6 +263,24 @@ class VehicleWidgetProvider : AppWidgetProvider() {
 
     private fun toast(context: Context, text: String) {
         runCatching { Toast.makeText(context, text, Toast.LENGTH_SHORT).show() }
+    }
+
+    /**
+     * 把 App 拉起来并直达「设置 → 控车密码」。
+     *
+     * 广播接收器里 `startActivity` 在 Android 10+ 会被后台启动限制拦下，
+     * 所以这只是兜底：卡片正常刷新过之后，五颗按键本身就换成了 Activity 型 PendingIntent
+     * （由桌面发起，不受这条限制），不会再走到这里。
+     */
+    private fun openAppForPin(context: Context) {
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
+        launch.addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP,
+        )
+        launch.putExtra(MainActivity.EXTRA_NAV, AppNavRequest.OP_PASSWORD)
+        runCatching { context.startActivity(launch) }
     }
 
     private companion object {

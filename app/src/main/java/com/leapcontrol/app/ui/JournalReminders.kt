@@ -286,7 +286,7 @@ private fun ReminderBody(
 
     JournalCard(modifier = modifier, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CategoryIcon(category = category, size = 34.dp)
+            ReminderBadge(category = category, size = 34.dp)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -329,7 +329,7 @@ private fun ReminderEmpty(
 
     JournalCard(modifier = modifier, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CategoryIcon(category = category, size = 40.dp)
+            ReminderBadge(category = category, size = 40.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, color = C.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)

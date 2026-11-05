@@ -137,6 +137,11 @@
             android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <!--
+                  升级 APK 后桌面上已有的卡片仍是旧包里那套 RemoteViews，
+                  不重新推一次的话，这一版改过的版式 / 图标要等用户删掉重加才看得到。
+                -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"

@@ -6,6 +6,7 @@ import com.leapcontrol.app.journal.CityCheckin
 import com.leapcontrol.app.journal.CityProjection
 import com.leapcontrol.app.journal.CostCategory
 import com.leapcontrol.app.journal.CostEntry
+import com.leapcontrol.app.journal.CostRange
 import com.leapcontrol.app.journal.CostStats
 import com.leapcontrol.app.journal.JournalData
 import com.leapcontrol.app.journal.JournalDates
@@ -146,6 +147,57 @@ class JournalDataTest {
         assertEquals(CostStats.MONTHS, summary.months.size)
         assertEquals("2026-10", summary.months.last().key)
         assertEquals("2026-05", summary.months.first().key)
+    }
+
+    @Test
+    fun `日均跟着区间换口径`() {
+        // 提车 1000 天、只在今天花了 200：本月看日均不能按 1000 天摊
+        val data = JournalData(
+            goal = CarGoal(10, 100_000.0, JournalDates.startOfDay(today.minusDays(999))),
+            costs = listOf(entry(today, CostCategory.PARKING, 200.0)),
+        )
+        val summary = CostStats.of(data, data.goal, today)
+
+        val month = summary.averageOf(CostRange.MONTH)
+        assertEquals(28, month.divisor) // 10 月 28 号，本月已过 28 天
+        assertEquals(200.0 / 28, month.value, 0.001)
+        assertEquals("本月日均（28 天）", month.label)
+
+        // 本周从周一（10/26）数到今天 = 3 天
+        assertEquals(3, summary.averageOf(CostRange.WEEK).divisor)
+        // 今年到今天是第 301 天
+        assertEquals(301, summary.averageOf(CostRange.YEAR).divisor)
+        // 全部仍然是提车天数
+        assertEquals(1000, summary.averageOf(CostRange.ALL).divisor)
+        assertEquals(0.2, summary.averageOf(CostRange.ALL).value, 0.001)
+
+        // 今日分摊到一天等于支出本身，没有信息量 → 改看笔均
+        val day = summary.averageOf(CostRange.DAY)
+        assertEquals(1, day.divisor)
+        assertEquals(200.0, day.value, 0.001)
+        assertEquals("今日笔均", day.label)
+    }
+
+    @Test
+    fun `月初与周一当天分母不会退化成零`() {
+        // 2026-06-01 既是月初又是周一，两个分母都该是 1
+        val firstDay = LocalDate.of(2026, 6, 1)
+        val data = JournalData(
+            costs = listOf(entry(firstDay, CostCategory.PARKING, 50.0)),
+        )
+        val summary = CostStats.of(data, null, firstDay)
+        assertEquals(1, summary.averageOf(CostRange.MONTH).divisor)
+        assertEquals(50.0, summary.averageOf(CostRange.MONTH).value, 0.001)
+        assertEquals(1, summary.averageOf(CostRange.WEEK).divisor)
+        assertEquals("本周日均（1 天）", summary.averageOf(CostRange.WEEK).label)
+    }
+
+    @Test
+    fun `今日没记账时笔均不会除零`() {
+        val data = JournalData(costs = listOf(entry(today.minusDays(2), CostCategory.PARKING, 10.0)))
+        val summary = CostStats.of(data, null, today)
+        assertEquals(0, summary.averageOf(CostRange.DAY).divisor)
+        assertEquals(0.0, summary.averageOf(CostRange.DAY).value, 0.001)
     }
 
     @Test

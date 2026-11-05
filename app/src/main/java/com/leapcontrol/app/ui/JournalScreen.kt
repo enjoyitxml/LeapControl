@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.OwnershipStats
+import com.leapcontrol.app.journal.CostRange
 import com.leapcontrol.app.journal.CostStats
 import com.leapcontrol.app.journal.CostSummary
 import com.leapcontrol.app.journal.GoalProgress
@@ -547,9 +548,14 @@ private fun CostOverviewCard(
         Spacer(Modifier.height(4.dp))
         // 金额单独一行，说明另起一行：和 26sp 的大数字并排时这段小字只剩 145dp，
         // 花费稍大一点就被省略号截掉；拆行后整行 284dp 随便放。
+        // 日均同样按本月已过的天数摊 —— 这里写的是「本月用车 ¥200」，日均却按
+        // 提车 1022 天算成 0.20 的话，两个数在同一张卡里互相打脸
         Text(
             if (summary.empty) "还没有记过一笔"
-            else "日均 ¥${CostStats.moneyFine(summary.perDay)} · 近半年 ¥${CostStats.money(summary.months.sumOf { it.amount })}",
+            else {
+                val monthAvg = summary.averageOf(CostRange.MONTH)
+                "日均 ¥${CostStats.moneyFine(monthAvg.value)} · 近半年 ¥${CostStats.money(summary.months.sumOf { it.amount })}"
+            },
             color = C.textSecondary,
             fontSize = 11.sp,
             maxLines = 1,
