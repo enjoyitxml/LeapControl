@@ -66,6 +66,53 @@ class ControlFailureTest {
     }
 
     @Test
+    fun `云端 40 无此权限要说清换账号而不是稍后重试`() {
+        // 2026-11-06 真机反馈：点哨兵弹出「控车失败(40): 无此权限」
+        val hint = ControlFailure.ofMessage("控车失败(40): 无此权限")
+        assertEquals("无权限", hint.short)
+        assertFalse("不能让用户去重试一条必失败的指令", hint.message.contains("稍后重试"))
+        assertTrue(hint.message.contains("车主账号"))
+        assertTrue(hint.message.contains("登录"))
+    }
+
+    @Test
+    fun `msg 为空时靠业务码 40 也能认出权限问题`() {
+        assertEquals(
+            ControlFailure.HINT_SENTRY_PERMISSION.message,
+            ControlFailure.ofMessage("控车失败(40):").message,
+        )
+    }
+
+    @Test
+    fun `业务码 4012 不会被 40 的正则吃掉`() {
+        assertFalse(ControlFailure.isPermissionDenied("控车失败(4012): 车辆未唤醒"))
+        assertTrue(ControlFailure.isPermissionDenied("控车失败(40): 无此权限"))
+        assertTrue(ControlFailure.isPermissionDenied("控车失败(40):"))
+    }
+
+    @Test
+    fun `前置拦截的那句话也要翻成同一条提示`() {
+        val hint = ControlFailure.ofMessage(ControlFailure.HINT_SENTRY_PERMISSION.message)
+        assertEquals("无权限", hint.short)
+        assertTrue(hint.message.contains("车主账号"))
+    }
+
+    @Test
+    fun `普通失败不会被误判成权限问题`() {
+        listOf(
+            "控车失败(3021): 车辆不在线",
+            "控车失败(4012): 车辆未唤醒",
+            "当前账号为授权子账号，车机 OTA 更新需车主主账号操作",
+        ).forEach { raw ->
+            assertNotEquals(
+                "误判：$raw",
+                "无权限",
+                ControlFailure.ofMessage(raw).short,
+            )
+        }
+    }
+
+    @Test
     fun `网络不通给网络提示`() {
         val hint = ControlFailure.ofMessage("Failed to connect to /10.0.0.2:443")
         assertEquals(ControlFix.NONE, hint.action)

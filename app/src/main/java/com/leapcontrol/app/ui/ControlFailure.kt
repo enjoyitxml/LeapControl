@@ -85,6 +85,20 @@ object ControlFailure {
         short = "执行失败",
     )
 
+    /**
+     * 云端拒绝执行（result=40 / msg「无此权限」）。
+     *
+     * 2026-11-06 用户反馈：点哨兵弹出「控车失败(40): 无此权限」。这不是登录掉了，
+     * 也不是网络问题，是零跑云端对**授权/子账号**开启哨兵的权限管控；重试一百次都一样。
+     * 所以不能说「稍后重试」，得直说换车主账号、或先在官方 App / 车机上开通。
+     * 若用户本来就是车主，通常是这台车还没在车机上启用过哨兵（隐私授权），文案一并覆盖。
+     */
+    internal val HINT_SENTRY_PERMISSION = ControlHint(
+        message = "哨兵模式没有远程操作权限，请改用车主账号登录零控；" +
+            "若已是车主，请先在零跑 App 或车机上开启一次哨兵",
+        short = "无权限",
+    )
+
     // ---------------- 判定 ----------------
 
     fun of(e: Throwable?): ControlHint {
@@ -101,6 +115,9 @@ object ControlFailure {
 
         // 登录态排在最前：它的文案里也带「密码」「token」，别被后面的规则抢走
         if (isAuthFailure(lower)) return HINT_RELOGIN
+        // 云端权限拒绝排在 serverReason 之前：否则会被翻成「未完成：无此权限，稍后重试」，
+        // 用户既看不懂、又被指去重试一条永远不可能成功的指令
+        if (isPermissionDenied(lower)) return HINT_SENTRY_PERMISSION
         if (text.contains("控车密码") || text.contains("4 位")) return HINT_PIN
         if (text.contains("选择车辆") || text.contains("车辆 VIN")) return HINT_NO_VEHICLE
         if (lower.contains("不在线") || lower.contains("离线") || lower.contains("offline")) {
@@ -138,6 +155,26 @@ object ControlFailure {
 
     private fun isNetworkFailure(lowered: String): Boolean =
         NETWORK_WORDS.any { lowered.contains(it) }
+
+    /**
+     * 是不是「云端不给权限」。
+     *
+     * 只认明确说权限的句子 + 业务码 40；特意**不**放「子账号 / 授权账号」这种宽词，
+     * 免得把 OTA 的「授权子账号不能升级」也翻成哨兵提示。前置拦截抛的那句
+     * 由「没有远程操作权限」命中。
+     */
+    internal fun isPermissionDenied(lowered: String): Boolean =
+        PERMISSION_WORDS.any { lowered.contains(it) } || PERMISSION_CODE.containsMatchIn(lowered)
+
+    private val PERMISSION_WORDS = listOf(
+        "无此权限", "没有权限", "无权限", "权限不足", "权限不够",
+        "不支持开启哨兵", "不能远程开启哨兵", "没有远程操作权限",
+        "no permission", "permission denied", "not authorized", "forbidden",
+    )
+
+    /** `控车失败(40): 无此权限` 里那句 msg 万一为空，靠业务码也能认出来。 */
+    // 括号必须闭合：否则 `控车失败(4012): 车辆未唤醒` 的前两位会被当成 40 误判
+    private val PERMISSION_CODE = Regex("""控车失败\s*[（(]\s*40\s*[)）]""")
 
     private val AUTH_WORDS = listOf(
         "未登录",

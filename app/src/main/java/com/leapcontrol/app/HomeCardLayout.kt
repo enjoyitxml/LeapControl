@@ -35,6 +35,10 @@ enum class HomeCardId(val title: String, val subtitle: String) {
     // 没设置计划时它们只是一张「去设置」的引导，不该默认塞进每个人的首页。
     INSURANCE("保险续费", "到期倒计时与续保提醒"),
     MAINTENANCE("保养提醒", "还剩多少天 / 多少公里该保养"),
+
+    // 行程轨迹：本地稀疏采样的分段行程，点开是全部历史清单的二级页。
+    // 数据来源是车况刷新时顺手记的点（trip/），不依赖零记、不新增车况请求。
+    TRIP("行程轨迹", "最近一趟的起终点、里程与时长"),
 }
 
 /** 首页卡片顺序 / 显隐的纯逻辑（读写都走这里，便于单测）。 */
@@ -59,8 +63,11 @@ object HomeCardLayout {
      * 升版本号是为了让从没排过卡的老设备跟着新默认走（见 [PREVIOUS_DEFAULT] 的判定）。
      *
      * 版本 8 新增 [HomeCardId.CHARGE_CYCLE]（充电里程），默认位置在「周能耗分布」上方。
+     *
+     * 版本 9 新增 [HomeCardId.TRIP]（行程轨迹）：按用户要求排在「自上次充电行驶里程」
+     * 上方，都是停车后回头看的复盘数据；充电里程与周能耗分布仍相邻。
      */
-    const val VERSION = 8
+    const val VERSION = 9
 
     /**
      * 默认顺序，按「上车前 → 上车时 → 开车中 → 停车后」的使用节奏排：
@@ -69,16 +76,18 @@ object HomeCardLayout {
      *  2. **车辆位置与目的地**：找车 / 发目的地，和空调一样是「到车前」的动作，紧随其后；
      *  3. **胎压 · 行程**：上车扫一眼，安全类里最该看的一项；
      *  4. **车辆健康**：电池温度 / 电压 / 电流，与胎压同属「看一眼就放心」的监测卡，连在一起；
-     *  5. **充电里程**：上次充电后真实跑了多少，和下面的周能耗是同一类「回来复盘」的数据；
-     *  6. **周能耗分布**：停车后才看的分析信息，占比一眼就懂；
-     *  7. **近 6 周能耗**：同一组能耗数据的时间趋势，跟上一张连着读；
-     *  8. **相伴**：提车天数 / 累计里程，长期回顾，放最后不碍事。
+     *  5. **行程轨迹**：最近一趟的起终点与四项指标，点开看全部历史；按用户要求排在充电里程上方
+     *  6. **充电里程**：上次充电后真实跑了多少，和下面的周能耗是同一类「回来复盘」的数据；
+     *  7. **周能耗分布**：停车后才看的分析信息，占比一眼就懂；
+     *  8. **近 6 周能耗**：同一组能耗数据的时间趋势，跟上一张连着读；
+     *  9. **相伴**：提车天数 / 累计里程，长期回顾，放最后不碍事。
      */
     val DEFAULT: List<HomeCardId> = listOf(
         HomeCardId.AC,
         HomeCardId.LOCATION,
         HomeCardId.TIRE_TRIP,
         HomeCardId.HEALTH,
+        HomeCardId.TRIP,
         HomeCardId.CHARGE_CYCLE,
         HomeCardId.COMPOSITION,
         HomeCardId.RANK,
@@ -101,6 +110,7 @@ object HomeCardLayout {
         HomeCardId.LOCATION,
         HomeCardId.TIRE_TRIP,
         HomeCardId.HEALTH,
+        HomeCardId.CHARGE_CYCLE,
         HomeCardId.COMPOSITION,
         HomeCardId.RANK,
         HomeCardId.OWNERSHIP,
@@ -122,6 +132,7 @@ object HomeCardLayout {
         2 to listOf(HomeCardId.HEALTH),
         6 to listOf(HomeCardId.LOCATION),
         8 to listOf(HomeCardId.CHARGE_CYCLE),
+        9 to listOf(HomeCardId.TRIP),
     )
 
     /**

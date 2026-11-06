@@ -80,11 +80,8 @@ object MiniTileMap {
      * （右边 / 下边要减一个极小值，否则正好压在边界上会多取一列）。
      */
     fun tileRange(latitude: Double, longitude: Double, zoom: Int, sizePx: Int): TileRange {
-        val n = 1 shl zoom
-        val latRad = Math.toRadians(latitude.coerceIn(-85.0, 85.0))
         // 全局像素坐标：zoom 级世界图是 (n × 256) 见方
-        val fx = (longitude + 180.0) / 360.0 * n * TILE
-        val fy = (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n * TILE
+        val (fx, fy) = globalPixel(latitude, longitude, zoom)
         val left = fx - sizePx / 2.0
         val top = fy - sizePx / 2.0
         val right = left + sizePx
@@ -99,6 +96,20 @@ object MiniTileMap {
             originX = left,
             originY = top,
         )
+    }
+
+    /**
+     * Web Mercator 全局像素坐标（zoom 级世界图边长 = 2^zoom × [TILE]）。
+     *
+     * 纯计算，行程地图按包围盒取景时也要用同一套公式，所以拎出来共用，别各自抄一份。
+     * 车端坐标已经是 GCJ-02，高德瓦片也是 GCJ-02 切图 —— **绝不能套 ChinaCoordinate**。
+     */
+    fun globalPixel(latitude: Double, longitude: Double, zoom: Int): Pair<Double, Double> {
+        val n = 1 shl zoom
+        val latRad = Math.toRadians(latitude.coerceIn(-85.0, 85.0))
+        val x = (longitude + 180.0) / 360.0 * n * TILE
+        val y = (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n * TILE
+        return x to y
     }
 
     /**
@@ -145,15 +156,21 @@ object MiniTileMap {
         return out
     }
 
-    /** 取一块瓦片：内存缓存 → 网络。失败返回 null（不写缓存，下次还能重试）。 */
-    private fun load(col: Int, row: Int): Bitmap? {
-        val n = 1 shl ZOOM
+    private fun load(col: Int, row: Int): Bitmap? = tile(ZOOM, col, row)
+
+    /**
+     * 取一块瓦片：内存缓存 → 网络。失败返回 null（不写缓存，下次还能重试）。
+     * 行程地图要按包围盒换层级，所以 zoom 是参数；缓存 key 也带上 zoom，别把
+     * 14 级的图当 17 级贴上去。
+     */
+    fun tile(zoom: Int, col: Int, row: Int): Bitmap? {
+        val n = 1 shl zoom
         if (col !in 0 until n || row !in 0 until n) return null
-        val key = "$ZOOM/$col/$row"
+        val key = "$zoom/$col/$row"
         synchronized(cache) { cache[key]?.let { return it } }
         return runCatching {
             val url = AmapTileSource.road.getTileURLString(
-                MapTileIndex.getTileIndex(ZOOM, col, row),
+                MapTileIndex.getTileIndex(zoom, col, row),
             )
             client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
                 if (!resp.isSuccessful) return null
@@ -171,7 +188,7 @@ object MiniTileMap {
      * 这里复制一份而不是共用，是因为那边是 `ui` 包里的 Compose 侧常量 —— 让 map 层
      * 反过来依赖 ui 层会把依赖方向搞乱。
      */
-    private fun nightFilter(): ColorMatrixColorFilter {
+    internal fun nightFilter(): ColorMatrixColorFilter {
         val k = 1.6f
         return ColorMatrixColorFilter(
             ColorMatrix(

@@ -494,15 +494,30 @@ class JournalRuntime(
      * 下次插枪才好无条件重置。没变化时 [ChargeCycle.observe] 返回 null，一次盘都不写。
      */
     fun observeChargeCycle(
-        chargeState: Int?,
-        soc: Int?,
-        totalKm: Double?,
+        sample: ChargeSample,
         now: Long = System.currentTimeMillis(),
     ) {
         mutate { data ->
-            val next = ChargeCycle.observe(data.chargeAnchor, chargeState, soc, totalKm, now)
-                ?: return@mutate data
-            data.copy(chargeAnchor = next)
+            val next = ChargeCycle.observe(
+                state = ChargeCycleState(data.chargeAnchor, data.chargePending),
+                sample = sample,
+                now = now,
+            ) ?: return@mutate data
+            if (next.anchor == data.chargeAnchor && next.pending == data.chargePending) {
+                return@mutate data
+            }
+            // 只在**真的改了起点**时留一行 debug 日志：这张卡出问题只能靠事后回看
+            // 「那一刻的 chargeState / 旁证 / 里程」判断是谁在说谎，release 包里不编译进去。
+            if (BuildConfig.DEBUG) {
+                android.util.Log.d(
+                    "ChargeCycle",
+                    "起点 ${next.anchor?.km}(ended=${next.anchor?.ended}) " +
+                        "候选 ${next.pending?.km} ← state=${sample.chargeState} " +
+                        "soc=${sample.soc} km=${sample.totalKm} moving=${sample.moving} " +
+                        "evidence=${sample.evidence}",
+                )
+            }
+            data.copy(chargeAnchor = next.anchor, chargePending = next.pending)
         }
     }
 
@@ -522,7 +537,13 @@ class JournalRuntime(
     ): Boolean {
         if (!ChargeCycle.isUsableKm(totalKm)) return false
         val km = totalKm ?: return false
-        mutate { it.copy(chargeAnchor = ChargeAnchor(km = km, at = now, soc = soc, manual = true)) }
+        // 手动指定起点时把候选一起清掉：用户的意图优先，别再让候选回头把它改回去
+        mutate {
+            it.copy(
+                chargeAnchor = ChargeAnchor(km = km, at = now, soc = soc, manual = true),
+                chargePending = null,
+            )
+        }
         return true
     }
 

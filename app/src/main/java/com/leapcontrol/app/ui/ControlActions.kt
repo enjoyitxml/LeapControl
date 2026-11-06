@@ -97,6 +97,44 @@ object ControlActions {
         else -> id
     }
 
+    /**
+     * 二次确认弹窗要显示的**具体指令**，必须是「打开 X / 关闭 X」这样的动宾短语，
+     * 而不是按钮上那个功能名（「遮阳帘」不是一条指令，2026-11-06 用户反馈）。
+     *
+     * 早期版本遮阳帘是「打开遮阳帘 / 关闭遮阳帘」两个独立入口，文案自带动作；
+     * 合并成一颗按车况取反的按钮后，弹窗一直传 `action.label`，于是退化成只报功能名。
+     *
+     * 调用方必须先 [resolveCommand]，再把**同一个指令名**同时交给本函数和实际下发，
+     * 保证「弹窗说的」与「真正发出去的」不会因弹窗期间车况刷新而错位。
+     *
+     * 这里不复用 `ConfirmAction.title`：那份表只覆盖小组件 / 磁贴「再点一次」的 12 条，
+     * 缺天窗、前备箱、哨兵和预热关闭，且「电池预热」不分开关。
+     */
+    fun commandLabel(command: String): String = when (command) {
+        "lock" -> "上锁车辆"
+        "unlock" -> "解锁车辆"
+        "horn" -> "鸣笛寻车"
+        "trunkOpen" -> "打开后备箱"
+        "trunkClose" -> "关闭后备箱"
+        "windowOpen" -> "打开车窗"
+        "windowClose" -> "关闭车窗"
+        "sunshadeOpen" -> "打开遮阳帘"
+        "sunshadeClose" -> "关闭遮阳帘"
+        "sunroofOpen" -> "打开天窗"
+        "sunroofClose" -> "关闭天窗"
+        "frunkOpen" -> "打开前备箱"
+        "frunkClose" -> "关闭前备箱"
+        "sentryOn" -> "开启哨兵"
+        "sentryOff" -> "关闭哨兵"
+        "batteryPreheat" -> "开启电池预热"
+        "batteryPreheatOff" -> "关闭电池预热"
+        // 兜底：不认识就退回按钮名，绝不把内部指令名（sunshadeOpen）糊给用户
+        else -> find(command)?.label ?: "控车"
+    }
+
+    /** 按钮 id + 当前车况 → 弹窗文案；与 [resolveCommand] 共用同一份开/关判定。 */
+    fun confirmLabel(id: String, status: CarStatus?): String = commandLabel(resolveCommand(id, status))
+
     /** 解析已保存的顺序，过滤掉已下线指令并保证最少 3 个。 */
     fun sanitize(saved: List<String>): List<String> {
         val valid = saved.filter { id -> all.any { it.id == id } }.distinct()

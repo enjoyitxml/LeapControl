@@ -54,6 +54,12 @@ object ConfirmActions {
     private const val PREFS = "confirm_actions"
     private const val KEY_PREFIX = "need_"
 
+    /**
+     * 第一次点下去时那行提示。两个入口（桌面卡片右上角 / 磁贴副标题）共用一句，
+     * 别各写一份 —— 之前就是因为两处各写各的，回退时一处改了一处没改。
+     */
+    const val HINT = "再点一次确认"
+
     fun isEnabled(context: Context, command: String?): Boolean {
         if (command.isNullOrBlank()) return false
         return prefs(context).getBoolean(KEY_PREFIX + command, false)

@@ -71,6 +71,12 @@ data class TileSpec(
     val done: String = "",
     /** 开关型「关闭」那一路的完成态，留空则用 [done] */
     val doneOff: String = "",
+    /**
+     * 点下去之后「正在…」停留多久，然后按本地状态复位（照上游磁贴的手感）。
+     * 上游取值：车锁 10 秒（车端信号慢）、寻车 2.2 秒、空调 2.5 秒。
+     * **这不是等结果**：指令早就在后台发出去了，只是把磁贴从「执行中」收回常态。
+     */
+    val resetMs: Long = 2_500L,
 ) {
     /** 执行中的副标题：开关型分「开启 / 关闭」，一次性动作只有一句。 */
     fun doingText(turningOn: Boolean): String = when {
@@ -78,6 +84,10 @@ data class TileSpec(
         turningOn -> opening.ifBlank { doing }
         else -> closing.ifBlank { doing }
     }
+
+    /** 这次点击真正下发的指令名（纯函数，便于单测）。动作型固定，开关型按意图取反。 */
+    fun commandFor(turningOn: Boolean): String =
+        if (kind == TileKind.MOMENTARY || turningOn) openCommand else closeCommand
 
     /** 成功提示里的完成态。 */
     fun doneText(turningOn: Boolean): String = when {
@@ -92,17 +102,17 @@ object QuickTiles {
         TileSpec(
             "lock", "上锁", R.drawable.ic_tile_lock, LockTileService::class.java,
             TileKind.MOMENTARY, "lock",
-            doing = "车辆上锁中…", done = "车辆已上锁",
+            doing = "车辆上锁中…", done = "车辆已上锁", resetMs = 10_000L,
         ),
         TileSpec(
             "unlock", "解锁", R.drawable.ic_tile_unlock, UnlockTileService::class.java,
             TileKind.MOMENTARY, "unlock",
-            doing = "车辆解锁中…", done = "车辆已解锁",
+            doing = "车辆解锁中…", done = "车辆已解锁", resetMs = 10_000L,
         ),
         TileSpec(
             "horn", "鸣笛寻车", R.drawable.ic_tile_horn, HornTileService::class.java,
             TileKind.MOMENTARY, "horn",
-            doing = "鸣笛寻车中…", done = "鸣笛寻车",
+            doing = "鸣笛寻车中…", done = "鸣笛寻车", resetMs = 2_200L,
         ),
         TileSpec(
             "ac", "空调", R.drawable.ic_tile_ac, ClimateTileService::class.java,

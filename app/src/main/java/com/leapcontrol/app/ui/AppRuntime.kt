@@ -44,9 +44,17 @@ import com.leapcontrol.app.OfficialParkingPhotoStore
 import com.leapcontrol.app.OfficialPhotoStatus
 import com.leapcontrol.app.OfficialThumbMemory
 import com.leapcontrol.app.MileageEnergySummary
+import com.leapcontrol.app.trip.TripCloseResult
+import com.leapcontrol.app.trip.TripMergeResult
+import com.leapcontrol.app.trip.TripOverview
+import com.leapcontrol.app.trip.TripRules
+import com.leapcontrol.app.trip.TripSample
+import com.leapcontrol.app.trip.TripStartResult
+import com.leapcontrol.app.trip.TripTracker
 import com.leapcontrol.app.ScheduledAcPlan
 import com.leapcontrol.app.ScheduledAcState
 import com.leapcontrol.app.ScheduledPreheatState
+import com.leapcontrol.app.SentryModeControlPolicy
 import com.leapcontrol.app.ObfuscatedSecrets
 import com.leapcontrol.app.QuickSwitchMode
 import com.leapcontrol.app.QuickSwitchPrefs
@@ -59,6 +67,8 @@ import com.leapcontrol.app.UpdateCheckMode
 import com.leapcontrol.app.UpdateCheckPolicy
 import com.leapcontrol.app.UpdateCheckResult
 import com.leapcontrol.app.journal.BaiduAsr
+import com.leapcontrol.app.journal.ChargeCycle
+import com.leapcontrol.app.journal.ChargeSample
 import com.leapcontrol.app.journal.ChargeWatch
 import com.leapcontrol.app.Vehicle
 import com.leapcontrol.app.VehicleChargePlan
@@ -342,6 +352,13 @@ data class CarStatus(
     val rearviewMirrorHeating: Boolean? = null,
     /** 车载冰箱状态。 */
     val fridge: FridgeSnapshot? = null,
+    /**
+     * 电量原始百分比（优先 preciseSoc 100003，其次 soc 1204），给行程能耗用。
+     *
+     * [soc] 是取整后的展示值，且只看 1204；部分车型只下发 100003，那样 [soc] 会变 0。
+     * 行程靠首末电量差算耗电，0 会被当成「没读到」，所以这里单独留一份真实读数。
+     */
+    val socSignal: Double? = null,
 )
 
 /**
@@ -555,6 +572,42 @@ class AppRuntime(context: Context) {
         if (_heroLayout.value == layout) return
         HeroLayoutPrefs.save(appContext, layout)
         _heroLayout.value = layout
+    }
+
+    /**
+     * 首页车模的行驶动效（个性化 → 车模外观 → 车辆行驶动效）。
+     *
+     * **默认关闭**：这是装饰，不能让所有人升级后就被动画打扰；老机器上每帧几十个粒子
+     * 也不该是默认开销。参数按 VIN 存（轮位标定是贴着这张车模图做的，换车必须重标）。
+     *
+     * 挂 StateFlow 而不是页面本地状态：首页和设置页要同时看到同一份，
+     * 设置页改完回首页必须立刻生效（切 tab 会重建首页子树）。
+     */
+    private val _carMotion = MutableStateFlow(
+        CarMotionPrefs.load(appContext, session.selectedVin),
+    )
+    val carMotion: StateFlow<CarMotionSettings> = _carMotion.asStateFlow()
+
+    /** 当前 StateFlow 是按哪个 VIN 读出来的；换车后要重新读，否则会沿用上一辆车的轮位标定。 */
+    private var carMotionVin: String = session.selectedVin
+
+    private fun syncCarMotionVin() {
+        val vin = session.selectedVin
+        if (vin == carMotionVin) return
+        carMotionVin = vin
+        _carMotion.value = CarMotionPrefs.load(appContext, vin)
+    }
+
+    fun carMotionSettings(): CarMotionSettings {
+        syncCarMotionVin()
+        return _carMotion.value
+    }
+
+    fun setCarMotion(settings: CarMotionSettings) {
+        val clean = settings.normalized()
+        if (_carMotion.value == clean) return
+        CarMotionPrefs.save(appContext, session.selectedVin, clean)
+        _carMotion.value = clean
     }
 
     /**
@@ -858,6 +911,9 @@ class AppRuntime(context: Context) {
                 // 校准是按 VIN 存的：换成新车要把这一辆自己的读出来。
                 // 沿用上一辆的偏移会让好车看着像坏了 —— 两辆车的偏差根本没有关系
                 _locationCalibration.value = LocationCalibrationStore.load(appContext, vehicle.vin)
+                // 行驶动效同理：轮位标定是贴着上一辆车的车模图拖出来的，换车必须重读
+                carMotionVin = vehicle.vin
+                _carMotion.value = CarMotionPrefs.load(appContext, vehicle.vin)
                 // 换车时把充电采样闹钟撤掉：它是给上一辆车的 VIN 排的，
                 // 留着会拿新车的账号去读旧车的充电状态
                 runCatching { ChargeWatch.cancel(appContext) }
@@ -882,10 +938,15 @@ class AppRuntime(context: Context) {
         customCarCache = null
         customCarCacheVin = null
         _carModelRevision.value += 1
+        // 行驶动效回到默认（关闭）：换账号/登出后不能让首页继续画上一个人的车模特效
+        _carMotion.value = CarMotionSettings.DEFAULT
+        carMotionVin = ""
         runCatching { statusPrefs.edit().clear().apply() }
         // 停车位置缓存必须一起清：那个目录里存着车停在哪、旁边是什么地址，
         // 换账号后还留着，等于把上一位车主的行踪给了下一个人
         VehicleLocationStore.clear(appContext)
+        // 历史行程比单个停车点更敏感（是一串行踪），登出必须整份清掉
+        TripTracker.clear(appContext)
         // 内存里那份同理，而且要一起清：否则退出后重新登录，首页会先亮别人的位置（见 VehiclePlaceMemory）
         VehiclePlaceMemory.clear()
         resetLocationAnchor()
@@ -1062,6 +1123,20 @@ class AppRuntime(context: Context) {
     val lastUpdatedFlow: StateFlow<Long> = _lastUpdated.asStateFlow()
 
     /**
+     * 最近一次读到的表显总里程（km，仅进程内）。
+     *
+     * 用途只有一个：「自上次充电行驶里程」卡在这种帧里缺 `totalMileage` 时不要整块消失。
+     * 车况报文偶尔是**部分字段**的（车型没上报 / 网关只回了几路信号），那时卡片会从
+     * 「128.4 km」直接变成「刷新车况后显示」—— 和「数字被清零」在用户眼里是一回事。
+     * 拿上一帧的读数顶上，最多旧几十秒，比空白强。
+     *
+     * 刻意不落盘：跨天 / 冷启动时一个旧里程粘在卡片上，比空白更容易误导。
+     */
+    @Volatile
+    var lastKnownOdometerKm: Double? = null
+        private set
+
+    /**
      * 当前位置校准（见 [LocationCalibration]），按 VIN 存，跟着车走。
      *
      * 放在这一层而不是 UI 状态里：首页卡、找车页地图、导航目的地、地址逆地理、
@@ -1101,7 +1176,9 @@ class AppRuntime(context: Context) {
         }.getOrNull()
         if (raw.isNullOrBlank()) return
         val st = runCatching { JSONObject(raw) }.getOrNull() ?: return
-        _status.value = runCatching { buildStatus(st, observeCaps = false) }.getOrNull()
+        val status = runCatching { buildStatus(st, observeCaps = false) }.getOrNull()
+        _status.value = status
+        OwnershipStats.kmFromText(status?.totalMileage)?.let { lastKnownOdometerKm = it }
     }
 
     // ---------------- 驻车拍照：手机拍照 / 车端照片 ----------------
@@ -1302,6 +1379,119 @@ class AppRuntime(context: Context) {
     /** 最近一次成功拉取的里程 / 能耗汇总（进程内保持，冷启动由磁盘缓存预填）。 */
     val mileageEnergyFlow: StateFlow<MileageEnergySummary?> = _mileageEnergy.asStateFlow()
 
+    // ---- 行程轨迹 ----
+    // 数据挂在 TripTracker 的进程级 StateFlow 上（跨页返回不丢），冷启动由磁盘预填。
+    // 这里只转发，不复制一份状态，免得首页和二级页读到两份不同的数据。
+    val tripFlow: StateFlow<TripOverview?> get() = TripTracker.flow
+
+    /**
+     * 自动开始记录行程：**默认关**，开关在行程轨迹页。
+     *
+     * 关着的时候只有用户亲手点「开始记录行程」才开一段 —— 这是 2026-11-06 的定稿，
+     * 因为自动判据曾被车端的挡位噪声（UNKNOWN / NONE 里都含 N）骗到，一打开 App 就
+     * 显示「正在记录」。开着的时候走「连续两帧行驶」的硬判据（见 TripRules.ingest）。
+     * 存在 namingPrefs：跟着本机走、登出不丢。
+     */
+    private val _autoStartTrip = mutableStateOf(namingPrefs.getBoolean("trip_auto_start", false))
+    val autoStartTripState: State<Boolean> get() = _autoStartTrip
+
+    fun autoStartTrip(): Boolean = _autoStartTrip.value
+
+    fun setAutoStartTrip(on: Boolean) {
+        _autoStartTrip.value = on
+        namingPrefs.edit().putBoolean("trip_auto_start", on).apply()
+    }
+
+    /**
+     * 手动开始一段行程。
+     *
+     * 起点用**最近一次车况快照**，不额外发请求：用户点「开始」时屏幕上的数字就是他看到的
+     * 起点。还没拉到过车况（冷启动直接进行程页）就返回 NO_STATUS，让 UI 提示先刷新。
+     */
+    fun startTrip(): TripStartResult {
+        val status = _status.value ?: return TripStartResult.NO_STATUS
+        val at = _lastUpdated.value.takeIf { it > 0L } ?: System.currentTimeMillis()
+        return TripTracker.start(appContext, session.selectedVin, tripSampleOf(status, at))
+    }
+
+    /** 把一帧车况压成行程采样点。刷新与「手动开始」共用，保证起点口径完全一致。 */
+    private fun tripSampleOf(status: CarStatus, at: Long): TripSample {
+        val speed = TripRules.parseSpeedKmh(status.speed)
+        return TripSample(
+            at = at,
+            latitude = status.latitude,
+            longitude = status.longitude,
+            speedKmh = speed,
+            odometerKm = OwnershipStats.kmFromText(status.totalMileage),
+            driving = TripRules.isDriving(speed, status.gearStatus),
+            // 电量：0 当作「没读到」而不是「真的 0%」—— 车况信号缺失时 socFraction
+            // 会返回 0，那会让一趟行程的耗电变成 -x% 的假数据。真跑到 0% 也开不回来。
+            // 优先用 socSignal（含 preciseSoc），它比展示用的取整 soc 更接近真实读数。
+            socPercent = (status.socSignal ?: status.soc.takeIf { it in 1..100 }?.toDouble())
+                ?.takeIf { it in 1.0..100.0 },
+            // 表显续航只对纯电有意义：增程车的主续航是「电 + 油」综合值，
+            // 拿它算掉电续航会把油跑掉的部分算成电，直接不记。
+            rangeKm = if (status.isRangeExtender) null
+            else OwnershipStats.kmFromText(status.range),
+            // 锁车状态：锁车 + 没在行驶 = 人走了，这一趟当场收尾（见 TripRules.ingest）。
+            // null 表示车端没上报，此时退回「停车 5 分钟宽限期」的老办法。
+            locked = status.locked,
+        )
+    }
+
+    /**
+     * 手动结束当前进行中的行程。首页卡 / 行程二级页 / 零记入口共用这一个出口，
+     * 收尾结果同步返回给 UI 显示（点太少、太短、算不出里程都要有明确反馈）。
+     * **不发任何车况请求**，只用已经采到的点。
+     */
+    fun finishCurrentTrip(): TripCloseResult = TripTracker.finishCurrent(
+        appContext,
+        session.selectedVin,
+        amapKey(),
+        System.currentTimeMillis(),
+    )
+
+    /** 删除一段历史行程（只删已收尾的段，进行中的删不到）。 */
+    fun deleteTrip(id: Long): Boolean =
+        TripTracker.delete(appContext, session.selectedVin, id)
+
+    /**
+     * 用户确认「这趟不要了」：清掉进行中的一段，不写历史。
+     *
+     * 不到 30 秒、车机没读到位移的那种段本来就建不了档，但用户点了结束就得真的结束 ——
+     * 否则会一直卡在「结束了却还在记录」。
+     */
+    fun discardCurrentTrip(): Boolean =
+        TripTracker.discardCurrent(appContext, session.selectedVin)
+
+    /** 多段合并成一段。返回结果给 UI 反馈，成功/失败都要说话。 */
+    fun mergeTrips(ids: Collection<Long>): TripMergeResult =
+        TripTracker.merge(appContext, session.selectedVin, amapKey(), ids)
+
+    /**
+     * 电池容量（kWh）：把「电量掉了几个百分点」换算成度数要它。
+     *
+     * 按 VIN 存。同一款车有好几个电池版本（C11 就有 78.5 / 90 kWh），按车型猜一个数字
+     * 等于把估算写成实测，所以留空时不换算、只显示百分比，让用户自己在设置里填一次。
+     */
+    fun batteryKwh(): Double? =
+        namingPrefs.getString("battery_kwh_${session.selectedVin}", "")?.trim()
+            ?.toDoubleOrNull()
+            ?.takeIf { it.isFinite() && it in TripRules.MIN_BATTERY_KWH..TripRules.MAX_BATTERY_KWH }
+
+    fun setBatteryKwh(kwh: Double?) {
+        val clean = kwh?.takeIf {
+            it.isFinite() && it in TripRules.MIN_BATTERY_KWH..TripRules.MAX_BATTERY_KWH
+        }
+        namingPrefs.edit().apply {
+            val key = "battery_kwh_${session.selectedVin}"
+            if (clean == null) remove(key) else putString(key, clean.toString())
+        }.apply()
+        // 立刻作用到进程内状态：用户填完容量后，正在记录的那段马上就能算度数，
+        // 不用等下一次车况刷新。
+        TripTracker.setBatteryKwh(appContext, clean)
+    }
+
     // ---- 周能耗（首页两张能耗卡）----
     // 两个接口：近 6 周百公里能耗与排行、上周能耗构成。
     // 和里程能耗一样：失败静默保留上一次结果，不拖累别的卡片。
@@ -1315,6 +1505,8 @@ class AppRuntime(context: Context) {
         // 里程 / 能耗同样先上缓存，联网拉取在首页进入时触发
         loadCachedMileageEnergy()
         loadCachedWeeklyEnergy()
+        // 行程轨迹：先用本机上次的结果填一帧，避免冷启动时卡片先空一下
+        TripTracker.load(appContext, session.selectedVin, batteryKwh())
     }
 
     /** 让 [_capabilities] 跟随当前选中车辆；VIN 没变则不重复读取。 */
@@ -1361,17 +1553,17 @@ class AppRuntime(context: Context) {
         // 结果通过 statusFlow 下发：首页直接读到新值，不需要 UI 自己再 setState
         _status.value = status
         _lastUpdated.value = System.currentTimeMillis()
+        // 记下这一帧的表显里程，供缺字段时给卡片兜底（见 lastKnownOdometerKm）
+        OwnershipStats.kmFromText(status.totalMileage)?.let { lastKnownOdometerKm = it }
         // 顺便喂一次「自上次充电后行驶里程」的观测（见 ChargeCycle）：
         // 车端没有充电历史接口，只能在拿到车况时「看见」充电 —— 充电时车停着，
         // 此刻的表显里程就是准确起点。
         // **不充电时也要喂**：那一下会给上一次充电盖「已结束」的戳，是下次能正确重置的
         // 前提。不充电且已有戳时判定返回 null，不写盘。记账失败也绝不能影响车况刷新。
+        // 光有 chargeState 不够：它会在拔枪之后残留，因此一起把旁证（交直流输入 /
+        // 枪信号 / 电池电流）和「车在不在动」带上，判定见 ChargeSample。
         runCatching {
-            journal.observeChargeCycle(
-                chargeState = status.chargeState,
-                soc = status.soc,
-                totalKm = OwnershipStats.kmFromText(status.totalMileage),
-            )
+            journal.observeChargeCycle(chargeSampleOf(status, st))
             // 充电中续上采样闹钟（不在充电就撤掉）。这一发同时是「后台采样」的接线点：
             // 所有拿车况的路径都走这里，闹钟响时也走这里，所以只需接一次。
             ChargeWatch.reschedule(appContext, status.chargeState, status.chargeRemainMinutes)
@@ -1385,6 +1577,19 @@ class AppRuntime(context: Context) {
         // 沉浸样式在桌面进程里把用户那张壁纸重新解码一遍，卡片会闪一下。
         runCatching {
             com.leapcontrol.app.widget.VehicleWidget.render(appContext, this@AppRuntime, partial = true)
+        }
+        // 行程轨迹：搭这次车况刷新的顺风车记一个点，**不新增任何一次车况请求**。
+        // 采集失败绝不影响车况刷新；起终点中文地址由 TripTracker 在行程收尾时异步补。
+        runCatching {
+            TripTracker.observe(
+                appContext,
+                session.selectedVin,
+                amapKey(),
+                batteryKwh(),
+                tripSampleOf(status, _lastUpdated.value),
+                // 自动开始：用户自己在行程页开的开关。默认关 = 只能手动点开始。
+                autoStart = autoStartTrip(),
+            )
         }
         status
     }
@@ -1648,6 +1853,8 @@ class AppRuntime(context: Context) {
             // 不兜底 rearWindowHeating（后风挡加热）：那几乎全系都有，会让「有没有后视镜加热」永远为真
             rearviewMirrorHeating = parseOnOff(pick(st, "rearviewMirrorHeating", "49", "50")),
             fridge = parseFridge(st),
+            // 行程能耗要用真实读数：只看 soc(1204) 会在「车型只下发 preciseSoc」时变 0
+            socSignal = VehicleStatusMapper.electricSocPercent(st)?.toDouble(),
         ).also { if (observeCaps) observeCapabilities(st) }
     }
 
@@ -1776,6 +1983,62 @@ class AppRuntime(context: Context) {
             state = state,
         )
     }
+
+    /**
+     * 把一帧车况压成「充电起点」的一次观测（见 [com.leapcontrol.app.journal.ChargeCycle]）。
+     *
+     * 除了 `chargeState`，这里还带三样东西，为的是让「改起点」这件不可逆的事有据可依：
+     *  - **车在不在动**：充电时车不可能在跑，动着的帧一律不作数；
+     *  - **交 / 直流输入**：硬件上真有电进来，才是「正在充电」；
+     *  - **电池电流**：1178 是 BMS 常驻信号，充电时几十安、停着时接近 0。
+     *
+     * 以前只喂 `chargeState`，车端那一格残留（拔枪后仍报 1）就会把起点一路改到当下，
+     * 卡片上的数字看起来就是「总是自动清零」（用户 2026-11-06 反馈）。
+     */
+    private fun chargeSampleOf(status: CarStatus, st: JSONObject): ChargeSample = ChargeSample(
+        chargeState = status.chargeState,
+        soc = status.soc,
+        totalKm = OwnershipStats.kmFromText(status.totalMileage),
+        moving = status.isDriving == true,
+        evidence = ChargeCycle.evidence(
+            inputOn = chargeInputOn(st),
+            gunSignal = chargeGunSignal(st),
+            currentAmp = ampOf(pick(st, "batteryCurrent", "1178", "chargeCurrent", "bmsCurrent")),
+        ),
+    )
+
+    /** 交流 / 直流输入是否有电：任一为真 = true，两路都明确为 0 = false，其余不知道。 */
+    private fun chargeInputOn(st: JSONObject): Boolean? {
+        val ac = VehicleSignals.bool(st.opt("acInputSlowCharge"))
+        val dc = VehicleSignals.bool(st.opt("dcInputFastCharge"))
+        return when {
+            ac == true || dc == true -> true
+            ac == false && dc == false -> false
+            else -> null
+        }
+    }
+
+    /**
+     * 专用的枪状态信号（不退化到 `chargeState`）。
+     *
+     * 刻意不复用 [parseChargeCableConnected]：那个方法在没有专用信号时会拿 `chargeState`
+     * 反推，用它当旁证等于「拿结论证明结论」，残影照样混过去。
+     */
+    private fun chargeGunSignal(st: JSONObject): Boolean? {
+        val raw = pick(st, "chargeGunStatus", "gunStatus", "chargeCableStatus", "chargeConnectorStatus")
+        return when (raw?.toString()?.trim()?.lowercase()) {
+            "1", "2", "true", "connected" -> true
+            "0", "false", "disconnected" -> false
+            else -> null
+        }
+    }
+
+    /** 电流读数（A）：车端可能带单位或符号，解析不出就是 null。 */
+    private fun ampOf(raw: Any?): Double? = raw?.toString()?.trim()
+        ?.removeSuffix("A")
+        ?.trim()
+        ?.toDoubleOrNull()
+        ?.takeIf { it.isFinite() }
 
     /** 座椅/方向盘等档位：依次尝试字段名与信号号，取 0-3。 */
     private fun seatLevel(st: JSONObject, vararg keys: String): Int? =
@@ -2605,6 +2868,33 @@ class AppRuntime(context: Context) {
     // ---------------- 控车 ----------------
 
     /**
+     * 哨兵模式的账号权限门禁（2026-11-06 用户反馈「控车失败(40): 无此权限」）。
+     *
+     * 云端对**授权 / 子账号**下发 cmdid=400 的「开启哨兵」会直接回 result=40，
+     * 指令参数、操作密码、登录态都是好的，重试也不会变 —— 这是账号权限，不是故障。
+     * 上游项目在点击前用 [SentryModeControlPolicy] 拦了一道；本项目同步了车辆模型与
+     * 共享账号识别，却漏了这道拦截，才把「控车失败(40): 无此权限」这句黑话丢给用户。
+     *
+     * 放在 [control] / [controlForWidget] 的入口：首页、控制中心磁贴、桌面小组件、
+     * 车辆体检的一键处理全都走这两条路，一处覆盖全部入口。
+     * **关闭哨兵不拦**（子账号也能把安防关掉），与上游策略一致。
+     *
+     * 账号标记是从车辆列表的一堆候选字段推断的，未必每台车都认得出来；认不出来时
+     * 云端仍会回 40，由 [ControlFailure] / [UserMessage] 的权限文案兜底说人话。
+     */
+    private fun guardSentryPermission(commandName: String) {
+        if (commandName != "sentryOn") return
+        val shared = runCatching {
+            sessionStore.loadVehicles()
+                .firstOrNull { it.vin == session.selectedVin }
+                ?.isSharedAccount == true
+        }.getOrDefault(false)
+        if (!SentryModeControlPolicy.canOperateSentry(shared, targetOn = true)) {
+            throw ApiException(ControlFailure.HINT_SENTRY_PERMISSION.message)
+        }
+    }
+
+    /**
      * 执行控车指令（commandName 如 "lock"/"unlock"/"acOn"/"acOff"/"horn"）。
      * [presetAcTemperature] 非空时改为按指定温度下发空调指令（Commands.buildAc）。
      * [resultWaitMs] 等车端执行结果的窗口；传 0 表示**发出去就返回**，不等回执。
@@ -2621,6 +2911,7 @@ class AppRuntime(context: Context) {
         resultWaitMs: Long? = null,
     ): String = withContext(Dispatchers.IO) {
         val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
+        guardSentryPermission(commandName)
         val api = LeapmotorApi(session)
         // 前挡除霜单独一条路：它的验收不看网关结果码，而是看车况信号 1945，
         // 而且可能要换几组参数才有用（见 [runDefrost]）。
@@ -2751,6 +3042,7 @@ class AppRuntime(context: Context) {
     suspend fun controlForWidget(commandName: String, budgetMs: Long = 3_500L): String =
         withContext(Dispatchers.IO) {
             val pin = sessionStore.loadOpPassword() ?: throw NeedPinException()
+            guardSentryPermission(commandName)
             val api = LeapmotorApi(session)
             val command = Commands.build(commandName)
             val result = withNetworkRetry { api.sendControl(command, pin) }
@@ -3119,11 +3411,7 @@ class AppRuntime(context: Context) {
         // 起停充电这几秒正好是充电状态翻篇的时刻（1 → 6/0），顺手喂一次观测：
         // 给这次充电盖上「已结束」的戳，下次插枪就能干净地重置起点（见 ChargeCycle）。
         runCatching {
-            journal.observeChargeCycle(
-                chargeState = status.chargeState,
-                soc = status.soc,
-                totalKm = OwnershipStats.kmFromText(status.totalMileage),
-            )
+            journal.observeChargeCycle(chargeSampleOf(status, st))
             ChargeWatch.reschedule(appContext, status.chargeState, status.chargeRemainMinutes)
         }
         return status.chargeState

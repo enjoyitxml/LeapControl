@@ -26,6 +26,9 @@ data class AmapPoi(
     val longitude: Double,
 )
 
+/** 路径规划返回的轨迹点（GCJ-02，与车端上报的坐标同一套）。 */
+data class AmapPoint(val latitude: Double, val longitude: Double)
+
 /**
  * 高德 Web 服务 API 封装。
  *
@@ -172,6 +175,67 @@ object AmapWebApi {
             adcode = text(component?.opt("adcode")),
         )
     }
+
+    /**
+     * 驾车路径规划：把稀疏采样点之间「没画到的路」按高德导航路线补齐。
+     *
+     * 为什么需要它：60 秒一个采样点，两点之间可能拐了好几个弯，直接连直线在地图上
+     * 会穿楼穿河。用导航路线把每两个相邻点之间的真实道路补出来，观感才对。
+     * **这不是真实行驶轨迹**：车当时到底走哪条路我们不知道，只是「两点之间最合理的
+     * 开车路线」，所以图上必须写明这是按导航路线补齐的示意。
+     *
+     * `waypoints` 官方上限 16 个，调用方自己切段（见 `map/TripRoute`）。
+     * `strategy=0`（速度优先）够用，别开 `extensions=all`：返回里那一堆收费 / 红绿灯
+     * 信息我们一个都不用，白白把包体翻倍。
+     *
+     * 返回 null 表示拿不到（没 Key、没网、额度用尽、status!=1），调用方退回直线。
+     */
+    fun drivingRoute(
+        key: String,
+        origin: AmapPoint,
+        destination: AmapPoint,
+        waypoints: List<AmapPoint> = emptyList(),
+    ): List<AmapPoint>? {
+        if (key.isBlank()) return null
+        if (!isValidCoordinate(origin.latitude, origin.longitude)) return null
+        if (!isValidCoordinate(destination.latitude, destination.longitude)) return null
+        if (waypoints.size > MAX_WAYPOINTS) return null
+        fun point(p: AmapPoint) = "${fixed(p.longitude)},${fixed(p.latitude)}"
+        val url = buildString {
+            append("https://restapi.amap.com/v3/direction/driving")
+            append("?key=").append(key)
+            append("&origin=").append(point(origin))
+            append("&destination=").append(point(destination))
+            if (waypoints.isNotEmpty()) {
+                append("&waypoints=").append(waypoints.joinToString(";") { point(it) })
+            }
+            append("&strategy=0&extensions=base&output=json")
+        }
+        val root = jsonOf(url) ?: return null
+        if (root.optString("status") != "1") return null
+        val paths = root.optJSONObject("route")?.optJSONArray("paths") ?: return null
+        val steps = paths.optJSONObject(0)?.optJSONArray("steps") ?: return null
+        val out = mutableListOf<AmapPoint>()
+        for (i in 0 until steps.length()) {
+            val polyline = steps.optJSONObject(i)?.optString("polyline").orEmpty()
+            if (polyline.isEmpty()) continue
+            for (pair in polyline.split(";")) {
+                val parts = pair.split(",")
+                if (parts.size != 2) continue
+                val lng = parts[0].toDoubleOrNull() ?: continue
+                val lat = parts[1].toDoubleOrNull() ?: continue
+                if (!isValidCoordinate(lat, lng)) continue
+                // 相邻 step 首尾重复，跳过一个
+                val last = out.lastOrNull()
+                if (last != null && last.latitude == lat && last.longitude == lng) continue
+                out += AmapPoint(lat, lng)
+            }
+        }
+        return out.takeIf { it.size >= 2 }
+    }
+
+    /** 驾车路径规划的途经点上限（高德官方限制）。 */
+    const val MAX_WAYPOINTS = 16
 
     /** 经纬度是否看起来像真的（排除 0,0 与越界，车端偶尔会上报空值）。 */
     private fun isValidCoordinate(latitude: Double, longitude: Double): Boolean {

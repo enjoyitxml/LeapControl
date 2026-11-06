@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class DoubleConfirmRulesTest {
 
@@ -85,6 +86,28 @@ class DoubleConfirmRulesTest {
         )
         usedByEntries.forEach { command ->
             assertNotNull("指令 $command 没有对应的确认动作", ConfirmAction.of(command))
+        }
+    }
+
+    /**
+     * 两个执行入口必须**真的读**这份开关。
+     *
+     * 2026-11-06 用户反馈「勾了也只要点一次就启动」：v1.1.0 那波控车链路回退
+     * 把 `ConfirmActions.isEnabled + ConfirmGate.step` 一起删了，只剩设置页能勾、
+     * 没人读 —— 表面上功能还在，实际全废。这条守住「开关到什么地步真的被消费」。
+     */
+    @Test
+    fun `桌面卡片与磁贴都接着二次确认门禁`() {
+        val projectDir = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) {
+            it.parentFile
+        }.first { File(it, "app").isDirectory }
+        listOf(
+            "app/src/main/java/com/leapcontrol/app/widget/VehicleWidgetProvider.kt",
+            "app/src/main/java/com/leapcontrol/app/tiles/VehicleTileService.kt",
+        ).forEach { path ->
+            val source = File(projectDir, path).readText()
+            assertTrue("$path 没读「再点一次」开关，勾了也不会生效", source.contains("ConfirmActions.isEnabled"))
+            assertTrue("$path 没走确认门禁，第一次点就直接下发了", source.contains("ConfirmGate.step"))
         }
     }
 }

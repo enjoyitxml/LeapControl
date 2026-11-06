@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Air
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DarkMode
@@ -103,6 +104,8 @@ fun PersonalizationScreen(
     systemDark: Boolean,
     onApplyPick: (ThemeResolver.Pick) -> Unit,
     onOpenCarAppearance: () -> Unit,
+    /** 进入「行驶动效」（与「首页车模」同级，都在车模外观这一组里）。 */
+    onOpenMotion: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -360,13 +363,28 @@ fun PersonalizationScreen(
         // ---- 车模外观 ----
         // 官方车模图是按车辆档案渲染的定妆照，接口没有「选颜色」的入参，
         // 所以颜色跟实车不一致时只能在这一页自己换（内置换色 / 导入自己改好的图）。
-        SettingsSection(title = "车模外观", desc = "换色 · 导入自有图片") {
+        SettingsSection(title = "车模外观", desc = "换色 · 导入自有图片 · 行驶动效") {
             SettingsCard {
                 ClickRow(
                     title = "首页车模",
                     desc = "颜色跟实车不一样？在这里换车漆，或导入自己改好的图片",
                     icon = Icons.Filled.DirectionsCar,
                     onClick = onOpenCarAppearance,
+                )
+                // 卡片内细线：和车模外观页面那条一样淡（HairLine 是那个文件的私有实现）
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(0.6.dp)
+                        .background(C.border.copy(alpha = 0.45f)),
+                )
+                // 行驶动效和车模外观是同一件事（都是「让车好看点」），所以并排放，
+                // 不再藏进车模外观二级页里 —— 那里要先进去看图，才找得到动效。
+                ClickRow(
+                    title = "行驶动效",
+                    desc = "车开起来时的车身抖动和风，可调抖动幅度与风向",
+                    icon = Icons.Filled.Air,
+                    onClick = onOpenMotion,
                 )
             }
         }

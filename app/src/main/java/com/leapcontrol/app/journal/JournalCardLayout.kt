@@ -18,6 +18,8 @@ enum class JournalCardId(
     INSURANCE("保险续费", "到期倒计时与续保提醒"),
     MAINTENANCE("保养提醒", "还剩多少天 / 多少公里该保养"),
     COST("用车成本", "每月花费与分类占比"),
+    /** 行程轨迹：本体在零控（车况刷新时采样），零记这张卡只是入口 + 最近一趟概览。 */
+    TRIP("行程轨迹", "最近一趟的起终点、里程与时长"),
     FOOTPRINT("足迹", "打卡城市与心愿单"),
 }
 
@@ -36,15 +38,17 @@ object JournalCardLayout {
      *
      * 1 → 2：没有新增卡片，只是把「用车成本」提到默认第一位（用户要求）。
      * 同样要升版本，否则老用户存着的那份「旧默认顺序」会被当成他亲手排的，改动永远不生效。
+     * 2 → 3：新增「行程轨迹」卡，默认排在「足迹」上方（用户要求）。
      */
-    const val VERSION = 2
+    const val VERSION = 3
 
-    /** 默认顺序：本月花费最常看，放最上；两张提醒其次（不记就会忘），再是目标、足迹。 */
+    /** 默认顺序：本月花费最常看，放最上；两张提醒其次，再是目标、行程轨迹、足迹。 */
     val DEFAULT: List<JournalCardId> = listOf(
         JournalCardId.COST,
         JournalCardId.INSURANCE,
         JournalCardId.MAINTENANCE,
         JournalCardId.GOAL,
+        JournalCardId.TRIP,
         JournalCardId.FOOTPRINT,
     )
 
@@ -58,6 +62,15 @@ object JournalCardLayout {
      * 否则存的正好等于旧默认的人会被判成自定义，看不到新默认。
      */
     private val PREVIOUS_DEFAULT: List<JournalCardId> = listOf(
+        JournalCardId.COST,
+        JournalCardId.INSURANCE,
+        JournalCardId.MAINTENANCE,
+        JournalCardId.GOAL,
+        JournalCardId.FOOTPRINT,
+    )
+
+    /** v1 默认：跨两版升级（v1 直接升 v3）的用户同样从没排过卡，也得能跟上新默认。 */
+    private val V1_DEFAULT: List<JournalCardId> = listOf(
         JournalCardId.INSURANCE,
         JournalCardId.MAINTENANCE,
         JournalCardId.GOAL,
@@ -65,8 +78,13 @@ object JournalCardLayout {
         JournalCardId.FOOTPRINT,
     )
 
+    /** 所有历史默认。存的是其中任一份 = 用户没自己排过，跟着 [DEFAULT] 走。 */
+    private val LEGACY_DEFAULTS: List<List<JournalCardId>> = listOf(V1_DEFAULT, PREVIOUS_DEFAULT)
+
     /** 每个版本新增的卡片（键是引入它的版本号）。加卡时在这里登记。 */
-    private val ADDED_IN: Map<Int, List<JournalCardId>> = emptyMap()
+    private val ADDED_IN: Map<Int, List<JournalCardId>> = mapOf(
+        3 to listOf(JournalCardId.TRIP),
+    )
 
     /**
      * 解析已保存的顺序。
@@ -91,7 +109,7 @@ object JournalCardLayout {
         if (raw.isBlank()) return saved
         // 从没动过的列表直接换成新默认；动过的原样保留，只把新卡插进去。
         // 不能无条件 return DEFAULT —— 用户删掉的卡会被"顺便"补回来。
-        val base = if (saved == PREVIOUS_DEFAULT) DEFAULT else saved
+        val base = if (LEGACY_DEFAULTS.any { it == saved }) DEFAULT else saved
         return mergeNewCards(base, savedVersion)
     }
 

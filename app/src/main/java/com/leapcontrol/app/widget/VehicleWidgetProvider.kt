@@ -6,6 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
+import com.leapcontrol.app.ConfirmAction
+import com.leapcontrol.app.ConfirmActions
+import com.leapcontrol.app.ConfirmGate
+import com.leapcontrol.app.DoubleConfirmRules
 import com.leapcontrol.app.MainActivity
 import com.leapcontrol.app.tiles.QuickTiles
 import com.leapcontrol.app.tiles.TileSpec
@@ -216,8 +220,21 @@ class VehicleWidgetProvider : AppWidgetProvider() {
             else -> return
         }
 
-        // 开后备箱不可撤销：沿用 App 内「3 秒内再点一次确认」的策略
-        if (command == "trunkOpen" && !confirmTrunkOpen(context)) {
+        // 二次确认（可选项，默认全关，见「设置 → 快捷控制再点一次」）：
+        // 第一次点只记下「待确认」并提示，窗口内再点同一个键才真正下发。
+        if (ConfirmActions.isEnabled(context, command)) {
+            if (!ConfirmGate.step(context, SCOPE, command)) {
+                val label = ConfirmAction.of(command)?.title ?: "该操作"
+                // 卡片右上角那行本来显示「12:30 更新」，临时借来说一句确认提示；
+                // 只走增量，别为一个提示把整张卡（含壁纸）重画一遍
+                VehicleWidget.render(context, runtime, busy = ConfirmActions.HINT, partial = true)
+                toast(context, "再点一次「$label」确认")
+                resetHintLater(context, runtime)
+                return
+            }
+        } else if (command == "trunkOpen" && !confirmTrunkOpen(context)) {
+            // 没勾也留着这条兜底：开后备箱不可撤销，误触赔不起。
+            // 勾了的话走上面那道门禁，这里不再叠加，否则要点三下。
             toast(context, "再点一次后备箱确认打开")
             return
         }
@@ -288,6 +305,20 @@ class VehicleWidgetProvider : AppWidgetProvider() {
         work.launch {
             delay(WidgetFlash.TTL_MS + 500)
             runCatching { VehicleWidget.render(appContext, partial = true) }
+        }
+    }
+
+    /**
+     * 把「再点一次确认」那行改回车况文案。
+     *
+     * 单独起协程、**不阻塞当前这条广播**：广播 10 秒就超时，
+     * 在 [execute] 里 `delay(3 秒)` 会把整条链路一起拖长（v1.1.0 之前踩过）。
+     */
+    private fun resetHintLater(context: Context, runtime: AppRuntime) {
+        val appContext = context.applicationContext
+        work.launch {
+            delay(DoubleConfirmRules.WINDOW_MS + 300)
+            runCatching { VehicleWidget.render(appContext, runtime, partial = true) }
         }
     }
 
@@ -425,6 +456,14 @@ class VehicleWidgetProvider : AppWidgetProvider() {
 
         /** 与 App 内「再点一次」窗口保持一致（3 秒）。 */
         const val DOUBLE_CLICK_WINDOW_MS = 3_000L
+
+        /**
+         * 「待确认」状态在**桌面卡片**这个入口下的作用域（见 [ConfirmGate]）。
+         *
+         * 控制中心每块磁贴用自己的 `tile_<id>`，两边互不干扰：
+         * 在磁贴上点过解锁，不该让桌面卡片把下一次开后备箱当成「确认」。
+         */
+        const val SCOPE = "widget"
 
         const val PREFS = "widget_action_state"
         const val KEY_LAST_TRUNK = "last_trunk_command"

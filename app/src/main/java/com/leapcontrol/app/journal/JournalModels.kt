@@ -445,6 +445,14 @@ data class JournalData(
      * 只有一条起点、没有任何账单的账本，仍然算「空账本」。
      */
     val chargeAnchor: ChargeAnchor? = null,
+    /**
+     * 待确认的充电起点（见 [ChargeCycleState.pending]）。
+     *
+     * 只在一件事上出现：车动过、`chargeState` 说在充电、但没有任何硬件旁证。
+     * 留着它是为了「下一次观测电量真的涨上来就能补记」，又不至于立刻把卡片清零。
+     * 同样是派生数据，不进 [isEmpty]。
+     */
+    val chargePending: ChargeAnchor? = null,
     /** 心愿单：想去还没去的城市。打卡成功会自动从这里移除。 */
     val wishes: List<CityWish> = emptyList(),
     /** 保养计划：填了才提醒，null = 没设置。 */
@@ -510,6 +518,7 @@ data class JournalData(
         odometerKm?.let { put("odometerKm", it) }
         odometerDay?.let { put("odometerDay", it) }
         chargeAnchor?.let { put("chargeAnchor", it.toJson()) }
+        chargePending?.let { put("chargePending", it.toJson()) }
     }
 
     companion object {
@@ -555,6 +564,7 @@ data class JournalData(
                 odometerKm = raw.opt("odometerKm")?.toString()?.toDoubleOrNull(),
                 odometerDay = raw.optString("odometerDay").takeIf { it.isNotBlank() },
                 chargeAnchor = ChargeAnchor.fromJson(raw.optJSONObject("chargeAnchor")),
+                chargePending = ChargeAnchor.fromJson(raw.optJSONObject("chargePending")),
                 // 心愿单按加入时间正序：先想去的排前面，像一张「要去的清单」
                 wishes = wishes.sortedBy { it.added },
                 maintenance = MaintenancePlan.fromJson(raw.optJSONObject("maintenance")),

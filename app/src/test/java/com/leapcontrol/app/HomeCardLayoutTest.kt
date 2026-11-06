@@ -59,6 +59,7 @@ class HomeCardLayoutTest {
                 HomeCardId.LOCATION,
                 HomeCardId.TIRE_TRIP,
                 HomeCardId.HEALTH,
+                HomeCardId.TRIP,
                 HomeCardId.CHARGE_CYCLE,
                 HomeCardId.COMPOSITION,
                 HomeCardId.RANK,
@@ -94,6 +95,7 @@ class HomeCardLayoutTest {
                 "LOCATION",
                 "INSURANCE",
                 "MAINTENANCE",
+                "TRIP",
             ),
             HomeCardId.entries.map { it.name },
         )
@@ -115,6 +117,7 @@ class HomeCardLayoutTest {
                 HomeCardId.TIRE_TRIP,
                 HomeCardId.HEALTH,
                 HomeCardId.AC,
+                HomeCardId.TRIP,
                 HomeCardId.CHARGE_CYCLE,
                 HomeCardId.COMPOSITION,
                 HomeCardId.RANK,
@@ -128,15 +131,16 @@ class HomeCardLayoutTest {
     @Test
     fun `拖动排序向上`() {
         val cards = HomeCardLayout.DEFAULT
-        // 第 4 张（充电里程）拖到第 1 位
+        // 第 4 张（行程轨迹）拖到第 1 位
         val moved = HomeCardLayout.move(cards, 4, 1)
         assertEquals(
             listOf(
                 HomeCardId.AC,
-                HomeCardId.CHARGE_CYCLE,
+                HomeCardId.TRIP,
                 HomeCardId.LOCATION,
                 HomeCardId.TIRE_TRIP,
                 HomeCardId.HEALTH,
+                HomeCardId.CHARGE_CYCLE,
                 HomeCardId.COMPOSITION,
                 HomeCardId.RANK,
                 HomeCardId.OWNERSHIP,
@@ -170,6 +174,7 @@ class HomeCardLayoutTest {
                 // 保养 / 保险是「可选卡」：默认不进 DEFAULT，因此总在「添加卡片」里
                 HomeCardId.INSURANCE,
                 HomeCardId.MAINTENANCE,
+                HomeCardId.TRIP,
             ),
             hidden,
         )
@@ -192,7 +197,9 @@ class HomeCardLayoutTest {
                 HomeCardId.TIRE_TRIP,
                 // HEALTH 的默认前一张是胎压·行程，插在它后面
                 HomeCardId.HEALTH,
-                // CHARGE_CYCLE 的默认前一张是车辆健康，插在它后面、周能耗分布之前
+                // v9 的行程轨迹排在充电里程上方，同样跟在车辆健康后面
+                HomeCardId.TRIP,
+                // CHARGE_CYCLE 是 v8 补的，也插在车辆健康后面
                 HomeCardId.CHARGE_CYCLE,
                 HomeCardId.COMPOSITION,
                 HomeCardId.RANK,
@@ -215,6 +222,7 @@ class HomeCardLayoutTest {
                 // LOCATION 的默认前一张也是空调，排在 HEALTH 之前
                 HomeCardId.LOCATION,
                 HomeCardId.HEALTH,
+                HomeCardId.TRIP,
                 HomeCardId.CHARGE_CYCLE,
             ),
             parsed,
@@ -228,6 +236,7 @@ class HomeCardLayoutTest {
             listOf(
                 HomeCardId.LOCATION,
                 HomeCardId.HEALTH,
+                HomeCardId.TRIP,
                 HomeCardId.CHARGE_CYCLE,
                 HomeCardId.OWNERSHIP,
             ),
@@ -246,7 +255,7 @@ class HomeCardLayoutTest {
     @Test
     fun `卡片全删但版本落后时补入新卡`() {
         assertEquals(
-            listOf(HomeCardId.LOCATION, HomeCardId.HEALTH, HomeCardId.CHARGE_CYCLE),
+            listOf(HomeCardId.LOCATION, HomeCardId.HEALTH, HomeCardId.TRIP, HomeCardId.CHARGE_CYCLE),
             HomeCardLayout.parse("", savedVersion = 1),
         )
     }
@@ -260,7 +269,7 @@ class HomeCardLayoutTest {
         )
         assertEquals(
             // 位置卡的默认前一张是空调，插到它后面
-            listOf(HomeCardId.AC, HomeCardId.LOCATION, HomeCardId.CHARGE_CYCLE, HomeCardId.RANK, HomeCardId.OWNERSHIP),
+            listOf(HomeCardId.AC, HomeCardId.LOCATION, HomeCardId.TRIP, HomeCardId.CHARGE_CYCLE, HomeCardId.RANK, HomeCardId.OWNERSHIP),
             parsed,
         )
     }
@@ -274,7 +283,7 @@ class HomeCardLayoutTest {
             savedVersion = 4,
         )
         assertEquals(
-            listOf(HomeCardId.AC, HomeCardId.LOCATION, HomeCardId.CHARGE_CYCLE, HomeCardId.RANK),
+            listOf(HomeCardId.AC, HomeCardId.LOCATION, HomeCardId.TRIP, HomeCardId.CHARGE_CYCLE, HomeCardId.RANK),
             parsed,
         )
     }
@@ -287,7 +296,7 @@ class HomeCardLayoutTest {
             savedVersion = 5,
         )
         assertEquals(
-            listOf(HomeCardId.AC, HomeCardId.LOCATION, HomeCardId.CHARGE_CYCLE, HomeCardId.RANK, HomeCardId.OWNERSHIP),
+            listOf(HomeCardId.AC, HomeCardId.LOCATION, HomeCardId.TRIP, HomeCardId.CHARGE_CYCLE, HomeCardId.RANK, HomeCardId.OWNERSHIP),
             parsed,
         )
     }
@@ -322,6 +331,7 @@ class HomeCardLayoutTest {
                 HomeCardId.COMPOSITION,
                 HomeCardId.RANK,
                 HomeCardId.HEALTH,
+                HomeCardId.TRIP,
                 HomeCardId.CHARGE_CYCLE,
                 HomeCardId.LOCATION,
                 HomeCardId.OWNERSHIP,
@@ -336,7 +346,8 @@ class HomeCardLayoutTest {
         assertEquals(
             listOf(
                 HomeCardId.LOCATION,
-                // 新卡跟在自己的默认前一张（位置卡）后面，用户原有的相对顺序不动
+                // 两张新卡都跟在自己的默认前一张（位置卡）后面，用户原有的相对顺序不动
+                HomeCardId.TRIP,
                 HomeCardId.CHARGE_CYCLE,
                 HomeCardId.OWNERSHIP,
                 HomeCardId.AC,
@@ -359,6 +370,7 @@ class HomeCardLayoutTest {
                 HomeCardId.COMPOSITION,
                 HomeCardId.RANK,
                 HomeCardId.HEALTH,
+                HomeCardId.TRIP,
                 HomeCardId.CHARGE_CYCLE,
                 HomeCardId.LOCATION,
             ),

@@ -28,7 +28,17 @@ class JournalCardLayoutTest {
         assertEquals(JournalCardId.COST, JournalCardLayout.DEFAULT.first())
     }
 
-    /** 存的正好等于 v1 的旧默认 → 从没动过 → 跟着 v2 的新默认走（成本提到最上）。 */
+    /** 用户要求：行程轨迹卡紧挨在「足迹」上方。 */
+    @Test
+    fun `默认顺序里行程轨迹紧挨在足迹上方`() {
+        val order = JournalCardLayout.DEFAULT
+        assertEquals(
+            order.indexOf(JournalCardId.FOOTPRINT) - 1,
+            order.indexOf(JournalCardId.TRIP),
+        )
+    }
+
+    /** 存的正好等于 v1 的旧默认 → 从没动过 → 跨两版也跟着 v3 的新默认走。 */
     @Test
     fun `存着旧默认顺序的用户会跟着新默认换序`() {
         val v1Default = "INSURANCE,MAINTENANCE,GOAL,COST,FOOTPRINT"
@@ -36,11 +46,38 @@ class JournalCardLayoutTest {
         assertEquals(JournalCardId.COST, JournalCardLayout.parse(v1Default, savedVersion = 1).first())
     }
 
-    /** 自己排过的顺序不能被默认改版冲掉。 */
+    @Test
+    fun `存着v2默认的用户会跟着v3默认换序`() {
+        val v2Default = "COST,INSURANCE,MAINTENANCE,GOAL,FOOTPRINT"
+        assertEquals(JournalCardLayout.DEFAULT, JournalCardLayout.parse(v2Default, savedVersion = 2))
+    }
+
+    /** 自己排过的顺序不能被默认改版冲掉（补卡单独在下面测）。 */
     @Test
     fun `自定义顺序在默认改版后原样保留`() {
         val custom = listOf(JournalCardId.FOOTPRINT, JournalCardId.GOAL)
-        assertEquals(custom, JournalCardLayout.parse(JournalCardLayout.serialize(custom), savedVersion = 1))
+        assertEquals(
+            custom,
+            JournalCardLayout.parse(
+                JournalCardLayout.serialize(custom),
+                savedVersion = JournalCardLayout.VERSION,
+            ),
+        )
+    }
+
+    /** 老用户自己排过卡：保留他的顺序，只把新卡按默认相对位置插进去。 */
+    @Test
+    fun `v2用户自定义顺序升级后补入行程轨迹卡`() {
+        val parsed = JournalCardLayout.parse("COST,GOAL,FOOTPRINT", savedVersion = 2)
+        assertEquals(
+            listOf(
+                JournalCardId.COST,
+                JournalCardId.GOAL,
+                JournalCardId.TRIP,
+                JournalCardId.FOOTPRINT,
+            ),
+            parsed,
+        )
     }
 
     @Test
@@ -68,9 +105,8 @@ class JournalCardLayoutTest {
     /**
      * 老版本存的是「半屏并排」的顺序串，升级后必须还能原样读出来。
      *
-     * 注意这里**不等于** [JournalCardLayout.DEFAULT]：v2 的默认顺序里多了「充电续航」，
-     * 而传默认的 savedVersion 表示「不做补卡」，读到的就是这份串本身。
-     * 补卡的判定（老用户看到新卡）在 `ChargeCycleTest` 里。
+     * 注意这里**不等于** [JournalCardLayout.DEFAULT]：传默认的 savedVersion 表示
+     * 「不做补卡」，读到的就是这份串本身。补卡的判定看上面那几条升级测试。
      */
     @Test
     fun `旧版半屏顺序串仍可解析`() {

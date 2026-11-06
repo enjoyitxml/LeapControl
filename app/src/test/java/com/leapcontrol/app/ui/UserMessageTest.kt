@@ -43,6 +43,29 @@ class UserMessageTest {
     }
 
     @Test
+    fun `哨兵无权限不能再只显示四个字`() {
+        // 2026-11-06：首页原来直接把 serverReason 抠出的「无此权限」上屏
+        val text = UserMessage.ofMessage("控车失败(40): 无此权限")
+        assertFalse(text.contains("控车失败"))
+        assertFalse(text.contains("40"))
+        assertTrue(text.contains("车主账号"))
+        assertTrue(text.contains("零跑 App") || text.contains("车机"))
+    }
+
+    @Test
+    fun `前置拦截的提示原样给用户`() {
+        assertEquals(
+            ControlFailure.HINT_SENTRY_PERMISSION.message,
+            UserMessage.ofMessage(ControlFailure.HINT_SENTRY_PERMISSION.message),
+        )
+    }
+
+    @Test
+    fun `车辆不在线仍然只保留原因`() {
+        assertEquals("车辆不在线", UserMessage.ofMessage("控车失败(3021): 车辆不在线"))
+    }
+
+    @Test
     fun `本来就是人话就别改`() {
         val plain = "还没设置控车密码，请先到「我的」设置"
         assertEquals(plain, UserMessage.ofMessage(plain))

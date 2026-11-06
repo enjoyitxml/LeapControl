@@ -37,6 +37,12 @@ object UserMessage {
         // 1) 登录态最优先：这类重试一百次也没用
         if (ControlFailure.isAuthFailure(lower)) return "登录已过期，请到「我的」重新登录"
 
+        // 1.5) 云端不给权限（result=40 /「无此权限」）：必须在 serverReason 之前拦下，
+        //      否则首页只会显示「无此权限」四个字，用户根本不知道该做什么
+        if (ControlFailure.isPermissionDenied(lower)) {
+            return ControlFailure.HINT_SENTRY_PERMISSION.message
+        }
+
         // 2) 网络
         if (NETWORK_WORDS.any { lower.contains(it) }) return "连不上服务器，请检查手机网络后重试"
         if (lower.contains("timeout") || lower.contains("timed out") || text.contains("超时")) {

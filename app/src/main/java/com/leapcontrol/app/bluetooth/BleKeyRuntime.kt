@@ -237,16 +237,32 @@ class BleKeyRuntime private constructor(context: Context) {
         }
         val supportsButton = (targetDevice.protocolMinor ?: 0) >= 9 || isLeap3
         val targetDesired = if (isLeap3) {
-            val calib = if (bound.desired.calibration == BleCalibration.DEFAULT || bound.desired.calibration.distanceCalibration == 56) {
-                BleCalibration.C16_DEFAULT
+            // C16 / C10 的控制器基线是 69;1.00，不是普通车的 56;2.00：从别的车型迁过来
+            // （或者老版本没区分车型时存下的）必须把基线换掉，否则距离换算整个是错的。
+            //
+            // 但**只换基线、保留用户选的解锁/落锁档位** —— 旧逻辑是整份替换成 C16 默认值，
+            // 用户自己调过的缩放距离会被静默改回「标准」（2026-11-06 用户反馈「锁车太远」）。
+            val saved = bound.desired.calibration
+            val base = BleCalibration.C16_DEFAULT
+            val calib = if (saved.distanceCalibration != base.distanceCalibration) {
+                BleCalibration(
+                    distanceCalibration = base.distanceCalibration,
+                    coefficientHundredths = base.coefficientHundredths,
+                    // 还是普通车那套档位值（或者没动过）→ 直接落到 C16 的标准值
+                    unlockCalibration = if (saved == BleCalibration.DEFAULT) base.unlockCalibration
+                    else saved.unlockCalibration,
+                    lockCalibration = if (saved == BleCalibration.DEFAULT) base.lockCalibration
+                    else saved.lockCalibration,
+                ).withSafeLock()
             } else {
-                bound.desired.calibration
+                saved.withSafeLock()
             }
             bound.desired.copy(calibration = calib, buttonEnabled = true)
         } else if (supportsButton && !bound.desired.buttonEnabled) {
-            bound.desired.copy(buttonEnabled = true)
+            // 普通车型也过一遍间距保护：老数据可能是 lock < unlock + 4 的组合
+            bound.desired.copy(buttonEnabled = true, calibration = bound.desired.calibration.withSafeLock())
         } else {
-            bound.desired
+            bound.desired.copy(calibration = bound.desired.calibration.withSafeLock())
         }
         // 见车才连：先通过低功耗单次定向探测（3秒）确认车辆在附近，杜绝在楼上/远距离时无脑强连耗电与超时报错
         probeTargetAndConnect(bound, targetDevice, certificate, targetDesired, credentialScope, current)

@@ -280,6 +280,8 @@ private fun footerText(km: Double, days: Long): String =
 private fun emptyHint(ui: ChargeCycleUi): String = when (ui) {
     // 采样是自动的（ChargeWatch），这句话要说清「插上枪就行」，别让人以为得盯着 App
     ChargeCycleUi.NoAnchor -> "插枪后零控会自动记下起点"
+    // 读数比起点还小：起点不可信，但用户点一下就能修好 —— 不能只写「刷新车况后显示」
+    ChargeCycleUi.Mismatch -> "里程读数比起点小，点开重设起点"
     else -> "刷新车况后显示"
 }
 
@@ -325,7 +327,9 @@ fun ChargeCycleSheet(
             lineHeight = 17.sp,
         )
 
-        if (anchor != null && current != null) {
+        // 当前里程比起点还小（[ChargeCycleUi.Mismatch]）时不画这道减法：
+        // 画出来是一个负数，看起来像 App 算错了；下面那句话已经说清该点哪个按钮。
+        if (anchor != null && current != null && current >= anchor.km) {
             Spacer(Modifier.height(12.dp))
             ChargeCycleDiagram(anchor = anchor, currentKm = current)
         }
@@ -345,6 +349,9 @@ fun ChargeCycleSheet(
             text = when {
                 anchor == null -> "现在按下面的按钮，就从当前里程开始算。"
                 current == null -> "读不到当前总里程，刷新车况后再试。"
+                current < anchor.km ->
+                    "现在的读数比起点还小（换过仪表、或车端回了旧帧），起点已经不可信 —— " +
+                        "按下面把起点改到现在即可。"
                 else -> "错过那次充电的话，起点还停在上一次，数字会偏大。按下面可以把起点改到现在。"
             },
             color = C.textSecondary,

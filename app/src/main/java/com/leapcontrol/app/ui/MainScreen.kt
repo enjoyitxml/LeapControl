@@ -125,6 +125,8 @@ enum class SettingsPage {
     PERSONALIZATION,
     PLAYBOOK,
     CAR_APPEARANCE,
+    /** 个性化 → 车模外观 → 车辆行驶动效。 */
+    CAR_MOTION,
     ABOUT,
     DISCLAIMER,
     PRIVACY,
@@ -398,6 +400,7 @@ fun MainScreen(
                                 darkThemeId = pick.darkThemeId
                             },
                             onOpenCarAppearance = { openSettings(SettingsPage.CAR_APPEARANCE) },
+                            onOpenMotion = { openSettings(SettingsPage.CAR_MOTION) },
                             onBack = { closeSettings() },
                         )
 
@@ -410,6 +413,12 @@ fun MainScreen(
 
                         // 车模外观从个性化进，返回也回个性化 —— 别让用户按一次返回直接掉回「我的」
                         SettingsPage.CAR_APPEARANCE -> CarAppearanceScreen(
+                            runtime = runtime,
+                            onBack = { closeSettings() },
+                        )
+
+                        // 动效设置：从个性化里的「行驶动效」进，返回也回个性化（closeSettings 出栈）
+                        SettingsPage.CAR_MOTION -> CarMotionScreen(
                             runtime = runtime,
                             onBack = { closeSettings() },
                         )

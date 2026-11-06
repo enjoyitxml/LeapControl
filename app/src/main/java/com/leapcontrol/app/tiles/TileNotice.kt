@@ -48,6 +48,9 @@ internal object TileNotice {
     /** 结果停留时间：够看清一行字，又不长期占着通知栏。 */
     private const val RESULT_TTL_MS = 6_000L
 
+    /** 「再点一次确认」的停留时间：比 3 秒确认窗口稍长，第二次点之前字不会先消失。 */
+    private const val CONFIRM_TTL_MS = 4_000L
+
     /** 通知能不能发（用户在系统里关掉了这个 App 的通知时为 false）。 */
     fun enabled(context: Context): Boolean =
         runCatching { context.getSystemService(NotificationManager::class.java)?.areNotificationsEnabled() }
@@ -56,6 +59,11 @@ internal object TileNotice {
     /** 指令刚下发：`车辆上锁中…` */
     fun running(context: Context, text: String) {
         show(context, text, "正在控车", RUNNING_TTL_MS)
+    }
+
+    /** 等着用户再点一次：`再点一次确认上锁`。停留时间盖住那 3 秒确认窗口。 */
+    fun confirm(context: Context, text: String) {
+        show(context, text, "待确认", CONFIRM_TTL_MS)
     }
 
     /** 车端确认执行了：`车辆已上锁，执行成功` */

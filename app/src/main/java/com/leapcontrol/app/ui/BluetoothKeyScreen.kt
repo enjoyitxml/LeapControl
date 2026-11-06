@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.R
@@ -444,7 +445,13 @@ private fun StatusCard(host: BleKeyHost) {
     }
 }
 
-/** 感应距离三档：贴近 / 标准 / 较远。 */
+/**
+ * 感应距离：**解锁与落锁各一组**。
+ *
+ * 以前只有一组三档，改的其实只是解锁那一格，落锁阈值永远等于车型默认值 ——
+ * 用户反馈「自动锁车距离太远」，选哪一档都毫无变化（2026-11-06）。
+ * 现在拆成两组，想更近锁车就单独把落锁调近，不连累解锁距离。
+ */
 @Composable
 private fun CalibrationPicker(
     current: com.leapcontrol.app.bluetooth.BleCalibration,
@@ -453,6 +460,9 @@ private fun CalibrationPicker(
     onPick: (com.leapcontrol.app.bluetooth.BleCalibration) -> Unit,
 ) {
     val C = LocalAppColors.current
+    val unlockPreset = matchUnlockPreset(current, isC16)
+    val lockPreset = matchLockPreset(current, isC16)
+
     Text(
         text = "感应距离",
         color = C.textPrimary,
@@ -466,34 +476,94 @@ private fun CalibrationPicker(
         fontSize = 11.sp,
         lineHeight = 16.sp,
     )
-    Spacer(Modifier.height(10.dp))
+
+    Spacer(Modifier.height(13.dp))
+    PresetRow(
+        title = "靠近解锁",
+        presets = UnlockPreset.entries,
+        label = { it.label },
+        selected = unlockPreset,
+        enabled = enabled,
+        onPick = { preset -> onPick(unlockCalibrationFor(preset, isC16, current)) },
+    )
+    Spacer(Modifier.height(5.dp))
+    Text(
+        text = unlockPreset?.desc ?: "当前是自定义值，点上面任意一档覆盖",
+        color = C.textSecondary,
+        fontSize = 10.5.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+
+    Spacer(Modifier.height(13.dp))
+    PresetRow(
+        title = "离开落锁",
+        presets = LockPreset.entries,
+        label = { it.label },
+        selected = lockPreset,
+        enabled = enabled,
+        onPick = { preset -> onPick(lockCalibrationFor(preset, isC16, current)) },
+    )
+    Spacer(Modifier.height(5.dp))
+    Text(
+        text = lockPreset?.desc ?: "当前是自定义值，点上面任意一档覆盖",
+        color = C.textSecondary,
+        fontSize = 10.5.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = "落锁一定比解锁远；解锁调到「较远」时，落锁会自动跟着上调，避免在门口反复上锁。",
+        color = C.textSecondary,
+        fontSize = 10.5.sp,
+        lineHeight = 15.sp,
+    )
+}
+
+/** 一组三档：标题 + 三个等宽格。格子不可用时也接住点击，由调用方 toast 出原因。 */
+@Composable
+private fun <T> PresetRow(
+    title: String,
+    presets: List<T>,
+    label: (T) -> String,
+    selected: T?,
+    enabled: Boolean,
+    onPick: (T) -> Unit,
+) {
+    val C = LocalAppColors.current
+    Text(
+        text = title,
+        color = C.textPrimary,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+    )
+    Spacer(Modifier.height(7.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        CalibrationPreset.entries.forEach { preset ->
-            val value = getPresetCalibration(preset, isC16)
-            val selected = value == current
-            Column(
+        presets.forEach { preset ->
+            val isSelected = preset == selected
+            Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height(56.dp)
+                    .height(44.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(if (selected) C.accent.copy(alpha = 0.12f) else C.iconBg)
+                    .background(if (isSelected) C.accent.copy(alpha = 0.12f) else C.iconBg)
                     .border(
-                        width = if (selected) 1.5.dp else 0.dp,
-                        color = if (selected) C.accent else Color.Transparent,
+                        width = if (isSelected) 1.5.dp else 0.dp,
+                        color = if (isSelected) C.accent else Color.Transparent,
                         shape = RoundedCornerShape(12.dp),
                     )
                     // 不可用时也要接住点击：整块 `clickable(enabled = false)` 是彻底的「点不动」，
                     // 用户得不到任何解释。现在统一交给 onPick，由调用方 toast 出原因。
-                    .clickable { onPick(value) }
+                    .clickable { onPick(preset) }
                     .alpha(if (enabled) 1f else 0.55f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = preset.label,
-                    color = if (selected) C.accent else C.textPrimary,
+                    text = label(preset),
+                    color = if (isSelected) C.accent else C.textPrimary,
                     fontSize = 12.5.sp,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                     maxLines = 1,
                 )
             }

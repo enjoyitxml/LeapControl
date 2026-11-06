@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -104,6 +105,9 @@ fun SettingsScreen(
     var showRename by remember { mutableStateOf(false) }
     var showPin by remember { mutableStateOf(false) }
     var showAmapKey by remember { mutableStateOf(false) }
+    // 电池容量：行程能耗把电量百分比换算成 kWh 要用它
+    var showBatteryKwh by remember { mutableStateOf(false) }
+    var batteryKwhSaved by remember { mutableStateOf(0) }
     // 由外部请求打开密码框：只在进来那一刻处理一次
     LaunchedEffect(startWithPin) {
         if (startWithPin) {
@@ -435,7 +439,7 @@ fun SettingsScreen(
         // 「高级设置」默认折叠 —— 等于让人先去猜东西在哪。
         SettingsCard("车辆位置与目的地") {
             Text(
-                "地图底图（找车页与首页缩略图）直连高德的公开瓦片，不需要 Key，有坐标就能看、能拖能缩。\n" +
+                "地图底图（找车页、首页缩略图与每段行程轨迹）直连高德的公开瓦片，不需要 Key，有坐标就能画出来。\n" +
                     "需要 Key 的是另外两件事：把坐标翻译成中文地址、以及按关键字搜目的地 —— " +
                     "用的是你自己的 Key（免费额度足够日常使用）。\n" +
                     "配好之后：位置卡上显示车停在哪条街几号院，搜到目的地还能一键发到车机。\n" +
@@ -593,10 +597,22 @@ fun SettingsScreen(
         // 这里放「大部分人用不上、又确实有用」的东西：带商标风险的图标切换、
         // 以及排查卡顿用的帧率浮层。
         // 折叠状态刻意只用 remember、不落盘 —— 每次进设置都回到收起状态。
+        val batteryKwhNow = remember(batteryKwhSaved) { runtime.batteryKwh() }
         CollapsibleSettingsCard(
             title = "高级设置",
             desc = "进阶功能与排查选项，点开查看",
         ) {
+            ClickRow(
+                title = "电池容量",
+                desc = if (batteryKwhNow == null) {
+                    "未填写：行程只显示耗电百分比。填了才换算成度数（如 78.5 kWh）"
+                } else {
+                    "已填 ${batteryKwhNow} kWh · 行程能耗按电量差换算成度数"
+                },
+                icon = Icons.Default.Settings,
+                onClick = { showBatteryKwh = true },
+            )
+            Spacer(Modifier.height(10.dp))
             SwitchRow(
                 label = "解锁应用图标切换",
                 desc = "开启后「个性化」会出现「应用图标」，可在方向盘与官方 Logo 之间切换（切换后需重启 App）",
@@ -697,6 +713,19 @@ fun SettingsScreen(
     // ---- 高德 Web Key ----
     if (showAmapKey) {
         AmapKeyDialog(runtime = runtime, onDismiss = { showAmapKey = false })
+    }
+
+    // ---- 电池容量（行程能耗换算用）----
+    // 对话框抽到 BatteryKwhDialog：行程轨迹页也要能填，两处共用一份，不按车型猜。
+    if (showBatteryKwh) {
+        BatteryKwhDialog(
+            current = runtime.batteryKwh(),
+            onSave = {
+                runtime.setBatteryKwh(it)
+                batteryKwhSaved++
+            },
+            onDismiss = { showBatteryKwh = false },
+        )
     }
 
     // ---- 动力类型（增程 / 纯电） ----
@@ -1536,7 +1565,7 @@ fun AmapKeyDialog(runtime: AppRuntime, onDismiss: () -> Unit) {
             // 教程比输入框长得多，不给滚动时矮屏上「保存」会被顶出弹窗
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
-                    "地图底图不需要 Key：找车页和首页缩略图直连高德的公开瓦片，有坐标就画得出来。" +
+                    "地图底图不需要 Key：找车页、首页缩略图和行程轨迹都直连高德的公开瓦片，有坐标就画得出来。" +
                         "这里要 Key 的是另外两件事 —— 把坐标翻译成中文地址（逆地理编码），" +
                         "以及按关键字搜目的地。",
                     color = C.textSecondary,

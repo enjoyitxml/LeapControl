@@ -37,6 +37,9 @@ import com.leapcontrol.app.journal.JournalData
 import com.leapcontrol.app.journal.MaintenancePlan
 import com.leapcontrol.app.journal.MedalGroup
 import com.leapcontrol.app.journal.Medals
+import com.leapcontrol.app.trip.TripFormat
+import com.leapcontrol.app.trip.TripOverview
+import com.leapcontrol.app.trip.TripRules
 
 /** 仪表盘的左右留白。地图那一块要贴到屏幕边缘，所以留白不能挂在整列上。 */
 private val Gutter = 22.dp
@@ -65,10 +68,12 @@ fun JournalDashBoard(
     unlockedIds: Set<String>,
     costSummary: CostSummary,
     vehicleKm: Double?,
+    tripOverview: TripOverview?,
     onEdit: () -> Unit,
     onGoal: () -> Unit,
     onCost: () -> Unit,
     onCheckin: () -> Unit,
+    onTrip: () -> Unit,
     onInsurance: () -> Unit,
     onMaintenance: () -> Unit,
 ) {
@@ -111,6 +116,7 @@ fun JournalDashBoard(
                     )
 
                     JournalCardId.COST -> DashCost(summary = costSummary, onClick = onCost)
+                    JournalCardId.TRIP -> DashTrip(overview = tripOverview, onClick = onTrip)
                     JournalCardId.FOOTPRINT -> DashFootprint(data = data, onClick = onCheckin)
 
                     else -> Unit
@@ -364,6 +370,103 @@ private fun DashGoal(
                     color = C.textSecondary,
                     fontSize = 10.5.sp,
                     maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 行程轨迹：仪表盘里的入口块。
+ *
+ * 和成本 / 目标同一套读法：标题 + 一个主数字（最近一趟里程）+ 稀疏采样点时间轴。
+ * 没数据时写清记录前提，别让人以为这张卡坏了。
+ */
+@Composable
+private fun DashTrip(overview: TripOverview?, onClick: () -> Unit) {
+    val C = LocalAppColors.current
+    val latest = overview?.latest
+    val live = overview?.let { TripRules.live(it) }
+    Box(Modifier.padding(horizontal = Gutter)) {
+        JournalCard(padding = 16.dp, onClick = onClick) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "行程轨迹",
+                    color = C.textPrimary,
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                if (live != null) {
+                    Spacer(Modifier.width(8.dp))
+                    RecordingDot(color = C.accent)
+                    Spacer(Modifier.width(4.dp))
+                    Text("记录中", color = C.accent, fontSize = 10.sp, maxLines = 1)
+                }
+                Spacer(Modifier.weight(1f))
+                Text("查看全部 ›", color = C.textSecondary, fontSize = 10.5.sp, maxLines = 1)
+            }
+            Spacer(Modifier.height(12.dp))
+            if (latest == null && live == null) {
+                Text("还没有行程记录", color = C.textSecondary, fontSize = 12.sp, maxLines = 1)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "默认手动：点「开始记录行程」才开始；也可在行程页打开自动开始",
+                    color = C.accent,
+                    fontSize = 10.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else if (latest == null) {
+                Text("正在记录这一段", color = C.textPrimary, fontSize = 17.sp, maxLines = 1)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${live?.sampleCount ?: 0} 个采样点 · 点进页面可手动结束",
+                    color = C.accent,
+                    fontSize = 10.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        TripFormat.km(latest.distanceKm),
+                        color = C.textPrimary,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                    Text(
+                        " km",
+                        color = C.textSecondary,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        modifier = Modifier.padding(bottom = 3.dp),
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "共 ${overview?.trips?.size ?: 0} 段",
+                        color = C.textSecondary,
+                        fontSize = 10.5.sp,
+                        maxLines = 1,
+                    )
+                }
+                Spacer(Modifier.height(9.dp))
+                TripSampleStrip(
+                    points = latest.points,
+                    accent = C.accent,
+                    track = C.barTrack,
+                    modifier = Modifier.fillMaxWidth().height(14.dp),
+                )
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    "${TripFormat.startTime(latest)} → ${TripFormat.time(latest.endAt)}" +
+                        " · ${TripFormat.duration(latest.durationMs)}" +
+                        " · 耗电 ${energyValue(latest.energy?.kwh, latest.energy?.usedPercent)}",
+                    color = C.textSecondary,
+                    fontSize = 10.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

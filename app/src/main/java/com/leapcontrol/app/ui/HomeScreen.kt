@@ -276,6 +276,8 @@ fun HomeScreen(
         val energySummary by runtime.mileageEnergyFlow.collectAsState()
         // 周能耗（近 6 周百公里能耗 + 上周能耗构成），两张能耗卡共用
         val weeklyEnergy by runtime.weeklyEnergyFlow.collectAsState()
+        // 行程轨迹：进程级 StateFlow，首页小卡和二级页清单读的是同一份
+        val tripOverview by runtime.tripFlow.collectAsState()
         // 首页卡片顺序 / 显隐（可自定义）
         val homeCards by runtime.homeCards
         // 卡片编辑态：编辑时卡片区可长按拖动排序、删除、添加
@@ -317,6 +319,8 @@ fun HomeScreen(
         var showAcScreen by remember { mutableStateOf(false) }
         // 找车页（点首页「车辆位置」卡进入）
         var showFindCar by remember { mutableStateOf(false) }
+        // 行程轨迹二级页（点首页「行程轨迹」小卡进入）
+        var showTripHistory by remember { mutableStateOf(false) }
         // 驻车拍照页（点首页「驻车拍照」胶囊进入；和找车页的照片卡共用同一份存储）
         var showParkingPhoto by remember { mutableStateOf(false) }
         // 空调页里的指令在 PIN 验证完成后重放（记录命令名，含 acSetting: 合成命令）
@@ -450,7 +454,7 @@ fun HomeScreen(
         val onMainPage = !showChargingCenter && !showSeatComfort && !showFridge && !showClimate &&
             !showAcScreen && !showScheduledAc && !showVehicleHealth && !showOta &&
             !showControlEditor && !showBleKey && !showPlaybook && !showFindCar &&
-            !showParkingPhoto
+            !showParkingPhoto && !showTripHistory
         LaunchedEffect(onMainPage) { onMainPageChange(onMainPage) }
 
         // ---- 系统返回（返回键 / 左右滑返回手势）：逐级退回，不再直接退出 App ----
@@ -470,6 +474,7 @@ fun HomeScreen(
                 }
                 showOta -> showOta = false
                 showVehicleHealth -> showVehicleHealth = false
+                showTripHistory -> showTripHistory = false
                 showFindCar -> showFindCar = false
                 showParkingPhoto -> showParkingPhoto = false
                 showAcScreen -> showAcScreen = false
@@ -703,10 +708,15 @@ fun HomeScreen(
             }
         }
 
-        /** cellId 为按钮 id；复合按钮（后备箱/车窗/遮阳帘）在此解析成开或关指令。 */
-        fun runControl(cellId: String) {
+        /**
+         * cellId 为按钮 id；复合按钮（后备箱/车窗/遮阳帘）在此解析成开或关指令。
+         * [resolved] 由二次确认弹窗传入：点击那一刻已经解析好的指令，确认后原样下发，
+         * 保证弹窗里显示的与真正发出去的是同一条（弹窗期间车况可能刷新）。
+         * 其余入口（PIN 重放、座椅舒适页）不传，按当时的车况现场解析。
+         */
+        fun runControl(cellId: String, resolved: String? = null) {
             scope.launch {
-                val command = ControlActions.resolveCommand(cellId, status)
+                val command = resolved ?: ControlActions.resolveCommand(cellId, status)
                 controlling = cellId
                 actionMessage = null
                 // 点下去立刻在右上角说「车辆解锁中…」：车端 T-Box 唤醒 + 执行要 5~15 秒，
@@ -1223,6 +1233,25 @@ fun HomeScreen(
                     showScheduledAc = true
                 },
             )
+        } else if (showTripHistory) {
+            // 行程轨迹二级页：全部历史清单。只读进程级的那份数据，
+            // 页面自己不联网、不拉车况，避免第二套刷新逻辑。
+            TripHistoryScreen(
+                overview = tripOverview,
+                onBack = { showTripHistory = false },
+                onFinishTrip = { runtime.finishCurrentTrip() },
+                onStartTrip = { runtime.startTrip() },
+                onDiscardTrip = { runtime.discardCurrentTrip() },
+                amapKey = runtime.amapKey(),
+                // 电池容量：这一页自己也能填（设置里藏在「高级设置」下，用户找不到）
+                batteryKwh = runtime.batteryKwh(),
+                onSetBatteryKwh = { runtime.setBatteryKwh(it) },
+                // 自动开始：读 State.value，用户在行程页拨一下，回到首页卡也立刻跟着变
+                autoStart = runtime.autoStartTripState.value,
+                onSetAutoStart = { runtime.setAutoStartTrip(it) },
+                onDeleteTrip = { runtime.deleteTrip(it) },
+                onMergeTrips = { runtime.mergeTrips(it) },
+            )
         } else if (showFindCar) {
             // 找车页：把车况里的经纬度画在大地图上，并给一个「导航到车辆」的出口。
             // 位置与时间都从车况透传，页面自己不联网取车况（避免第二套刷新逻辑）
@@ -1557,6 +1586,8 @@ fun HomeScreen(
             // 只在两处插话 —— 右上角换成带图标的逐行状态、车模下面多一条行驶状态。
             // 这样经典那条路径连编译产物都不变，也就不存在「切回去发现少了点什么」。
             val heroLayout by runtime.heroLayout.collectAsState()
+            // 车模行驶动效（个性化 → 车模外观 → 行驶动效）：抖动幅度与风向，改了立刻生效
+            val carMotion by runtime.carMotion.collectAsState()
             val currentStatus = status
             val soc = currentStatus?.soc
             // 充电中判定与充电中心页保持一致：以 chargeState 为准，缺失时退回布尔信号。
@@ -1674,6 +1705,10 @@ fun HomeScreen(
                     onTap = onRandomTheme,
                     shouldSkipMeasure = { carModelBottomY > 0f && homeScrollState.value != 0 },
                     onBottom = { carModelBottomY = it },
+                    driving = currentStatus?.isDriving == true,
+                    speed = currentStatus?.speed,
+                    motion = carMotion,
+                    motionPaused = scrollingState,
                     modifier = Modifier
                         .fillMaxWidth()
                         // 分置版下面要坐一条 30dp 的状态胶囊，车模让出 14dp
@@ -1729,7 +1764,15 @@ fun HomeScreen(
                                         iconRes = action.iconRes,
                                         busy = controlling == cellId,
                                         active = active,
-                                        onClick = { ensureConfirmed(action.label) { runControl(cellId) } },
+                                        onClick = {
+                                            // 复合按钮在点击这一刻就解析成「打开 / 关闭 X」：
+                                            // 弹窗文案和真正下发的指令共用这一份结果，
+                                            // 不再只报按钮上的功能名（「遮阳帘」不是指令）。
+                                            val command = ControlActions.resolveCommand(cellId, status)
+                                            ensureConfirmed(ControlActions.commandLabel(command)) {
+                                                runControl(cellId, command)
+                                            }
+                                        },
                                     )
                                 }
                             }
@@ -1796,12 +1839,25 @@ fun HomeScreen(
                         )
                     }
 
+                    // 行程轨迹：最近一趟的小卡只是入口，点开进二级页看全部历史清单
+                    HomeCardId.TRIP -> TripTrackCard(
+                        overview = tripOverview,
+                        onClick = { showTripHistory = true },
+                        onFinishTrip = { runtime.finishCurrentTrip() },
+                        onStartTrip = { runtime.startTrip() },
+                        onDiscardTrip = { runtime.discardCurrentTrip() },
+                        autoStart = runtime.autoStartTripState.value,
+                    )
+
                     // 充电里程：自上次充电后**真实行驶**的公里数（表显总里程前后相减，
                     // 不是「续航掉了多少」）。起点由 AppRuntime 在拿到车况时观测并写进零记，
                     // 这里只负责显示；点开是说明 + 「从现在起算」。
+                    // 缺字段时用上一帧读数顶上（见 AppRuntime.lastKnownOdometerKm）：
+                    // 一帧报文没带 1318 就让数字整块消失，和「被清零」在用户眼里是一回事。
                     HomeCardId.CHARGE_CYCLE -> HomeChargeCycleCard(
                         anchor = journalData.chargeAnchor,
-                        currentKm = OwnershipStats.kmFromText(currentStatus?.totalMileage),
+                        currentKm = OwnershipStats.kmFromText(currentStatus?.totalMileage)
+                            ?: runtime.lastKnownOdometerKm,
                         soc = currentStatus?.soc,
                         onClick = { showChargeSheet = true },
                     )
@@ -2076,14 +2132,15 @@ fun HomeScreen(
 
         // ---- 充电里程说明弹层：讲清这个数字怎么来的，并提供「从现在起算」 ----
         if (showChargeSheet) {
+            // 与卡片同一个口径（缺字段时用上一帧读数），否则弹层里的「现在」会和卡上的对不上
+            val liveKm = OwnershipStats.kmFromText(status?.totalMileage) ?: runtime.lastKnownOdometerKm
             ChargeCycleSheet(
                 anchor = journalData.chargeAnchor,
-                currentKm = OwnershipStats.kmFromText(status?.totalMileage),
+                currentKm = liveKm,
                 currentSoc = status?.soc,
                 onDismiss = { showChargeSheet = false },
                 onRestart = {
-                    val km = OwnershipStats.kmFromText(status?.totalMileage)
-                    val ok = runtime.journal.restartChargeCycle(totalKm = km, soc = status?.soc)
+                    val ok = runtime.journal.restartChargeCycle(totalKm = liveKm, soc = status?.soc)
                     showChargeSheet = false
                     actionMessage =
                         if (ok) "已从当前里程重新起算" else "读不到当前总里程，请先刷新车况"
@@ -2774,6 +2831,9 @@ internal fun serverReason(message: String): String? {
 /**
  * @param active 复合按钮（后备箱/车窗/遮阳帘）的开启状态：
  *               true 高亮（绿底绿图标），false 常规，null 车况未知（常规）。
+ * @param busy 只用来防连点，**不画 loading**。车端执行要 5~15 秒，按钮里转圈
+ *             会让用户以为 App 卡住了（2026-11-06 用户反馈）；进度由右上角
+ *             [ControlFeedback] 的文字（「车辆上锁中…」→ 结论）负责，按钮始终显示图标。
  */
 private fun QuickButton(
     label: String,
@@ -2829,20 +2889,13 @@ private fun QuickButton(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (busy) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(22.dp),
-                    color = c.accent,
-                    strokeWidth = 2.dp,
-                )
-            } else {
-                Icon(
-                    painter = painterResource(iconRes),
-                    contentDescription = label,
-                    tint = iconTint,
-                    modifier = Modifier.size(30.dp),
-                )
-            }
+            // 不再用转圈顶替图标：指令在途时图标原样显示，看着才不像卡住。
+            Icon(
+                painter = painterResource(iconRes),
+                contentDescription = label,
+                tint = iconTint,
+                modifier = Modifier.size(30.dp),
+            )
         }
         Spacer(Modifier.height(8.dp))
         Text(
@@ -3391,6 +3444,17 @@ private fun CarModelBox(
     onTap: () -> Unit,
     shouldSkipMeasure: () -> Boolean,
     onBottom: (Float) -> Unit,
+    /** 行驶中才叠行驶动效；停车时整层不画、也不申请动画帧。 */
+    driving: Boolean,
+    /** 车端车速原文（"60 km/h" / "60.5" / null 都可能）。 */
+    speed: String?,
+    /**
+     * 用户调好的动效参数（抖动幅度 / 风向）。
+     *
+     * 没有总开关：动效跟着车速走，静止时一帧都不画，所以「关掉」这件事由车辆状态决定。
+     */
+    motion: CarMotionSettings,
+    motionPaused: State<Boolean>,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -3416,19 +3480,31 @@ private fun CarModelBox(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Image(
-            bitmap = bitmap.asImageBitmap(),
-            contentDescription = "车模",
-            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-            modifier = Modifier
-                .fillMaxSize()
-                // 千像素级的透明位图，滚动时父级每帧重绘都会重做一次缩放采样。
-                // 单独提一层 graphicsLayer 之后，滚动只更新这块的平移矩阵，位图不再重绘。
-                //
-                // 【别改成 CompositingStrategy.Offscreen】那会强制走离屏缓冲：
-                // 每次失效都要先把整张图重新画进一块独立纹理再合成回去，比不加还贵。
-                .graphicsLayer(),
-        )
+        // 行驶动效：车模整层做抖动，车身上下叠一层从左往右掠过的风线。
+        // 停车、没速度信号、滚动中都不申请帧，等于不存在。
+        CarMotionStage(
+            // 不靠 driving 判速度：挂着 D 挡停在路边时 isDriving 为真但车没动，
+            // 这里给 0 让 animatesAt 直接挡掉，不会出现「停着车还在抖」。
+            speedKmh = if (driving) parseSpeedKmh(speed) else 0f,
+            settings = motion,
+            paused = motionPaused,
+            dark = LocalAppColors.current.isDark,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "车模",
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    // 千像素级的透明位图，滚动时父级每帧重绘都会重做一次缩放采样。
+                    // 单独提一层 graphicsLayer 之后，滚动只更新这块的平移矩阵，位图不再重绘。
+                    //
+                    // 【别改成 CompositingStrategy.Offscreen】那会强制走离屏缓冲：
+                    // 每次失效都要先把整张图重新画进一块独立纹理再合成回去，比不加还贵。
+                    .graphicsLayer(),
+            )
+        }
         // 快捷换壁纸：小白点放在车模右上角，正好落在车顶右侧的空画面上。
         // 车模上的点换的是「主题壁纸」，相伴卡上的点换的是「相伴卡背景」，两者互不影响。
         if (quickTarget == QuickTarget.DOT) {

@@ -48,13 +48,22 @@ import com.leapcontrol.app.journal.JournalDates
 import com.leapcontrol.app.journal.MedalGroup
 import com.leapcontrol.app.journal.MedalStats
 import com.leapcontrol.app.journal.Medals
+import com.leapcontrol.app.trip.TripFormat
+import com.leapcontrol.app.trip.TripOverview
+import com.leapcontrol.app.trip.TripRules
 import java.util.Locale
 
-/** 零记的四个页面：概览 + 三个功能页。 */
+/**
+ * 零记的页面：概览 + 三个自有功能页 + 行程轨迹。
+ *
+ * 行程轨迹本体挂在零控（车况刷新在那边），但零记本来就是「这辆车的故事」，
+ * 从这格直接看历史行程更顺，不必让用户先切回零控再点卡片。
+ */
 enum class JournalPage {
     GOAL,
     COST,
     CHECKIN,
+    TRIP,
 }
 
 /**
@@ -83,6 +92,8 @@ fun JournalScreen(runtime: AppRuntime) {
     // 剩余保养里程就一直不动。行程卡也一样。
     val energy by runtime.mileageEnergyFlow.collectAsState()
     val status by runtime.statusFlow.collectAsState()
+    // 行程轨迹是进程级 StateFlow：零控那边刚收尾一趟，切到零记这边立刻能看到
+    val tripOverview by runtime.tripFlow.collectAsState()
     // 表显优先、里程接口兜底（口径见 OwnershipStats.currentKm）：
     // 里程接口的累计值服务端滞后一天以上，拿它算剩余保养里程会「一个月不掉一公里」。
     val vehicleKm = OwnershipStats.currentKm(status?.totalMileage, energy?.totalMileageKm)
@@ -146,6 +157,22 @@ fun JournalScreen(runtime: AppRuntime) {
             JournalPage.CHECKIN -> JournalCheckinScreen(
                 runtime = runtime,
                 onBack = { page = null },
+            )
+
+            JournalPage.TRIP -> TripHistoryScreen(
+                overview = tripOverview,
+                onBack = { page = null },
+                onFinishTrip = { runtime.finishCurrentTrip() },
+                onStartTrip = { runtime.startTrip() },
+                onDiscardTrip = { runtime.discardCurrentTrip() },
+                amapKey = runtime.amapKey(),
+                // 电池容量：这一页自己也能填（设置里藏在「高级设置」下，用户找不到）
+                batteryKwh = runtime.batteryKwh(),
+                onSetBatteryKwh = { runtime.setBatteryKwh(it) },
+                autoStart = runtime.autoStartTripState.value,
+                onSetAutoStart = { runtime.setAutoStartTrip(it) },
+                onDeleteTrip = { runtime.deleteTrip(it) },
+                onMergeTrips = { runtime.mergeTrips(it) },
             )
         }
     } else {
@@ -221,10 +248,12 @@ fun JournalScreen(runtime: AppRuntime) {
                             costSummary = costSummary,
                             totalKm = totalKm,
                             vehicleKm = vehicleKm?.takeIf { it > 0 },
+                            tripOverview = tripOverview,
                             modifier = Modifier.fillMaxWidth(),
                             onGoal = { page = JournalPage.GOAL },
                             onCost = { page = JournalPage.COST },
                             onCheckin = { page = JournalPage.CHECKIN },
+                            onTrip = { page = JournalPage.TRIP },
                             onInsurance = { showInsurance = true },
                             onMaintenance = { showMaintenance = true },
                         )
@@ -238,10 +267,12 @@ fun JournalScreen(runtime: AppRuntime) {
                     unlockedIds = unlocked,
                     costSummary = costSummary,
                     vehicleKm = vehicleKm?.takeIf { it > 0 },
+                    tripOverview = tripOverview,
                     onEdit = { editingCards = true },
                     onGoal = { page = JournalPage.GOAL },
                     onCost = { page = JournalPage.COST },
                     onCheckin = { page = JournalPage.CHECKIN },
+                    onTrip = { page = JournalPage.TRIP },
                     onInsurance = { showInsurance = true },
                     onMaintenance = { showMaintenance = true },
                 )
@@ -335,6 +366,71 @@ fun JournalScreen(runtime: AppRuntime) {
 private val OrbReservedHeight = 140.dp
 
 /**
+ * 「行程轨迹」卡在**编辑态列表**里的样子（仪表盘另有 `JournalDash.kt` 的 DashTrip）。
+ *
+ * 圆标用「迹」字，跟零记其它引导卡的单字 badge 同一套视觉语言；
+ * 副标题直接带出最近一趟的数据，没数据时顺手把记录前提说一句。
+ * 两种版式共用同一个 `JournalCardId.TRIP`，所以拖动排序 / 隐藏 / 添加都自动生效。
+ */
+@Composable
+private fun TripEntryCard(
+    overview: TripOverview?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val C = LocalAppColors.current
+    val latest = overview?.latest
+    val live = overview?.let { TripRules.live(it) }
+    val subtitle = when {
+        live != null -> "正在记录 · ${live.sampleCount} 个采样点 · 可手动结束"
+        latest == null -> "还没有行程 · 点「开始记录行程」，或在行程页打开自动开始"
+        else -> "最近一趟 ${TripFormat.km(latest.distanceKm)} km · 共 ${overview?.trips?.size ?: 0} 段"
+    }
+    JournalCard(
+        modifier = modifier,
+        cornerRadius = 16.dp,
+        padding = 14.dp,
+        onClick = onClick,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(C.accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "迹",
+                    color = C.accent,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "行程轨迹",
+                    color = C.textPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    subtitle,
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+            Text("›", color = C.textSecondary, fontSize = 18.sp)
+        }
+    }
+}
+
+/**
  * 进零记时「车况算不算新鲜」的阈值。
  *
  * 剩余保养里程依赖表显里程，所以进页面会补一次车况；但这个页面多半是从首页点进来的，
@@ -357,10 +453,12 @@ private fun JournalCardById(
     costSummary: CostSummary,
     totalKm: Double,
     vehicleKm: Double?,
+    tripOverview: TripOverview?,
     modifier: Modifier,
     onGoal: () -> Unit,
     onCost: () -> Unit,
     onCheckin: () -> Unit,
+    onTrip: () -> Unit,
     onInsurance: () -> Unit,
     onMaintenance: () -> Unit,
 ) {
@@ -376,6 +474,9 @@ private fun JournalCardById(
 
         JournalCardId.COST ->
             CostOverviewCard(summary = costSummary, modifier = modifier, onClick = onCost)
+
+        JournalCardId.TRIP ->
+            TripEntryCard(overview = tripOverview, modifier = modifier, onClick = onTrip)
 
         JournalCardId.FOOTPRINT ->
             FootprintOverviewCard(data = data, totalKm = totalKm, modifier = modifier, onClick = onCheckin)
