@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 全透明主题的按键格（深色字 → 浅壁纸场景）。
+     和 widget_cell_t 是一对镜像：深色字压在浅壁纸上，按键底就该是极淡的黑，
+     白玻璃那版放到浅壁纸上会整片消失。 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#26000000">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#1A000000" />
+            <corners android:radius="10dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#2A000000" />
+        </shape>
+    </item>
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFFFF" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+</ripple>

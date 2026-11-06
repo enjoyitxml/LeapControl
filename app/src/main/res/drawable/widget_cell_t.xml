@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 全透明主题的按键格（浅色字 → 深壁纸场景）。
+     卡片底整个透明，但五个按键不能真的「无边界」：手指落下去之前，
+     用户得看得出这一块是可以点的。所以留一层 10% 的白玻璃 + 一道更淡的描边，
+     远看仍是「浮在壁纸上」，近看才有一点轮廓。
+     点按水波用 ripple 的 mask 裁成 10dp 圆角，压下去不会溢出成方块。 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#33FFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#1AFFFFFF" />
+            <corners android:radius="10dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#26FFFFFF" />
+        </shape>
+    </item>
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFFFF" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+</ripple>

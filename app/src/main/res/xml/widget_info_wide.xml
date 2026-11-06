@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  桌面小组件元信息：5×2 宽版。
+
+  为什么单独一份：安卓「添加小部件」列表里，一个 receiver + 一份 provider-info
+  只对应一个固定格数，想让 5 列的桌面铺满一行，只能多注册一个入口。
+  逻辑与 4×2 完全共用（VehicleWidgetProviderWide 一行方法都没重写）。
+
+  minWidth / minHeight 用官方公式 70×n-30：5 列 → 320dp，2 行 → 110dp。
+  targetCellWidth 才是桌面真正参考的值（API 31+），minWidth 是给旧桌面的兜底。
+  minResizeWidth 比 4×2 那份高：宽版布局的里程槽 / 进度条是按 5 列定宽的，
+  再压窄就会把百分比挤掉，250dp 是「还能看」的下限。
+
+  updatePeriodMillis 同样设 0：定时联网只会反复唤醒车上 T-Box。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_description_wide"
+    android:initialLayout="@layout/widget_a_wide"
+    android:minHeight="110dp"
+    android:minResizeHeight="96dp"
+    android:minResizeWidth="250dp"
+    android:minWidth="320dp"
+    android:previewLayout="@layout/widget_a_wide"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="2"
+    android:targetCellWidth="5"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

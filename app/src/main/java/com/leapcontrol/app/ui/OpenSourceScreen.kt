@@ -47,7 +47,6 @@ object OpenSourceInfo {
 @Composable
 fun OpenSourceScreen(
     onBack: () -> Unit,
-    onOpenSupport: () -> Unit = {},
 ) {
     val C = LocalAppColors.current
     val context = LocalContext.current
@@ -118,14 +117,14 @@ fun OpenSourceScreen(
             )
         }
 
-        // ---- 免费与支持 ----
+        // ---- 免费 ----
         Spacer(Modifier.height(12.dp))
-        SettingsCard("免费与支持") {
+        SettingsCard("完全免费") {
             ClauseList(
                 listOf(
                     "零控完全免费：无广告、无订阅、无强制收费，也不出售任何数据。",
-                    "如果你认可这份工作，欢迎支持开发者，也欢迎去原项目给原作者点个 Star —— 那是对开源最好的回报。",
-                    "打赏纯属自愿赠与，不构成任何购买或服务关系，也不影响任何功能的使用。",
+                    "如果你认可这份工作，欢迎去原项目给原作者点个 Star —— 那是对开源最好的回报。",
+                    "没有付费版，也没有任何需要付费才能解锁的功能。",
                 ),
             )
         }
@@ -142,15 +141,6 @@ fun OpenSourceScreen(
                 ),
             )
         }
-
-        // ---- 跳支持页 ----
-        Spacer(Modifier.height(12.dp))
-        ClickRow(
-            title = "支持开发者",
-            desc = "如果零控帮到了你，可以请作者喝杯咖啡",
-            iconRes = R.drawable.ic_support,
-            onClick = onOpenSupport,
-        )
 
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.navigationBarsPadding())

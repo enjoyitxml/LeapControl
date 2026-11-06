@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -38,6 +39,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -68,6 +71,8 @@ fun WidgetSettingsGroup() {
     var style by remember { mutableStateOf(WidgetStyle.style(context)) }
     var revision by remember { mutableIntStateOf(WidgetStyle.revision(context)) }
     var customBg by remember { mutableStateOf(WidgetWallpaper.exists(context)) }
+    var ink by remember { mutableIntStateOf(WidgetStyle.ink(context)) }
+    var ctrl by remember { mutableIntStateOf(WidgetStyle.ctrl(context)) }
 
     val pickBg = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -91,10 +96,29 @@ fun WidgetSettingsGroup() {
         style = style,
         revision = revision,
         customBg = customBg,
+        ink = ink,
+        ctrl = ctrl,
         onSelectStyle = { picked ->
             style = picked
             WidgetStyle.setStyle(context, picked)
             VehicleWidget.render(context)
+        },
+        onPickInk = { color ->
+            ink = color
+            WidgetStyle.setInk(context, color)
+            VehicleWidget.render(context)
+        },
+        onPickCtrl = { color ->
+            ctrl = color
+            WidgetStyle.setCtrl(context, color)
+            VehicleWidget.render(context)
+        },
+        onResetColors = {
+            WidgetStyle.resetColors(context)
+            ink = WidgetStyle.ink(context)
+            ctrl = WidgetStyle.ctrl(context)
+            VehicleWidget.render(context)
+            Toast.makeText(context, "已恢复默认颜色", Toast.LENGTH_SHORT).show()
         },
         onPickBg = {
             pickBg.launch(
@@ -112,7 +136,7 @@ fun WidgetSettingsGroup() {
 
     Spacer(Modifier.height(10.dp))
     Text(
-        "两套版式随时可以换，桌面上已有的卡片会立刻跟着变，不用删掉重加。",
+        "三套版式随时可以换，桌面上已有的卡片会立刻跟着变，不用删掉重加。",
         color = C.textSecondary,
         fontSize = 11.sp,
         lineHeight = 16.sp,
@@ -124,7 +148,12 @@ private fun WidgetSection(
     style: String,
     revision: Int,
     customBg: Boolean,
+    ink: Int,
+    ctrl: Int,
     onSelectStyle: (String) -> Unit,
+    onPickInk: (Int) -> Unit,
+    onPickCtrl: (Int) -> Unit,
+    onResetColors: () -> Unit,
     onPickBg: () -> Unit,
     onClearBg: () -> Unit,
 ) {
@@ -134,10 +163,12 @@ private fun WidgetSection(
         SettingsCard {
             Row(modifier = Modifier.fillMaxWidth()) {
                 WidgetStyle.ALL.forEachIndexed { index, item ->
-                    if (index > 0) Spacer(Modifier.width(9.dp))
+                    if (index > 0) Spacer(Modifier.width(7.dp))
                     WidgetStyleThumb(
                         style = item,
                         selected = style == item,
+                        ink = ink,
+                        ctrl = ctrl,
                         modifier = Modifier.weight(1f),
                         onClick = { onSelectStyle(item) },
                     )
@@ -148,12 +179,43 @@ private fun WidgetSection(
             Text(
                 when (style) {
                     WidgetStyle.STYLE_D -> "沉浸：一张图铺满卡片，下半部分压暗保证白字读得清。"
+                    WidgetStyle.STYLE_T -> "全透明：没有卡片底，字和按键直接浮在壁纸上，下面可以自己调颜色。"
                     else -> "素纸：浅色卡 + 发丝分隔线，跟系统自带的卡片最接近。"
                 },
                 color = C.textSecondary,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
+
+            // ---- 全透明主题的颜色：只在选中它时出现 ----
+            // 素纸 / 沉浸的配色是跟着「卡片底」定的，开放了反而会把可读性调坏，
+            // 所以这两个不摆入口，界面也就不必解释「为什么这里不能调」。
+            if (style == WidgetStyle.STYLE_T) {
+                Spacer(Modifier.height(14.dp))
+                WidgetColorRow(
+                    title = "字体颜色",
+                    desc = "车名、续航数字、百分比，以及五个按键图标的常态色。壁纸偏深就选浅色，反之选深色。",
+                    color = ink,
+                    onPick = onPickInk,
+                )
+                Spacer(Modifier.height(14.dp))
+                WidgetColorRow(
+                    title = "控件颜色",
+                    desc = "按键按下生效时的亮色，以及按键之间的分隔线。",
+                    color = ctrl,
+                    onPick = onPickCtrl,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "恢复默认颜色",
+                    color = C.textSecondary,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onResetColors() }
+                        .padding(horizontal = 2.dp, vertical = 4.dp),
+                )
+            }
 
             // 背景图只在沉浸样式下有意义，别的版式里不摆这个入口
             if (style == WidgetStyle.STYLE_D) {
@@ -244,8 +306,9 @@ private fun WidgetSection(
                     Text("放到桌面", color = C.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        "长按桌面空白处 → 添加小部件 → 选「零控」→ 拖到桌面。4×2 摆放最合适，" +
-                            "放着就能看续航，五个按键点一下直接控车。",
+                        "长按桌面空白处 → 添加小部件 → 选「零控」→ 拖到桌面。" +
+                            "列表里有 4×2 和 5×2 两种：5 列的桌面选「零控 · 5×2」才铺满一行，" +
+                            "其余用 4×2。放着就能看续航，五个按键点一下直接控车。",
                         color = C.textSecondary,
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
@@ -259,21 +322,36 @@ private fun WidgetSection(
 /**
  * 一张版式卡：上面是示意图，下面是名字。
  *
- * 示意图只画结构（标题行 / 续航 / 右侧车模 / 底部五格），不画文字 —— 在 60dp 高的框里
- * 任何文字都只会变成噪点，反而看不出三者的差别。
+ * 示意图只画结构（标题行 / 续航 / 右侧车模 / 底部五格），不画文字 —— 在 56dp 高的框里
+ * 任何文字都只会变成噪点，反而看不出几者的差别。
+ *
+ * 全透明那张用「棋盘格」当底：这是设计工具里表示透明的通用画法，
+ * 比涂成纯色更能一眼看出「这一版没有卡片底」。格子里的字块与按键块直接用用户选的两个颜色，
+ * 换色时缩略图跟着变，不用先应用到桌面才知道效果。
  */
 @Composable
 private fun WidgetStyleThumb(
     style: String,
     selected: Boolean,
+    ink: Int,
+    ctrl: Int,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val C = LocalAppColors.current
     val shape = RoundedCornerShape(14.dp)
     val immersive = style == WidgetStyle.STYLE_D
-    val cardBg = if (immersive) Color.Transparent else C.panelBg
-    val ink = if (immersive) Color.White else C.textPrimary
+    val clear = style == WidgetStyle.STYLE_T
+    val barInk = when {
+        clear -> Color(ink)
+        immersive -> Color.White
+        else -> C.textPrimary
+    }
+    val barCtrl = when {
+        clear -> Color(ctrl)
+        immersive -> Color.White
+        else -> C.accent
+    }
 
     Column(
         modifier = modifier,
@@ -285,30 +363,33 @@ private fun WidgetStyleThumb(
                 .height(56.dp)
                 .clip(shape)
                 .then(
-                    if (immersive) {
-                        Modifier.background(
+                    when {
+                        clear -> Modifier
+                        immersive -> Modifier.background(
                             Brush.linearGradient(listOf(Color(0xFF35506B), Color(0xFF8FA9C4))),
                         )
-                    } else {
-                        Modifier.background(cardBg)
+                        else -> Modifier.background(C.panelBg)
                     },
                 )
                 .border(1.5.dp, if (selected) C.accent else C.border, shape)
                 .clickable(onClick = onClick)
                 .padding(6.dp),
         ) {
+            if (clear) {
+                CheckerBoard(Modifier.matchParentSize())
+            }
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(modifier = Modifier.weight(1f)) {
                     Column(modifier = Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Bar(13.dp, 3.dp, ink.copy(alpha = 0.85f))
+                            Bar(13.dp, 3.dp, barInk.copy(alpha = 0.85f))
                             Spacer(Modifier.width(3.dp))
-                            Bar(8.dp, 3.dp, ink.copy(alpha = 0.45f))
+                            Bar(8.dp, 3.dp, barInk.copy(alpha = 0.45f))
                         }
                         Spacer(Modifier.height(4.dp))
-                        Bar(26.dp, 9.dp, ink.copy(alpha = 0.9f))
+                        Bar(26.dp, 9.dp, barInk.copy(alpha = 0.9f))
                         Spacer(Modifier.height(3.dp))
-                        Bar(30.dp, 2.dp, if (immersive) Color.White.copy(alpha = 0.7f) else C.accent.copy(alpha = 0.75f))
+                        Bar(30.dp, 2.dp, barCtrl.copy(alpha = 0.75f))
                     }
                     Spacer(Modifier.width(5.dp))
                     Box(
@@ -318,6 +399,7 @@ private fun WidgetStyleThumb(
                             .clip(RoundedCornerShape(6.dp))
                             .background(
                                 when {
+                                    clear -> barInk.copy(alpha = 0.10f)
                                     immersive -> Color.White.copy(alpha = 0.16f)
                                     else -> Color.Transparent
                                 },
@@ -335,8 +417,10 @@ private fun WidgetStyleThumb(
                                 .clip(RoundedCornerShape(2.dp))
                                 .background(
                                     when {
+                                        // 透明主题的按键是一层淡玻璃，缩略图照这个比例示意
+                                        clear -> barCtrl.copy(alpha = 0.22f)
                                         immersive -> Color.White.copy(alpha = 0.26f)
-                                        else -> ink.copy(alpha = 0.07f)
+                                        else -> barInk.copy(alpha = 0.07f)
                                     },
                                 ),
                         )
@@ -351,6 +435,34 @@ private fun WidgetStyleThumb(
             fontSize = 12.sp,
             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
         )
+    }
+}
+
+/** 透明底纹：8dp 方格交替，两色都取自当前主题，深浅色模式下都不刺眼。 */
+@Composable
+private fun CheckerBoard(modifier: Modifier = Modifier) {
+    val C = LocalAppColors.current
+    Canvas(modifier = modifier) {
+        val cell = 8.dp.toPx()
+        val light = C.panelBg
+        val dark = C.border.copy(alpha = 0.55f)
+        var y = 0f
+        var row = 0
+        while (y < size.height) {
+            var x = 0f
+            var col = 0
+            while (x < size.width) {
+                drawRect(
+                    color = if ((row + col) % 2 == 0) light else dark,
+                    topLeft = Offset(x, y),
+                    size = Size(cell, cell),
+                )
+                x += cell
+                col++
+            }
+            y += cell
+            row++
+        }
     }
 }
 

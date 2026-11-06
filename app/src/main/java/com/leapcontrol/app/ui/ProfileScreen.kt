@@ -8,7 +8,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,7 +24,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -46,10 +44,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,16 +57,14 @@ import com.leapcontrol.app.R
 import com.leapcontrol.app.UpdateCheckResult
 import kotlinx.coroutines.launch
 
-// QQ 交流群群号定义在 AppCommunity.kt：更新弹窗的下载兜底文案也要用它。
-
 /** 入口卡片之间的间距：整页要在尽量少滚动的前提下看完，12dp 收到 8dp。 */
 private val ITEM_GAP = 8.dp
 
 /**
- * 「我的」页面：入口列表 —— 设置 / 个性化 / 玩法说明 / 支持开发者 / 开源协议与致谢 /
+ * 「我的」页面：入口列表 —— 设置 / 个性化 / 玩法说明 / 开源协议与致谢 /
  * 检查更新 / 意见反馈 / 关于，其中「关于」内嵌「免责声明」「隐私条款」两个子入口，
  * 其余项都下沉到各自的二级页；页面顶部是头像（可换内置卡通头像或相册照片），
- * 页面底部是 QQ 交流群页脚与退出登录。
+ * 底部是署名与使用范围两行小字。退出登录在车名卡右侧。
  *
  * 「意见反馈」紧贴「关于」上方，点击交给系统浏览器打开问卷（地址见 [FEEDBACK_URL]）。
  * 「检查更新」入口由 [SHOW_UPDATE_CHECK] 控制，当前启用（启动自动检测 + 手动检查）。
@@ -239,16 +233,9 @@ fun ProfileScreen(
                 "车模、主题、快捷控车，一页看完",
             ) { onOpenPage(SettingsPage.PLAYBOOK) }
             Spacer(Modifier.height(ITEM_GAP))
-            // 支持开发者 / 开源协议与致谢：两个都是「面向外部」的模块，
-            // 统一由 SHOW_DEV_ENTRIES 控制（对外发布版为 true）
+            // 开源协议与致谢：面向外部（协议 / 署名）的模块，由 SHOW_DEV_ENTRIES 控制。
+            // 「支持开发者」入口已按用户要求下线，相关页面与资源一并移除。
             if (SHOW_DEV_ENTRIES) {
-                // 支持开发者：紧跟在「个性化」之后，两个都是"想帮开发者"的入口
-                ProfileItem(
-                    R.drawable.ic_support,
-                    "支持开发者",
-                    "完全免费，愿意的话请开发者喝杯咖啡",
-                ) { onOpenPage(SettingsPage.SUPPORT) }
-                Spacer(Modifier.height(ITEM_GAP))
                 ProfileItem(
                     R.drawable.ic_opensource,
                     "开源协议与致谢",
@@ -316,7 +303,7 @@ fun ProfileScreen(
             }
 
             // 意见反馈：紧贴「关于」上方，是整页最后一个「有事找开发者」的入口。
-            // 点击交给系统浏览器（问卷要登录 QQ / 微信态，内置 WebView 拿不到系统账号）。
+            // 点击交给系统浏览器（问卷要登录第三方账号，内置 WebView 拿不到系统账号）。
             // 不放进 SHOW_DEV_ENTRIES 分支：反馈入口面向所有用户，跟着外链开关一起关掉没道理。
             ProfileItem(
                 R.drawable.ic_feedback,
@@ -336,36 +323,9 @@ fun ProfileScreen(
                 "版本信息、免责声明与隐私条款",
             ) { onOpenPage(SettingsPage.ABOUT) }
 
-            // 页脚：交流群（放在所有入口之下，居中的小字，不抢主内容的视觉）。
-            // 整行可点：点一下就把群号复制到剪贴板，省得手动选数字。
-            // 间距 / 行高都比正文紧：这三行是「版权声明」性质，不该由它们把页面撑出第二屏
+            // 页脚：只剩署名与使用范围两行小字。
+            // 间距 / 行高都比正文紧：这两行是「版权声明」性质，不该由它们把页面撑出第二屏
             Spacer(Modifier.height(14.dp))
-            val clipboard = LocalClipboardManager.current
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
-                        clipboard.setText(AnnotatedString(QQ_GROUP))
-                        Toast.makeText(context, "已复制群号 $QQ_GROUP", Toast.LENGTH_SHORT).show()
-                    }
-                    .padding(vertical = 5.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "QQ交流群：$QQ_GROUP",
-                    color = LocalAppColors.current.textSecondary.copy(alpha = 0.75f),
-                    fontSize = 11.5.sp,
-                )
-                Spacer(Modifier.width(5.dp))
-                Icon(
-                    Icons.Filled.ContentCopy,
-                    contentDescription = "复制群号",
-                    tint = LocalAppColors.current.textSecondary.copy(alpha = 0.55f),
-                    modifier = Modifier.size(12.dp),
-                )
-            }
 
             // 署名一行小字：不写真名，统一称「开发者」。
             // 项目已重新开源，这里恢复「开源」字样；但公开的是源码，分发范围仍限定车友自用。

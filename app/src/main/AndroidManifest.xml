@@ -15,10 +15,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- 仅 Android 9 及以下保存收款码到相册时需要；Android 10+ 走 MediaStore，无需权限 -->
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
     <!-- osmdroid 的清单默认要这个（它默认把瓦片缓存写到外部存储根目录）。
          我们已经把缓存指到 filesDir（见 FindCarMap 的 ensureMapConfig），用不到它，
          从合并结果里去掉，别让「权限」列表平白多一条 -->
@@ -146,6 +142,24 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_info" />
+        </receiver>
+
+        <!--
+          桌面小组件（5×2 宽版，2026-11-06）：给 5 列的桌面用 —— 4×2 摆上去会空一列。
+          逻辑与上面那个完全共用（子类一行都没重写），只是多一个「添加小部件」条目、
+          多一套 widget_*_wide 布局。label 必须与 4×2 区分开，否则列表里两个「零控」分不清。
+        -->
+        <receiver
+            android:name=".widget.VehicleWidgetProviderWide"
+            android:exported="true"
+            android:label="@string/widget_label_wide">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_wide" />
         </receiver>
 
         <!--

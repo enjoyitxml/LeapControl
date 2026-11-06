@@ -1,0 +1,425 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  T｜全透明 —— 没有卡片底，字和按键直接浮在壁纸上。
+
+  版式与 A 素纸完全一致（标题行 / 续航 / 右侧车模 / 底部五格），差别只有三处：
+    ① 根背景透明（`@android:color/transparent`），壁纸从卡片里透出来；
+    ② 文字带一层黑色阴影 —— 壁纸深浅不可控，纯靠字色对比在浅壁纸上会糊；
+    ③ 分隔线、按键底的填充色都交给代码在运行时上色 / 换素材，
+       因为它们要跟着用户选的「字体颜色 / 控件颜色」走。
+
+  进度条为什么是两层：
+    ProgressBar 只能改 progress 值，**没有** setProgressDrawable(int) 这种运行时换图的签名
+    （RemoteViews 的 setInt 反射调用会直接失败）。所以「浅色字配亮条、深色字配暗条」
+    只能靠两份 drawable + 两条 ProgressBar 叠在同一个位置、由代码显示其中一条。
+    FrameLayout 的尺寸就是原进度条的 40dp×7dp，外层间距也挪到了它身上，
+    所以对齐关系和 A 版一模一样。
+
+  分隔线给了四个独立 id（wg_div1~wg_div4）：RemoteViews 的 findViewById 只能命中
+  第一个同 id 的视图，四个共用一个 id 的话只有第一条能上色。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/wg_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="15dp"
+        android:paddingTop="9dp"
+        android:paddingEnd="11dp"
+        android:paddingBottom="10dp">
+
+        <LinearLayout
+            android:id="@+id/wg_hero"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:id="@+id/wg_info"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1.06"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginTop="3dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ImageView
+                        android:id="@+id/wg_logo"
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:layout_marginEnd="5dp"
+                        android:contentDescription="@null"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ic_leap_logo" />
+
+                    <TextView
+                        android:id="@+id/wg_title"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:includeFontPadding="false"
+                        android:maxLines="1"
+                        android:shadowColor="#59000000"
+                        android:shadowDx="0"
+                        android:shadowDy="1.2"
+                        android:shadowRadius="4"
+                        android:text="我的零跑"
+                        android:textColor="#FFFFFF"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <ImageView
+                            android:id="@+id/wg_ev_icon"
+                            android:layout_width="15dp"
+                            android:layout_height="15dp"
+                            android:contentDescription="@null"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_range_ev" />
+
+                        <TextView
+                            android:id="@+id/wg_ev_value"
+                            android:layout_width="46dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:gravity="start"
+                            android:includeFontPadding="false"
+                            android:maxLines="1"
+                            android:shadowColor="#59000000"
+                            android:shadowDx="0"
+                            android:shadowDy="1.2"
+                            android:shadowRadius="4"
+                            android:text="--km"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+
+                        <FrameLayout
+                            android:layout_width="40dp"
+                            android:layout_height="7dp"
+                            android:layout_marginStart="4dp"
+                            android:layout_marginEnd="4dp">
+
+                            <ProgressBar
+                                android:id="@+id/wg_ev_bar"
+                                style="?android:attr/progressBarStyleHorizontal"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:max="100"
+                                android:progressDrawable="@drawable/widget_bar_ev_t" />
+
+                            <ProgressBar
+                                android:id="@+id/wg_ev_bar_dark"
+                                style="?android:attr/progressBarStyleHorizontal"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:max="100"
+                                android:progressDrawable="@drawable/widget_bar_ev_t_dark"
+                                android:visibility="gone" />
+                        </FrameLayout>
+
+                        <TextView
+                            android:id="@+id/wg_ev_pct"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:includeFontPadding="false"
+                            android:maxLines="1"
+                            android:shadowColor="#59000000"
+                            android:shadowDx="0"
+                            android:shadowDy="1.2"
+                            android:shadowRadius="4"
+                            android:text="--"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/wg_fuel_row"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <ImageView
+                            android:id="@+id/wg_fuel_icon"
+                            android:layout_width="15dp"
+                            android:layout_height="15dp"
+                            android:contentDescription="@null"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_range_fuel" />
+
+                        <TextView
+                            android:id="@+id/wg_fuel_value"
+                            android:layout_width="46dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:gravity="start"
+                            android:includeFontPadding="false"
+                            android:maxLines="1"
+                            android:shadowColor="#59000000"
+                            android:shadowDx="0"
+                            android:shadowDy="1.2"
+                            android:shadowRadius="4"
+                            android:text="--km"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+
+                        <FrameLayout
+                            android:layout_width="40dp"
+                            android:layout_height="7dp"
+                            android:layout_marginStart="4dp"
+                            android:layout_marginEnd="4dp">
+
+                            <ProgressBar
+                                android:id="@+id/wg_fuel_bar"
+                                style="?android:attr/progressBarStyleHorizontal"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:max="100"
+                                android:progressDrawable="@drawable/widget_bar_fuel_t" />
+
+                            <ProgressBar
+                                android:id="@+id/wg_fuel_bar_dark"
+                                style="?android:attr/progressBarStyleHorizontal"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:max="100"
+                                android:progressDrawable="@drawable/widget_bar_fuel_t_dark"
+                                android:visibility="gone" />
+                        </FrameLayout>
+
+                        <TextView
+                            android:id="@+id/wg_fuel_pct"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:includeFontPadding="false"
+                            android:maxLines="1"
+                            android:shadowColor="#59000000"
+                            android:shadowDx="0"
+                            android:shadowDy="1.2"
+                            android:shadowRadius="4"
+                            android:text="--"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+
+            <FrameLayout
+                android:id="@+id/wg_car_box"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1">
+
+                <ImageView
+                    android:id="@+id/wg_car"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="车辆"
+                    android:scaleType="fitCenter"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/wg_act_row"
+            android:layout_width="match_parent"
+            android:layout_height="38dp"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:id="@+id/wg_cell_unlock"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/widget_cell_t"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/wg_icon_unlock"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="解锁"
+                    android:padding="6dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_qc_unlock" />
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/wg_div1"
+                android:layout_width="1dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center_vertical"
+                android:background="#1FFFFFFF"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:id="@+id/wg_cell_lock"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/widget_cell_t"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/wg_icon_lock"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="上锁"
+                    android:padding="6dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_qc_lock" />
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/wg_div2"
+                android:layout_width="1dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center_vertical"
+                android:background="#1FFFFFFF"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:id="@+id/wg_cell_ac"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/widget_cell_t"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/wg_icon_ac"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="空调"
+                    android:padding="6dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_qc_ac" />
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/wg_div3"
+                android:layout_width="1dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center_vertical"
+                android:background="#1FFFFFFF"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:id="@+id/wg_cell_trunk"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/widget_cell_t"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/wg_icon_trunk"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="后备箱"
+                    android:padding="6dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_qc_trunk" />
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/wg_div4"
+                android:layout_width="1dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center_vertical"
+                android:background="#1FFFFFFF"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:id="@+id/wg_cell_horn"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/widget_cell_t"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/wg_icon_horn"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="鸣笛寻车"
+                    android:padding="6dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_qc_horn" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/wg_status_row"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="12dp"
+        android:layout_marginEnd="20dp"
+        android:gravity="center_vertical|end"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/wg_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:maxWidth="118dp"
+            android:shadowColor="#59000000"
+            android:shadowDx="0"
+            android:shadowDy="1.2"
+            android:shadowRadius="4"
+            android:text="尚未同步"
+            android:textColor="#E6FFFFFF"
+            android:textSize="10sp" />
+
+        <ImageView
+            android:id="@+id/wg_refresh"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginStart="3dp"
+            android:clickable="true"
+            android:contentDescription="刷新车况"
+            android:focusable="true"
+            android:padding="2.5dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_widget_refresh" />
+    </LinearLayout>
+</FrameLayout>

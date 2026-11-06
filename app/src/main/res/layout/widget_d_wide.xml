@@ -1,0 +1,397 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  D｜沉浸 · 5×2 宽版。
+
+  和 4×2 那份是**同一个骨架**，只改了「宽出来那 80dp 往哪儿分」：
+    · 内边距 end 11 → 13、车模区权重 1 → 1.2 —— 多出来的宽度主要给车模，
+      它是这张卡的主体，跟着变宽比把它两侧留白更好看；
+    · 信息区权重 1.06 → 1.1、里程槽 46 → 52dp、进度条 40 → 50dp ——
+      续航那一行在宽卡上不能还是 4×2 的定宽，否则右侧会空出一截；
+    · 按键行 38 → 42dp —— 五个格子摊到 74dp 宽之后，不放高一点会显得图标孤零零。
+
+  ⚠️ 改结构请**同时**改 widget_d.xml：这两份是同构的，
+  分开维护是因为 RemoteViews 改不了 layout_weight（setInt 只认 @RemotableViewMethod），
+  想让宽度按比例分配只能再来一份 XML。id 必须与 4×2 那份完全一致 ——
+  增量更新（partiallyUpdateAppWidget）靠 id 定位，缺一个就静默失效。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/wg_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_card_light"
+    android:clipToOutline="true">
+
+    <ImageView
+        android:id="@+id/wg_bg"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/widget_card_dark"
+        android:clipToOutline="true"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop" />
+
+    <ImageView
+        android:id="@+id/wg_scrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/widget_d_scrim"
+        android:contentDescription="@null" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="15dp"
+        android:paddingTop="9dp"
+        android:paddingEnd="13dp"
+        android:paddingBottom="12dp">
+
+        <LinearLayout
+            android:id="@+id/wg_hero"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:id="@+id/wg_info"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1.1"
+                android:orientation="vertical">
+
+                <!-- 标题行：logo + 车名（更新时间在卡片右上角的 wg_time，不在这里）。
+                     整体从卡片内边距再往里推 4dp、往下推 3dp，跟下面的续航区左端对齐。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginTop="3dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ImageView
+                        android:id="@+id/wg_logo"
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:layout_marginEnd="5dp"
+                        android:contentDescription="@null"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ic_leap_logo" />
+
+                    <TextView
+                        android:id="@+id/wg_title"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:includeFontPadding="false"
+                        android:maxLines="1"
+                        android:text="我的零跑"
+                        android:textColor="#FFFFFF"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <!-- 续航：纯电一行；增程多一行油（wg_fuel_row 默认 GONE，纯电车型不占位）。
+                     里程槽定宽 50dp、进度条定宽 40dp：两行的条起点和百分比左端因此严格对齐。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <ImageView
+                            android:id="@+id/wg_ev_icon"
+                            android:layout_width="15dp"
+                            android:layout_height="15dp"
+                            android:contentDescription="@null"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_range_ev" />
+
+                        <TextView
+                            android:id="@+id/wg_ev_value"
+                            android:layout_width="52dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:gravity="start"
+                            android:includeFontPadding="false"
+                            android:maxLines="1"
+                            android:text="--km"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+
+                        <ProgressBar
+                            android:id="@+id/wg_ev_bar"
+                            style="?android:attr/progressBarStyleHorizontal"
+                            android:layout_width="50dp"
+                            android:layout_height="7dp"
+                            android:layout_marginStart="4dp"
+                            android:layout_marginEnd="4dp"
+                            android:max="100"
+                            android:progressDrawable="@drawable/widget_bar_ev_glass" />
+
+                        <TextView
+                            android:id="@+id/wg_ev_pct"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:includeFontPadding="false"
+                            android:maxLines="1"
+                            android:text="--"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/wg_fuel_row"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <ImageView
+                            android:id="@+id/wg_fuel_icon"
+                            android:layout_width="15dp"
+                            android:layout_height="15dp"
+                            android:contentDescription="@null"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_range_fuel" />
+
+                        <TextView
+                            android:id="@+id/wg_fuel_value"
+                            android:layout_width="52dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:gravity="start"
+                            android:includeFontPadding="false"
+                            android:maxLines="1"
+                            android:text="--km"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+
+                        <ProgressBar
+                            android:id="@+id/wg_fuel_bar"
+                            style="?android:attr/progressBarStyleHorizontal"
+                            android:layout_width="50dp"
+                            android:layout_height="7dp"
+                            android:layout_marginStart="4dp"
+                            android:layout_marginEnd="4dp"
+                            android:max="100"
+                            android:progressDrawable="@drawable/widget_bar_fuel_glass" />
+
+                        <TextView
+                            android:id="@+id/wg_fuel_pct"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:includeFontPadding="false"
+                            android:maxLines="1"
+                            android:text="--"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+
+            <FrameLayout
+                android:id="@+id/wg_car_box"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1.2">
+
+                <ImageView
+                    android:id="@+id/wg_car"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="车辆"
+                    android:scaleType="fitCenter"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/wg_act_row"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:id="@+id/wg_cell_unlock"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/widget_cell_d"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/wg_icon_unlock"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="解锁"
+                    android:padding="6dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_qc_unlock" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="1dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center_vertical"
+                android:background="#33FFFFFF"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:id="@+id/wg_cell_lock"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/widget_cell_d"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/wg_icon_lock"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="上锁"
+                    android:padding="6dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_qc_lock" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="1dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center_vertical"
+                android:background="#33FFFFFF"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:id="@+id/wg_cell_ac"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/widget_cell_d"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/wg_icon_ac"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="空调"
+                    android:padding="6dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_qc_ac" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="1dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center_vertical"
+                android:background="#33FFFFFF"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:id="@+id/wg_cell_trunk"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/widget_cell_d"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/wg_icon_trunk"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="后备箱"
+                    android:padding="6dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_qc_trunk" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="1dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center_vertical"
+                android:background="#33FFFFFF"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:id="@+id/wg_cell_horn"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/widget_cell_d"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/wg_icon_horn"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="鸣笛寻车"
+                    android:padding="6dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_qc_horn" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 状态行：卡片右上角，压在照片上。
+         照片深浅不可控，垫一层 widget_time_pill 薄黑底衬，白字才一直读得清 ——
+         底衬挂在整行上（文案 + 刷新键共用同一个胶囊），而不是只包住文字。
+         右边距比车模那一侧更宽：让它落在车模内侧，而不是贴着车模的右边缘。 -->
+    <LinearLayout
+        android:id="@+id/wg_status_row"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="10dp"
+        android:layout_marginEnd="20dp"
+        android:background="@drawable/widget_time_pill"
+        android:gravity="center_vertical|end"
+        android:orientation="horizontal"
+        android:paddingStart="6dp"
+        android:paddingTop="2dp"
+        android:paddingEnd="5dp"
+        android:paddingBottom="2dp">
+
+        <TextView
+            android:id="@+id/wg_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:maxWidth="118dp"
+            android:text="尚未同步"
+            android:textColor="#E6FFFFFF"
+            android:textSize="10sp" />
+
+        <!-- 刷新键：20dp 的格子、2.5dp 内边距 → 图形 15dp（原来只有 11dp）。
+             图形别直接等于格子：留一圈内边距，手指按在边角上也还在点击区内。 -->
+        <ImageView
+            android:id="@+id/wg_refresh"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginStart="2dp"
+            android:clickable="true"
+            android:contentDescription="刷新车况"
+            android:focusable="true"
+            android:padding="2.5dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_widget_refresh" />
+    </LinearLayout>
+</FrameLayout>

@@ -103,9 +103,9 @@ private val HEADER_VEIL_STOPS = arrayOf(
 )
 
 /**
- * 「支持开发者 / 开源协议与致谢 / QQ 交流群」这几个「面向社区」的模块是否显示。
+ * 「开源协议与致谢」这个「面向社区」的模块是否显示。
  *
- * 当前已恢复对外发布，入口全部开放；若将来再转回纯自用，把这里改成 false 即可整体收起
+ * 当前已恢复对外发布，入口开放；若将来再转回纯自用，把这里改成 false 即可整体收起
  * （页面与路由都保留，不会编译不过）。
  */
 internal const val SHOW_DEV_ENTRIES = true
@@ -119,7 +119,7 @@ internal const val SHOW_DEV_ENTRIES = true
  */
 internal const val SHOW_UPDATE_CHECK = true
 
-/** 二级页路由：「我的」页 → 设置 / 个性化 / 玩法说明 / 关于（内嵌 免责声明、隐私条款）/ 车模外观 / 开源协议 / 支持开发者 */
+/** 二级页路由：「我的」页 → 设置 / 个性化 / 玩法说明 / 关于（内嵌 免责声明、隐私条款）/ 车模外观 / 开源协议 */
 enum class SettingsPage {
     SETTINGS,
     PERSONALIZATION,
@@ -131,7 +131,6 @@ enum class SettingsPage {
     DISCLAIMER,
     PRIVACY,
     OPEN_SOURCE,
-    SUPPORT,
 }
 
 /** 底部 Dock：零控 / 零记 / 我的 */
@@ -159,7 +158,7 @@ fun MainScreen(
     /**
      * 进入二级页：把当前页压栈，返回时就能原路回到上一级。
      *
-     * 目标页若已经在栈里（「支持开发者 ⇄ 开源协议」这两个页面互相有入口），
+     * 目标页若已经在栈里（比如「隐私条款 ⇄ 开源协议」），
      * 就当成「回退到它」处理并截断栈，否则来回点几次会叠出一长串重复项，
      * 返回键要按很多下才出得来。
      */
@@ -359,7 +358,7 @@ fun MainScreen(
         MaterialTheme(
             colorScheme = materialScheme,
         ) {
-            // 二级页（设置 / 个性化 / 车模外观 / 关于 / 开源协议与致谢 / 支持开发者，
+            // 二级页（设置 / 个性化 / 车模外观 / 关于 / 开源协议与致谢，
             // 关于内嵌 免责声明 与 隐私条款 两个子页）：
             // 非首页一律铺当前主题的主题色渐变（不跑场景动画）
             if (settingsPage != null) {
@@ -439,12 +438,6 @@ fun MainScreen(
 
                         SettingsPage.OPEN_SOURCE -> OpenSourceScreen(
                             onBack = { closeSettings() },
-                            onOpenSupport = { openSettings(SettingsPage.SUPPORT) },
-                        )
-
-                        SettingsPage.SUPPORT -> SupportScreen(
-                            onBack = { closeSettings() },
-                            onOpenOpenSource = { openSettings(SettingsPage.OPEN_SOURCE) },
                         )
 
                         null -> Unit

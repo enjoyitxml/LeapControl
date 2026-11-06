@@ -39,6 +39,12 @@ import java.util.Locale
  * - **D 沉浸**：一张图铺满，下半部分压暗，按键是白玻璃，字色恒为白。
  * （早先还有一版「色块」，用户否决后已删除。）
  *
+ * ## 两种尺寸
+ * 4×2（默认）与 5×2（[VehicleWidgetProviderWide]，2026-11-06 加）：
+ * 5 列的桌面摆 4×2 会空着一列，所以多给一个宽版入口。
+ * 「哪个 id 用哪份布局」由它属于哪个 component 决定，见 [PROVIDERS] 与 [layoutFor]。
+ * **别用宽度阈值去猜**：有些桌面把 5 列压在 340dp 的屏上，判断会翻车。
+ *
  * ## 续航：纯电与增程是两种排版
  * - 纯电：一个大数字（26sp）+ 电量条 + 一行「电量 68%」；
  * - 增程：两行 —— 电（22sp，主题数字）+ 电量条，油（16sp，前面一个小「油」字）+ 油量条，
@@ -124,6 +130,20 @@ object VehicleWidget {
     private const val FUEL_GLASS = 0xFF9CC8FF.toInt()
 
     /**
+     * 全透明主题：字色与控件色都由用户定，这里只补「信号色」。
+     *
+     * 电绿油蓝如果直接用浅壁纸那套（#2FCC71 / #2F86F6），压在白墙纸或浅灰壁纸上会发灰，
+     * 所以按用户字色的亮度分亮 / 暗两档；警示色同理 —— 深壁纸要暖橙才看得见，
+     * 浅壁纸要用压深的砖红。
+     */
+    private const val EV_T_LIGHT = 0xFF3DD68C.toInt()
+    private const val EV_T_DARK = 0xFF12A150.toInt()
+    private const val FUEL_T_LIGHT = 0xFF5AB4FF.toInt()
+    private const val FUEL_T_DARK = 0xFF1A73E8.toInt()
+    private const val WARN_T_LIGHT = 0xFFFFB454.toInt()
+    private const val WARN_T_DARK = 0xFFC2410C.toInt()
+
+    /**
      * 五个按键图标的留白基数（dp）。
      *
      * 它们不是同一套比例：空调的压缩机符号笔画密、层次多，撑满格子会显得比邻居大一圈；
@@ -186,6 +206,17 @@ object VehicleWidget {
      *   全量重绘在沉浸样式下会让桌面进程把用户那张壁纸重新解码一遍，卡片会明显闪一下。
      *   首次添加、改尺寸、换版式 / 换壁纸 / 换车模这些**结构变了**的场合仍走全量。
      */
+    /**
+     * 桌面上有**两个**入口：4×2 与 5×2（见 [VehicleWidgetProviderWide]）。
+     *
+     * 两者共用全部渲染逻辑，唯一的差别是「用哪份布局」—— 记在这里，
+     * 免得日后加尺寸时又在 [render] 里撒出一堆 if。
+     */
+    private val PROVIDERS = listOf(
+        VehicleWidgetProvider::class.java to false,
+        VehicleWidgetProviderWide::class.java to true,
+    )
+
     fun render(
         context: Context,
         runtime: AppRuntime? = null,
@@ -193,10 +224,12 @@ object VehicleWidget {
         partial: Boolean = false,
     ) {
         val manager = AppWidgetManager.getInstance(context) ?: return
-        val ids = manager.getAppWidgetIds(
-            ComponentName(context, VehicleWidgetProvider::class.java),
-        )
-        if (ids.isEmpty()) return
+        // 两个 component 各自查 id：桌面不会告诉我们「这个 id 是哪个尺寸的」，
+        // 只能按 component 分开问，否则 5×2 那张卡永远轮不到重画。
+        val byProvider = PROVIDERS.map { (provider, wide) ->
+            wide to manager.getAppWidgetIds(ComponentName(context, provider)).toList()
+        }
+        if (byProvider.all { it.second.isEmpty() }) return
         // 传进来的 runtime 已经是刚刷完的那一份，别再 loadCachedStatus：
         // 磁盘缓存比内存里的新鲜值旧，重读一次会把刚拿到的车况又盖回去。
         val r = runtime ?: AppRuntime(context).also { it.loadCachedStatus() }
@@ -218,48 +251,54 @@ object VehicleWidget {
         // ③ 这个进程里还没全量画过（`lastFullNight == null`），桌面上可能是一张空卡。
         val night = WidgetStyle.isNight(context)
         val usePartial = partial && lastFullNight == night
-        ids.forEach { id ->
-            val (widthDp, heightDp) = widgetSize(manager, id)
-            runCatching {
-                if (usePartial) {
-                    manager.partiallyUpdateAppWidget(
-                        id,
-                        buildPartialViews(
-                            context = context,
-                            status = status,
-                            updatedAt = updatedAt,
-                            busy = busy,
-                            signedIn = signedIn,
-                            title = title,
-                            car = car,
-                            heightDp = heightDp,
-                            // 增量只改文案，但「未设控车密码」这行字必须在，
-                            // 否则每次刷新都会把它盖回「12:30 更新」
-                            pinReady = r.hasPin,
-                            sessionExpired = sessionExpired,
-                        ),
-                    )
-                } else {
-                    manager.updateAppWidget(
-                        id,
-                        buildViews(
-                            context = context,
-                            status = status,
-                            updatedAt = updatedAt,
-                            busy = busy,
-                            signedIn = signedIn,
-                            title = title,
-                            car = car,
-                            widthDp = widthDp,
-                            heightDp = heightDp,
-                            // 没设控车密码 → 五颗按键改成「打开 App 去设置」，
-                            // 否则用户点了之后只看到卡片闪一下，什么也没发生
-                            pinReady = r.hasPin,
-                            signInRequired = !signedIn,
-                            sessionExpired = sessionExpired,
-                        ),
-                    )
-                    lastFullNight = night
+        byProvider.forEach { (wide, ids) ->
+            ids.forEach { id ->
+                val (widthDp, heightDp) = widgetSize(manager, id)
+                runCatching {
+                    if (usePartial) {
+                        manager.partiallyUpdateAppWidget(
+                            id,
+                            buildPartialViews(
+                                context = context,
+                                status = status,
+                                updatedAt = updatedAt,
+                                busy = busy,
+                                signedIn = signedIn,
+                                title = title,
+                                car = car,
+                                heightDp = heightDp,
+                                // 增量更新必须用**同一份**布局，否则桌面按 id 找不到视图，
+                                // 整帧被丢掉 —— 宽卡会一直显示旧车况。
+                                wide = wide,
+                                // 增量只改文案，但「未设控车密码」这行字必须在，
+                                // 否则每次刷新都会把它盖回「12:30 更新」
+                                pinReady = r.hasPin,
+                                sessionExpired = sessionExpired,
+                            ),
+                        )
+                    } else {
+                        manager.updateAppWidget(
+                            id,
+                            buildViews(
+                                context = context,
+                                status = status,
+                                updatedAt = updatedAt,
+                                busy = busy,
+                                signedIn = signedIn,
+                                title = title,
+                                car = car,
+                                widthDp = widthDp,
+                                heightDp = heightDp,
+                                wide = wide,
+                                // 没设控车密码 → 五颗按键改成「打开 App 去设置」，
+                                // 否则用户点了之后只看到卡片闪一下，什么也没发生
+                                pinReady = r.hasPin,
+                                signInRequired = !signedIn,
+                                sessionExpired = sessionExpired,
+                            ),
+                        )
+                        lastFullNight = night
+                    }
                 }
             }
         }
@@ -356,8 +395,12 @@ object VehicleWidget {
     )
 
     private fun paletteFor(context: Context): Palette {
+        val style = WidgetStyle.style(context)
+        // 全透明：颜色全由用户定，跟系统深浅色没关系，先走这一支
+        if (style == WidgetStyle.STYLE_T) return transparentPalette(context)
+
         val night = WidgetStyle.isNight(context)
-        val glass = WidgetStyle.style(context) == WidgetStyle.STYLE_D
+        val glass = style == WidgetStyle.STYLE_D
         return Palette(
             ink = when {
                 glass -> INK_GLASS
@@ -394,11 +437,57 @@ object VehicleWidget {
         )
     }
 
-    /** 五个按键的静态部分（格子底色、图标资源、留白、点击）在这两种样式下不一样。 */
-    private fun cellBackgroundRes(context: Context): Int = when {
-        WidgetStyle.style(context) == WidgetStyle.STYLE_D -> R.drawable.widget_cell_d
-        WidgetStyle.isNight(context) -> R.drawable.widget_cell_a_dark
-        else -> R.drawable.widget_cell_a
+    /**
+     * 全透明主题的配色。
+     *
+     * 分工只有一条：**字色管文字与常态图标，控件色管按键高亮与分隔线**。
+     * 两色都交给用户，是因为卡片本身没有底 —— 同一张卡放在深色照片和浅色壁纸上，
+     * 想要「都看得清」只能让人自己挑。默认白字 + 零控绿高亮，和沉浸样式的层次一致。
+     *
+     * 副信息、警示色、电 / 油图标这些「派生色」不开放设置：
+     * 一来说明里解释不清，二来真要摆在一起才好看，交给 [isLight] 按亮度挑亮暗两档即可。
+     */
+    private fun transparentPalette(context: Context): Palette {
+        val ink = WidgetStyle.ink(context)
+        val lightInk = WidgetStyle.isLight(ink)
+        return Palette(
+            ink = ink,
+            sub = withAlpha(ink, 0.68f),
+            warn = if (lightInk) WARN_T_LIGHT else WARN_T_DARK,
+            active = WidgetStyle.ctrl(context),
+            ev = if (lightInk) EV_T_LIGHT else EV_T_DARK,
+            fuel = if (lightInk) FUEL_T_LIGHT else FUEL_T_DARK,
+        )
+    }
+
+    /** 给颜色换一档透明度（保留 RGB）。 */
+    private fun withAlpha(color: Int, factor: Float): Int {
+        val alpha = (((color ushr 24) and 0xFF) * factor).toInt().coerceIn(0, 255)
+        return (alpha shl 24) or (color and 0x00FFFFFF)
+    }
+
+    /** 五个按键的静态部分（格子底色、图标资源、留白、点击）在这三种样式下不一样。 */
+    private fun cellBackgroundRes(context: Context): Int = when (WidgetStyle.style(context)) {
+        WidgetStyle.STYLE_D -> R.drawable.widget_cell_d
+        // 透明主题：浅色字配深玻璃底，深色字配浅玻璃底，否则按键边界直接消失
+        WidgetStyle.STYLE_T ->
+            if (WidgetStyle.isLight(WidgetStyle.ink(context))) R.drawable.widget_cell_t
+            else R.drawable.widget_cell_t_dark
+        else -> if (WidgetStyle.isNight(context)) R.drawable.widget_cell_a_dark else R.drawable.widget_cell_a
+    }
+
+    /**
+     * 用哪份 RemoteViews 布局。
+     *
+     * 版式 × 尺寸 = 6 份（`widget_a/d/t` 与各自的 `_wide`）。不是偷懒才拆开：
+     * RemoteViews 改不了 `layout_weight`（`setInt` 只认 @RemotableViewMethod），
+     * 而 5×2 的宽出来那一格要分给车模与续航条，只能一个尺寸一份 XML。
+     * 两份布局的 id 必须完全一致 —— 增量更新靠 id 定位。
+     */
+    internal fun layoutFor(style: String, wide: Boolean): Int = when (style) {
+        WidgetStyle.STYLE_D -> if (wide) R.layout.widget_d_wide else R.layout.widget_d
+        WidgetStyle.STYLE_T -> if (wide) R.layout.widget_t_wide else R.layout.widget_t
+        else -> if (wide) R.layout.widget_a_wide else R.layout.widget_a
     }
 
     /**
@@ -416,6 +505,8 @@ object VehicleWidget {
         car: Bitmap? = null,
         widthDp: Int = 320,
         heightDp: Int = 150,
+        /** true = 5×2 宽版（用 `widget_*_wide` 那份布局）。 */
+        wide: Boolean = false,
         /** 控车密码是否已设置；没设置时五个按键改成「打开 App 去设置密码」。 */
         pinReady: Boolean = true,
         /** 登录已失效（token 被服务端作废）：五颗按键一律改成「打开 App 重新登录」。 */
@@ -426,19 +517,22 @@ object VehicleWidget {
         val style = WidgetStyle.style(context)
         val night = WidgetStyle.isNight(context)
         val glass = style == WidgetStyle.STYLE_D
+        val clear = style == WidgetStyle.STYLE_T
         val p = paletteFor(context)
 
-        val layout = if (glass) R.layout.widget_d else R.layout.widget_a
-        val views = RemoteViews(context.packageName, layout)
+        val views = RemoteViews(context.packageName, layoutFor(style, wide))
         val density = context.resources.displayMetrics.density
 
         // ---- 外壳 ----
         // 沉浸样式的底必须是深色：万一图片没画上（桌面不认 URI），白字还得有底可压。
-        views.setInt(
-            R.id.wg_root,
-            "setBackgroundResource",
-            if (glass || night) R.drawable.widget_card_dark else R.drawable.widget_card_light,
-        )
+        // 全透明样式反过来 —— 布局里已经写成 transparent，这里再设一次卡片色就白做了。
+        if (!clear) {
+            views.setInt(
+                R.id.wg_root,
+                "setBackgroundResource",
+                if (glass || night) R.drawable.widget_card_dark else R.drawable.widget_card_light,
+            )
+        }
 
         // ---- 沉浸样式的底图 ----
         if (glass) {
@@ -481,6 +575,15 @@ object VehicleWidget {
             (BASE_ICON_PAD - HORN_ICON_GROW).coerceAtLeast(0f), density,
             liftDp = HORN_ICON_LIFT)
 
+        // 全透明样式的四条分隔线：A / D 的线色写在 XML 里，透明版得跟着「控件颜色」走。
+        // 用 35% 透明度而不是实色 —— 实线在壁纸上会像裂缝，淡一点才像「分组」。
+        if (clear) {
+            val divider = withAlpha(p.active, 0.35f)
+            for (id in intArrayOf(R.id.wg_div1, R.id.wg_div2, R.id.wg_div3, R.id.wg_div4)) {
+                runCatching { views.setInt(id, "setBackgroundColor", divider) }
+            }
+        }
+
         // 点文字区 / 车模都打开 App（车模不再兼做「换背景」按钮，那是设置页的事）
         // 登录失效时带上 RELOGIN：进去直接问「要不要重新登录」，而不是让人对着满屏报错自己找
         openAppIntent(context, if (signInRequired) AppNavRequest.RELOGIN else null)?.let {
@@ -519,13 +622,14 @@ object VehicleWidget {
         title: String = "我的零跑",
         car: Bitmap? = null,
         heightDp: Int = 150,
+        /** true = 5×2 宽版。必须与上一次全量更新用的是同一份布局。 */
+        wide: Boolean = false,
         pinReady: Boolean = true,
         /** 登录已失效：右上角改写「登录已失效」，比「点此登录」说得更清楚。 */
         sessionExpired: Boolean = false,
     ): RemoteViews {
-        val glass = WidgetStyle.style(context) == WidgetStyle.STYLE_D
-        val layout = if (glass) R.layout.widget_d else R.layout.widget_a
-        val views = RemoteViews(context.packageName, layout)
+        val style = WidgetStyle.style(context)
+        val views = RemoteViews(context.packageName, layoutFor(style, wide))
         bindLive(
             views, context, paletteFor(context), status, updatedAt, busy, signedIn,
             title, car, heightDp, pinReady, sessionExpired,
@@ -644,7 +748,17 @@ object VehicleWidget {
         // 电绿油蓝这两套颜色写在布局引用的 progressDrawable 里（widget_bar_ev / widget_bar_fuel），
         // 运行时**不去换 drawable** —— ProgressBar 没有 setProgressDrawable(int) 这个签名，
         // setInt 反射调用会直接失败。
-        views.setProgressBar(R.id.wg_ev_bar, 100, soc ?: 0, false)
+        // 透明主题例外：它要按字色亮度挑亮条 / 暗条，所以在布局里放了两条、这里显示其中一条。
+        val clear = WidgetStyle.style(context) == WidgetStyle.STYLE_T
+        if (clear) {
+            val lightBar = WidgetStyle.isLight(p.ink)
+            views.setProgressBar(R.id.wg_ev_bar, 100, soc ?: 0, false)
+            views.setProgressBar(R.id.wg_ev_bar_dark, 100, soc ?: 0, false)
+            views.setViewVisibility(R.id.wg_ev_bar, if (lightBar) View.VISIBLE else View.GONE)
+            views.setViewVisibility(R.id.wg_ev_bar_dark, if (lightBar) View.GONE else View.VISIBLE)
+        } else {
+            views.setProgressBar(R.id.wg_ev_bar, 100, soc ?: 0, false)
+        }
 
         // 两行里程加起来比一张 4×1 高得多，高度不够时只留电那一行。
         // 纯电车型本来就只有一行，降级之后结构不变，不会突然换一套版式。
@@ -655,7 +769,15 @@ object VehicleWidget {
             views.setTextColor(R.id.wg_fuel_value, p.ink)
             views.setTextViewText(R.id.wg_fuel_pct, fuelSoc?.let { "$it%" } ?: "--")
             views.setTextColor(R.id.wg_fuel_pct, p.ink)
-            views.setProgressBar(R.id.wg_fuel_bar, 100, fuelSoc ?: 0, false)
+            if (clear) {
+                val lightBar = WidgetStyle.isLight(p.ink)
+                views.setProgressBar(R.id.wg_fuel_bar, 100, fuelSoc ?: 0, false)
+                views.setProgressBar(R.id.wg_fuel_bar_dark, 100, fuelSoc ?: 0, false)
+                views.setViewVisibility(R.id.wg_fuel_bar, if (lightBar) View.VISIBLE else View.GONE)
+                views.setViewVisibility(R.id.wg_fuel_bar_dark, if (lightBar) View.GONE else View.VISIBLE)
+            } else {
+                views.setProgressBar(R.id.wg_fuel_bar, 100, fuelSoc ?: 0, false)
+            }
         } else {
             views.setViewVisibility(R.id.wg_fuel_row, View.GONE)
         }

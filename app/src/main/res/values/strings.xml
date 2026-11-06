@@ -2,4 +2,10 @@
 <resources>
     <string name="app_name">零控</string>
     <string name="widget_description">续航、车况与五个控车按键，不用打开 App</string>
+    <!--
+      5×2 宽版：description 是「添加小部件」列表里那行小字，label 是名字。
+      名字必须与 4×2 区分 —— 两个条目都叫「零控」的话，用户没法知道自己选的是哪个尺寸。
+    -->
+    <string name="widget_description_wide">续航、车况与五个控车按键，5×2 宽版，适合 5 列的桌面</string>
+    <string name="widget_label_wide">零控 · 5×2</string>
 </resources>

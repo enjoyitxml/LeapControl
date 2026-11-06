@@ -42,8 +42,14 @@ import kotlinx.coroutines.withTimeoutOrNull
  * **不能在这里调不带 resultWaitMs 的 control()** —— 它内部用 Thread.sleep 轮询车端回执，
  * 最长 20 秒，外面套 withTimeoutOrNull 也掐不住（没有可中断的挂起点），
  * 结果就是卡片来不及重画、提示弹不出来，甚至被系统当成广播超时掐掉。
+ *
+ * ## 4×2 与 5×2 是**两个** receiver
+ * 安卓的「添加小部件」列表里，一个 receiver + 一份 provider-info 只对应一个固定格数，
+ * 想让用户能挑 5 列版，只能再注册一个 receiver（[VehicleWidgetProviderWide]）。
+ * 两者共用这里的全部逻辑 —— 它只是个子类，连一个方法都没重写；
+ * 差别只在 [VehicleWidget.render] 里「这个 id 属于哪个 component」决定用哪份布局。
  */
-class VehicleWidgetProvider : AppWidgetProvider() {
+open class VehicleWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(
         context: Context,

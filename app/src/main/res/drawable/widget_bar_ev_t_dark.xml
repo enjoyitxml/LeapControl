@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 全透明主题 · 纯电续航条（深色字版）
+     半透明黑轨道 + 压深一档的绿：浅壁纸上白条会整片消失，所以换成深色系。
+     颜色写死在这里而不是运行时改：ProgressBar 没有 setProgressDrawable(int) 这种签名，
+     RemoteViews 的 setInt 反射调用会直接失败，所以亮 / 暗各备一份，由 WidgetStyle.isLight 挑。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape android:shape="rectangle">
+            <corners android:radius="3.5dp" />
+            <solid android:color="#24000000" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape android:shape="rectangle">
+                <corners android:radius="3.5dp" />
+                <solid android:color="#12A150" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>
