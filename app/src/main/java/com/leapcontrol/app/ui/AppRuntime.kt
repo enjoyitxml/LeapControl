@@ -169,26 +169,6 @@ private const val DEFROST_CONFIRM_ROUNDS = 4
 /** 换下一组除霜参数前的间隔：同 cmdid 连发太快会被网关当「系统繁忙」丢掉后一条。 */
 private const val DEFROST_VARIANT_GAP_MS = 1_200L
 
-/**
- * 方向盘加热下发后回读 `1816` / `1624` 的轮询间隔与次数（3.2 × 4 ≈ 13 秒）。
- *
- * 车端从受理到 T-Box 唤醒执行要 5~15 秒。v1.1.5 用的是 2.2 秒 × 4（≈9 秒），
- * 第一次回读必然还是旧值 —— 那正是「补发」被误触发、最后怎么都关不掉的一半原因。
- */
-private const val STEERING_CONFIRM_GAP_MS = 3_200L
-private const val STEERING_CONFIRM_ROUNDS = 4
-
-/**
- * 「关」没生效时**重发同一条 `0`** 之前的间隔。
- *
- * 只重发同一个值：同 cmdid 连发太快会被网关当「系统繁忙」丢掉后一条，
- * 但也绝不能换成 `1` —— 那是弱档，会把加热重新打开（v1.1.5 的事故）。
- */
-private const val STEERING_RETRY_GAP_MS = 2_000L
-
-/** 重发 `0` 之后再确认几轮（3.2 × 3 ≈ 10 秒）。 */
-private const val STEERING_RETRY_ROUNDS = 3
-
 /** 里程 / 能耗缓存有效期：15 分钟。老服务限频，不必每次进首页都打一次。 */
 private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
 
@@ -1887,11 +1867,10 @@ class AppRuntime(context: Context) {
                 leftRear = seatLevel(st, "leftRearSeatVentilation", "3727"),
                 rightRear = seatLevel(st, "rightRearSeatVentilation", "3728"),
             ),
-            // 方向盘加热：1816（0 关）为主，1624（剩余加热分钟）兜底 ——
-            // 只报分钟数的车型如果只看 1816，按钮会永远停「关」。
+            // 方向盘加热：照上游只读 1816（0 关 / 1 弱 / 2 强）。
+            // 1624 是「剩余加热分钟数」，关掉后常有残值；拿它兜底判开关会让界面永远显示「开」。
             steeringWheelHeating = SteeringWheelHeat.levelOf(
                 level = seatLevel(st, "steeringWheelHeating", "1816"),
-                minutes = seatLevel(st, "steeringWheelHeaterMinutes", "1624"),
             ),
             // 不兜底 rearWindowHeating（后风挡加热）：那几乎全系都有，会让「有没有后视镜加热」永远为真
             rearviewMirrorHeating = parseOnOff(pick(st, "rearviewMirrorHeating", "49", "50")),
@@ -3116,19 +3095,20 @@ class AppRuntime(context: Context) {
         if (commandName == "defrost") {
             return@withContext runDefrost(api, pin, waitForResult = resultWaitMs != 0L)
         }
-        // 方向盘加热单独一条路：车端是三档（0 关 / 1 弱 / 2 强），界面只做开关，
-        // 而且必须读 1816 求证 —— 以前只按网关回执就说「执行成功」，
-        // 用户摸到的是冷方向盘（2026-11-07 反馈）。
-        SteeringWheelHeat.targetOf(commandName)?.let { on ->
-            return@withContext runSteeringWheelHeat(api, pin, on, waitForResult = resultWaitMs != 0L)
-        }
+        // 方向盘加热走通用路径，与上游 leapauto 一致：cmdid=320 只发一条（2 开 / 0 关），
+        // 网关受理就算成功，不回读 1816 求证、更不补发第二条。
+        // 之前为它单开的下发函数会提前 return，跳过下面的 rememberComfortTarget ——
+        // 界面没有乐观值，车况一刷新就把「还开着」盖回来，
+        // 这才是「怎么都关不掉」看到的那一层（2026-11-07 三次反馈）。
         val command = if (presetAcTemperature != null) {
             Commands.buildAc(presetAcTemperature)
         } else {
             Commands.build(commandName)
         }
         val result = withNetworkRetry { api.sendControl(command, pin) }
-        // 指令已到网关：立刻记下目标档位，后续车况刷新在保护窗口内不会把它弹回旧值
+        // 指令已到网关：立刻记下目标档位，后续车况刷新在保护窗口内不会把它弹回旧值。
+        // 方向盘加热也走这里 —— 上游在发指令前就写 optimisticSteeringWheelHeating，
+        // 少了这一行，界面会一直显示车端滞后的旧档位。
         rememberComfortTarget(commandName)
         // 不等回执的调用方：指令已经到网关，剩下的交给调用方回读车况判断
         if (resultWaitMs == 0L) return@withContext "${command.label}指令已下发"
@@ -3340,87 +3320,6 @@ class AppRuntime(context: Context) {
     }
 
     /**
-     * 方向盘加热：发指令 → 读 1816 / 1624 求证 → 「关」没关掉再补一条 `level=1`。
-     *
-     * ## 为什么不能只看网关回执
-     * 云端 `code=0` 只代表**网关收下**这条指令。方向盘加热是车端舒适件，车型之间对
-     * `{"level":"0"}`、`{"level":"1"}` 的取舍不一样：文档写 `0`=关，C10 实测 `1`=关。
-     * 只按网关说话，用户会收到一个「已开启」而方向盘一点不热（这正是这次反馈的情形）。
-     *
-     * ## 为什么「开」不重试
-     * 开只有 `2` 这一个有效值，再发一遍还是同一个值，只会撞网关限流。读不到信号就如实
-     * 说「已下发」，不编成功。
-     */
-    private suspend fun runSteeringWheelHeat(
-        api: LeapmotorApi,
-        pin: String,
-        on: Boolean,
-        waitForResult: Boolean = true,
-    ): String {
-        withNetworkRetry { api.sendControl(SteeringWheelHeat.build(on), pin) }
-        // 不等回执的调用方（桌面小组件，广播预算只有 10 秒）：送出去就返回
-        if (!waitForResult) return if (on) "方向盘加热指令已下发" else "关闭方向盘加热指令已下发"
-
-        val first = pollSteeringHeat(api, wantOn = on)
-        if (first == true) return if (on) "方向盘加热已开启" else "方向盘加热已关闭"
-
-        if (on) {
-            // first == false：读得到、但还没进入加热（车端可能只是慢）；null：本车不报这个信号
-            return if (first == false) {
-                "方向盘加热指令已发出，但车端还没进入加热状态，请稍后刷新看看"
-            } else {
-                "方向盘加热指令已下发，本车未上报方向盘加热状态，请在车上确认"
-            }
-        }
-
-        // 关：**只重发同一条 0**。绝不能换成 1 —— 1 是弱档（还在加热），
-        // 补发它等于把刚关掉的加热重新打开，这正是 v1.1.5「怎么都关不掉」的真凶。
-        if (first == null) return "关闭方向盘加热指令已下发，本车未上报方向盘加热状态"
-        delay(STEERING_RETRY_GAP_MS)
-        withNetworkRetry { api.sendControl(SteeringWheelHeat.build(on = false), pin) }
-        return when (pollSteeringHeat(api, wantOn = false, rounds = STEERING_RETRY_ROUNDS)) {
-            true -> "方向盘加热已关闭"
-            false -> "关闭指令已发出，但车端还显示在加热，请在车上确认"
-            null -> "关闭指令已发出，本车未上报方向盘加热状态"
-        }
-    }
-
-    /**
-     * 轮询方向盘加热状态。
-     *
-     * @return true = 已经是目标状态；false = 读到了、但与目标不一致；null = 一次都没读到
-     *   （1816 与 1624 都不上报的车型）
-     */
-    private suspend fun pollSteeringHeat(
-        api: LeapmotorApi,
-        wantOn: Boolean,
-        rounds: Int = STEERING_CONFIRM_ROUNDS,
-    ): Boolean? {
-        var last: Boolean? = null
-        repeat(rounds) {
-            delay(STEERING_CONFIRM_GAP_MS)
-            val on = readSteeringOn(api) ?: return@repeat
-            if (on == wantOn) return true
-            last = on
-        }
-        return last
-    }
-
-    /**
-     * 读一次方向盘加热是否开着。
-     *
-     * @return null = 1816 与 1624 都没上报，这台车读不出这个状态（不能当成「关」）
-     */
-    private suspend fun readSteeringOn(api: LeapmotorApi): Boolean? {
-        val st = runCatching { api.getVehicleState() }.getOrNull() ?: return null
-        val level = SteeringWheelHeat.levelOf(
-            level = seatLevel(st, "steeringWheelHeating", "1816"),
-            minutes = seatLevel(st, "steeringWheelHeaterMinutes", "1624"),
-        ) ?: return null
-        return SteeringWheelHeat.isOn(level)
-    }
-
-    /**
      * 一键关闭多项后台耗电功能（空调 / 座椅加热通风 / 方向盘加热 / 后视镜加热 / 冰箱）。
      *
      * 与 [control] 的关键区别：**不逐条等车端执行结果**。control 每条都要轮询 1~24 秒，
@@ -3445,22 +3344,17 @@ class AppRuntime(context: Context) {
             runCatching {
                 val command = Commands.build(name)
                 withNetworkRetry { api.sendControl(command, pin) }
+                // 与 control() 一样：下发成功就记乐观值，界面当场翻到目标档位。
+                // 以前这里没记，「已关闭 N 项」之后方向盘行还写着「开」——
+                // 车端信号滞后，车况刷新会把旧值盖回来。上游在发指令前就写乐观值。
+                // 照上游：只发这一条，不回读、不补发。
+                rememberComfortTarget(name)
             }.onFailure {
                 // 记指令名而不是异常信息：异常文案对用户没意义，指令名能直接定位是哪一项
                 failed += name
             }
             onProgress(index + 1, unique.size)
             if (index != unique.lastIndex) Thread.sleep(POWER_DRAIN_GAP_MS)
-        }
-        // 方向盘加热：批量路径不逐条等回执，但「关」值得再确认一次。
-        // 车端执行慢，这里读到的常常还是旧值，所以**只重发同一个 0** ——
-        // 换成 1（弱档）会把加热重新打开，v1.1.5 的「怎么都关不掉」就是它。
-        if (unique.any { SteeringWheelHeat.targetOf(it) == false }) {
-            delay(STEERING_RETRY_GAP_MS)
-            val stillOn = runCatching { readSteeringOn(api) }.getOrNull()
-            if (stillOn == true) {
-                runCatching { withNetworkRetry { api.sendControl(SteeringWheelHeat.build(on = false), pin) } }
-            }
         }
         val ok = unique.size - failed.size
         when {

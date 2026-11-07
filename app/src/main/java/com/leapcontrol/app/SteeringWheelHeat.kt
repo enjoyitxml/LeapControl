@@ -1,35 +1,42 @@
 package com.leapcontrol.app
 
 /**
- * 方向盘加热（cmdid=320）的唯一出口。
+ * 方向盘加热（cmdid=320）的唯一出口。这一版**完全照上游 leapauto v4.3.6** 实现。
  *
- * ## 三档语义（两次实车反馈之后定稿）
+ * ## 上游怎么做（三处互证）
  *
- * 车端是 **`0` 关 / `1` 弱 / `2` 强** 三档 —— 上游 `API/API.md` 的信号表（`1816`
- * 「方向盘电加热档位：0=关，1=弱档，2=强档」）与指令表（`steeringWheelHeating_1..2` /
- * 「1弱/2强/0关」）两处都这么写，上游 `buildSteeringWheelHeating` 也是 `coerceIn(0, 2)`：
- *  - 开 → 发 `{"level":"2"}`。弱档在部分车型上根本不上热，所以不做「弱/强」给用户挑，
- *    点一下就是强档。
- *  - 关 → 发 `{"level":"0"}`，**只有这一条**。
+ * - `API/API.md` 指令表：`steeringWheelHeating_1..2` → `{"level":"2"}`，注明「1弱/2强/0关」；
+ *   信号表 `1816` = `steeringWheelHeating` Int(0..2)，`0`=关、`1`=弱档、`2`=强档。
+ * - `Models.buildSteeringWheelHeating(level)` = `level.coerceIn(0, 2)`，payload `{"level":"$cleanLevel"}`。
+ * - `LeapAutoScreen` 的开关只发两条：
+ *   `onControl(if (it) "steeringWheelHeating_2" else "steeringWheelHeating_0")`。
  *
- * ## 为什么「关」绝不能再补发 `1`（v1.1.5 的事故）
+ * 结论：**开 = `2`，关 = `0`，一次点击只发一条**。`1` 是弱档（仍在加热），上游从来不拿它当「关」。
  *
- * v1.1.5 把 `1` 误当成「关」，在回读仍显示开着时补发一条 `{"level":"1"}`。两个错误叠在一起：
- *  1. 车端执行要 5~15 秒，而第一次回读在 2.2 秒后 —— 几乎每次点「关」都会读到「还开着」，
- *     于是几乎每次都补发；
- *  2. `1` 是**弱档 = 还在加热**，补发等于把刚关掉的加热重新打开（最强档降到弱档）。
+ * ## 上游怎么给结果
  *
- * 用户看到的就是「方向盘加热一直显示打开，怎么都关不掉」，而且越点越热。
+ * 下发前先把界面乐观地翻到目标档位（`optimisticSteeringWheelHeating = lvl > 0`，
+ * `comfortProtected` 保护 15 秒），网关受理就显示「方向盘加热已关闭」，
+ * 之后按 1.0 / 1.8 / 2.5 秒阶梯静默刷新车况，让真值自然追上。
+ * **上游不回读 `1816` 去判断成败，也绝不补发第二条指令。**
  *
- * 现在的规则：**关就是发 0**；回读还开着就**重发 0**（幂等，绝不会把车打开），
- * 重发一次仍不生效就如实告诉用户「车端还显示在加热」，让人上车确认。
- * 别再把任何 `1` 写进「关」的路径 —— `SteeringWheelHeatTest` 里有守门断言。
+ * 本项目的等价实现是 [com.leapcontrol.app.ui.ComfortOptimistic]（窗口 25 秒，因为
+ * `AppRuntime.control()` 是挂起等网关回执的），方向盘加热走的是**通用 control() 路径**。
+ * 唯一差别：我们在 `sendControl` 被网关收下之后才写乐观值，比上游晚一两秒 ——
+ * 这样发送失败时界面不会假装已经关掉。
+ *
+ * ## 前两次事故（别再写回来）
+ *
+ * - v1.1.5：把 `1` 当成「关」的补发值，回读没关掉就补 `{"level":"1"}` —— 那是弱档，
+ *   等于把刚关掉的加热重新打开，用户「怎么都关不掉」。
+ * - v1.1.6：补发改成重发 `0`，但**仍然在补发**，而且「关」的分支提前 return，
+ *   跳过了 `rememberComfortTarget` —— 界面从点下去那一刻起就没有乐观值，
+ *   车况刷新一直把旧值（还开着）盖回来，看起来还是关不掉。
  *
  * ## 状态从哪读
  *
- * 主用 `1816`（`0` 关 / `1` 弱 / `2` 强，`>0` 就是开着）。有的车型只报 `1624`
- * （剩余加热分钟数），**只有 `1816` 缺失时才用它兜底** —— `1816` 一旦报 0 就是真关了，
- * 再拿 `1624` 的残值把它翻回「开」，界面就永远关不掉。
+ * 只读 `1816`。`1624`（`steeringWheelHeaterMinutes`，剩余加热分钟数）上游只当独立字段，
+ * **从不拿来判开关**：关掉后它常有残值，拿它兜底会让界面永远显示「开」。
  */
 object SteeringWheelHeat {
 
@@ -70,16 +77,8 @@ object SteeringWheelHeat {
         if (on) "开启方向盘加热" else "关闭方向盘加热",
     )
 
-    /**
-     * 车况 → 档位（0 关 / 1 弱 / 2 强）。
-     *
-     * @param level `1816` 的读数；没上报传 null
-     * @param minutes `1624` 剩余加热分钟数；**仅**在 `1816` 缺失时兜底
-     */
-    fun levelOf(level: Int?, minutes: Int?): Int? {
-        if (level != null) return level.coerceIn(0, 2)
-        return if ((minutes ?: 0) > 0) 2 else null
-    }
+    /** `1816` → 档位（0 关 / 1 弱 / 2 强）；信号没上报返回 null。 */
+    fun levelOf(level: Int?): Int? = level?.coerceIn(0, 2)
 
     /** 界面口径：`>0` 就是开着（1 = 弱档也算开着）。 */
     fun isOn(level: Int?): Boolean = (level ?: 0) > 0

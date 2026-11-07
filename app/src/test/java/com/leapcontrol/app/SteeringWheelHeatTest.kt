@@ -1,5 +1,6 @@
 package com.leapcontrol.app
 
+import com.leapcontrol.app.ui.ComfortOptimistic
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -9,14 +10,16 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 方向盘加热（cmdid=320）：档位语义、指令体、状态读取。
+ * 方向盘加热（cmdid=320）：档位语义、指令体、状态读取，以及**下发链路**的源码守门。
  *
- * 这一组守的是 2026-11-07 的两次用户反馈：
+ * 2026-11-07 三次反馈之后的定稿，全部对齐上游 leapauto v4.3.6：
  *  1. 「按了没有用，打不开」—— 以前点「开」发的是 `1`（弱档），部分车型不上热；
- *  2. 「一直显示是打开的，怎么都关不掉」—— v1.1.5 把 `1` 当成关，回读还开着就补发 `1`，
- *     结果把刚关掉的加热重新打开（弱档）。
+ *  2. 「一直显示打开，怎么都关不掉」—— v1.1.5 把 `1` 当关做补发，等于把加热重新打开；
+ *  3. v1.1.6 补发改成 0 但**仍在补发**，而且「关」的分支提前 return，
+ *     跳过了 `rememberComfortTarget`：界面没有乐观值，车况一刷新就把旧值盖回来。
  *
- * 结论：`0` 是唯一的关，`1` 只是弱档，`2` 是开。关的路径上不许出现 `1`。
+ * 上游的做法是：一次点击只发一条（`2` 开 / `0` 关），下发前写乐观值、网关受理即成功，
+ * 之后阶梯静默刷新车况；**不回读 1816 判成败、不补发、不拿 1624 判开关**。
  */
 class SteeringWheelHeatTest {
 
@@ -26,6 +29,8 @@ class SteeringWheelHeatTest {
     private fun projectDir(): File = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) {
         it.parentFile
     }.first { File(it, "app").isDirectory }
+
+    private fun source(path: String): String = File(projectDir(), path).readText()
 
     // ---------------- 指令体 ----------------
 
@@ -79,41 +84,80 @@ class SteeringWheelHeatTest {
         assertEquals("0", state(Commands.buildSteeringWheelHeating(0)).getString("level"))
     }
 
+    // ---------------- 下发链路（照上游）----------------
+
     /**
-     * 关闭路径的源码守门。
-     *
-     * `runSteeringWheelHeat` 与「一键关闭耗电」都会在回读仍开着时再发一条 ——
-     * 那一条只能是 `0`。2026-11-07 v1.1.5 发成了 `1`，用户的车就从「关不掉」变成「关不掉
-     * 还一直热着」。
+     * 方向盘不能再有单开的下发函数：它会提前 return，跳过下面的 rememberComfortTarget，
+     * 界面从点下去那一刻就没有乐观值 —— 这才是「怎么都关不掉」看到的那一层。
      */
     @Test
-    fun `关闭的补发只能是 0，不许把弱档当关`() {
-        val source = File(
-            projectDir(),
-            "app/src/main/java/com/leapcontrol/app/ui/AppRuntime.kt",
-        ).readText()
-        assertFalse("AppRuntime 里不该再出现 buildOffAlt", source.contains("buildOffAlt"))
-        // 两处关闭路径都必须用 build(on = false)
+    fun `方向盘走通用 control 路径，不提前 return`() {
+        val runtime = source("app/src/main/java/com/leapcontrol/app/ui/AppRuntime.kt")
+        listOf(
+            "runSteeringWheelHeat",
+            "pollSteeringHeat",
+            "readSteeringOn",
+            "buildOffAlt",
+            "STEERING_RETRY",
+            "SteeringWheelHeat.targetOf(commandName)",
+        ).forEach { forbidden ->
+            assertFalse(
+                "AppRuntime 里不该再出现 $forbidden（照上游：一次点击只发一条，走通用路径）",
+                runtime.contains(forbidden),
+            )
+        }
+        // 通用路径必须接上：指令名经过 Commands.build 落到 SteeringWheelHeat
+        val models = source("app/src/main/java/com/leapcontrol/app/Models.kt")
+        assertTrue(
+            "Commands.build 必须把方向盘指令交给 SteeringWheelHeat",
+            models.contains("SteeringWheelHeat.build(SteeringWheelHeat.targetOf(name) == true)"),
+        )
+    }
+
+    /** 上游在发指令前就写乐观值；少了这一行，车况刷新会把滞后的旧档位盖回来。 */
+    @Test
+    fun `单条控制与一键关闭都要写乐观值`() {
+        val runtime = source("app/src/main/java/com/leapcontrol/app/ui/AppRuntime.kt")
         assertEquals(
-            "关闭路径应有两处重发 0（单条控制 + 一键关闭）",
+            "control() 与 controlForWidget() 各要写一次乐观值",
             2,
-            Regex("""SteeringWheelHeat\.build\(on = false\)""").findAll(source).count(),
+            Regex("""rememberComfortTarget\(commandName\)""").findAll(runtime).count(),
+        )
+        assertTrue(
+            "一键关闭耗电也要写乐观值，否则「已关闭 N 项」后方向盘行还写着开",
+            runtime.contains("rememberComfortTarget(name)"),
+        )
+        // 界面把「关」翻成 level 0 是这条链路的最后一环
+        assertEquals(
+            0,
+            ComfortOptimistic.targetOf(SteeringWheelHeat.OFF, 1_000L)?.level,
+        )
+        assertEquals(
+            2,
+            ComfortOptimistic.targetOf(SteeringWheelHeat.ON, 1_000L)?.level,
         )
     }
 
     // ---------------- 车况读取 ----------------
 
+    /** 上游只读 1816；1624 是剩余加热分钟数，关掉后常有残值，绝不能拿来判开关。 */
     @Test
-    fun `1816 有值就以它为准，1624 只在缺失时兜底`() {
-        assertEquals(0, SteeringWheelHeat.levelOf(level = 0, minutes = 0))
-        assertEquals(1, SteeringWheelHeat.levelOf(level = 1, minutes = 0))
-        assertEquals(2, SteeringWheelHeat.levelOf(level = 2, minutes = 0))
-        // 只报剩余分钟数的车型：>0 就是开着
-        assertEquals(2, SteeringWheelHeat.levelOf(level = null, minutes = 15))
-        assertNull(SteeringWheelHeat.levelOf(level = null, minutes = 0))
-        assertNull(SteeringWheelHeat.levelOf(level = null, minutes = null))
-        // 1816 说关就是关：再拿 1624 的残留值翻回「开」，界面会永远关不掉
-        assertEquals(0, SteeringWheelHeat.levelOf(level = 0, minutes = 8))
+    fun `状态只读 1816，不再拿 1624 兜底`() {
+        assertEquals(0, SteeringWheelHeat.levelOf(0))
+        assertEquals(1, SteeringWheelHeat.levelOf(1))
+        assertEquals(2, SteeringWheelHeat.levelOf(2))
+        assertNull(SteeringWheelHeat.levelOf(null))
+        // 越界读数收敛到合法档位，不把异常值显示成「开」
+        assertEquals(2, SteeringWheelHeat.levelOf(9))
+        assertEquals(0, SteeringWheelHeat.levelOf(-3))
+        // 守门：levelOf 只能有一个入参（第二个入参就是 1624 兜底又回来了）
+        val levelOf = SteeringWheelHeat::class.java.declaredMethods.first { it.name == "levelOf" }
+        assertEquals("levelOf 不该再有 minutes 入参", 1, levelOf.parameterTypes.size)
+        val runtime = source("app/src/main/java/com/leapcontrol/app/ui/AppRuntime.kt")
+        assertFalse(
+            "车况解析不该再读 1624 判方向盘开关",
+            runtime.contains("steeringWheelHeaterMinutes"),
+        )
     }
 
     @Test

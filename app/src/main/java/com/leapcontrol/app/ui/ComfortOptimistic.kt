@@ -13,7 +13,8 @@ import com.leapcontrol.app.SteeringWheelHeat
  * 上游 leapauto 的做法就是在保护窗口内用目标值盖住车端旧值
  * （`MainActivity` 的 `optimisticSteeringWheelHeating` + `comfortProtected`，15 秒），
  * 并在窗口内阶梯轮询，一旦车端真值追上目标就立刻让位。指令参数本身和我们完全一样
- * （cmdid=320 `{"level":"0"}`），差别只在这一层。
+ * （cmdid=320 `{"level":"0"}`）。方向盘加热现在也走这一层：之前它单开的下发函数
+ * 提前 return，跳过了乐观值，界面一直被车端滞后的旧档位盖回来（「怎么都关不掉」）。
  *
  * ## 三条规则
  * ① 下发后 [WINDOW_MS] 内，该字段一律显示目标档位；
