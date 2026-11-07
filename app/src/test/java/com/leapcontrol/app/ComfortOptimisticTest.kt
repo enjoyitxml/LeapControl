@@ -56,8 +56,8 @@ class ComfortOptimisticTest {
             ComfortOptimistic.Pending(ComfortOptimistic.STEERING, 2, t0),
             ComfortOptimistic.targetOf(SteeringWheelHeat.ON, t0),
         )
-        // 老命令名的 `_1` 以前被当成「弱档」，车端理解的却是「关」——
-        // 现在一律按「开」处理，别再让它变成一次无声的关闭
+        // 老命令名的 `_1` 是车端的弱档（仍在加热），界面上按「开」处理；
+        // 别让它变成一次无声的关闭（那是 2026-11-07 第一次「点开没反应」的根因）
         assertEquals(2, ComfortOptimistic.targetOf("steeringWheelHeating_1", t0)?.level)
         assertEquals(2, ComfortOptimistic.targetOf("steeringWheelHeating_2", t0)?.level)
     }

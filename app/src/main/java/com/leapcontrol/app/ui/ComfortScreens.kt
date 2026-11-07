@@ -168,8 +168,9 @@ private fun LevelRow(
 /**
  * 一行两态开关：方向盘加热用它，**不要**套 [LevelRow]。
  *
- * 车端这条指令只有开 / 关两态（`2` 开，`1` / `0` 关）。以前按「关 / 弱 / 强」三格显示，
- * 第一格点下去发的正是「关」，用户点半天方向盘还是凉的（2026-11-07 反馈）。
+ * 车端是三档（`0` 关 / `1` 弱 / `2` 强），但界面上只给开 / 关：「开」只发 `2`。
+ * 弱档在部分车型上不上热，以前把它当第一档发出去，用户点半天方向盘还是凉的
+ * （2026-11-07 反馈）；而把 `1` 当「关」补发，又会让加热关不掉（同一天第二起反馈）。
  */
 @Composable
 private fun SwitchRow(
@@ -809,7 +810,7 @@ private fun CabinSeatPanel(
     ) {
         CabinInteriorCanvas(fill = C.cardBg, stroke = C.textSecondary)
 
-        // 方向盘加热：两态开关（车端 2 开 / 1 关），点一下开、再点一下关
+        // 方向盘加热：界面只做开关（车端 0 关 / 1 弱 / 2 强，开只发 2），点一下开、再点一下关
         if (caps.steeringWheelHeating) {
             val steeringOn = SteeringWheelHeat.isOn(steering)
             SeatChip(

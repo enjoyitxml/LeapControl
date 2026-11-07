@@ -56,9 +56,9 @@ object ComfortOptimistic {
     /**
      * 指令名 → 待确认记录。非舒适件（锁车、空调、鸣笛…）返回 null。
      *
-     * 方向盘是两态开关（车端 2 开 / 1 关 / 0 关，见 [SteeringWheelHeat]），座位是 0..3，
-     * 后视镜只有开关两态；注意别照抄上游写死的 `if (level > 0) 2 else 0` —— 那会把
-     * 座椅的「1 档」显示成 2 档。
+     * 方向盘在界面上是开关（车端三档，`0` 关 / `1` 弱 / `2` 强，见 [SteeringWheelHeat]），
+     * 座位是 0..3，后视镜只有开关两态；注意别照抄上游写死的 `if (level > 0) 2 else 0` ——
+     * 那会把座椅的「1 档」显示成 2 档。
      */
     fun targetOf(commandName: String, now: Long): Pending? {
         val field = when {
@@ -75,9 +75,8 @@ object ComfortOptimistic {
             else -> return null
         }
         val level = when (field) {
-            // 方向盘加热只有开 / 关两态：车端 2 = 开，1 = 关，0 也算关。
-            // 老的 `_1` 被当成「弱档」正是那次「点了没反应」的根因（发的其实是关闭值），
-            // 所以 `_1` / `_2` / `_on` 一律按「开」处理。
+            // 方向盘加热：界面上只有开 / 关两态，乐观值统一顶到强档（2）。
+            // `_1` 是车端的弱档（仍在加热），按「开」处理；`_0` / `_off` 是关。
             STEERING -> if (SteeringWheelHeat.targetOf(commandName) == true) 2 else 0
             MIRROR -> when {
                 commandName.endsWith("_off") -> 0

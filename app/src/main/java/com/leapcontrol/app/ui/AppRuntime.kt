@@ -170,15 +170,24 @@ private const val DEFROST_CONFIRM_ROUNDS = 4
 private const val DEFROST_VARIANT_GAP_MS = 1_200L
 
 /**
- * 方向盘加热下发后回读 1816 / 1624 的轮询间隔与次数（4 × 2.2 秒 ≈ 9 秒）。
+ * 方向盘加热下发后回读 `1816` / `1624` 的轮询间隔与次数（3.2 × 4 ≈ 13 秒）。
  *
- * 车端从受理到把方向盘加热的状态报上来要几秒，比座椅更慢 —— 3 秒回读等于没读。
+ * 车端从受理到 T-Box 唤醒执行要 5~15 秒。v1.1.5 用的是 2.2 秒 × 4（≈9 秒），
+ * 第一次回读必然还是旧值 —— 那正是「补发」被误触发、最后怎么都关不掉的一半原因。
  */
-private const val STEERING_CONFIRM_GAP_MS = 2_200L
+private const val STEERING_CONFIRM_GAP_MS = 3_200L
 private const val STEERING_CONFIRM_ROUNDS = 4
 
-/** 「关」第一次发 0 没关掉、补发 1 之前的间隔：同 cmdid 连发太快会被网关当「系统繁忙」。 */
-private const val STEERING_FALLBACK_GAP_MS = 1_200L
+/**
+ * 「关」没生效时**重发同一条 `0`** 之前的间隔。
+ *
+ * 只重发同一个值：同 cmdid 连发太快会被网关当「系统繁忙」丢掉后一条，
+ * 但也绝不能换成 `1` —— 那是弱档，会把加热重新打开（v1.1.5 的事故）。
+ */
+private const val STEERING_RETRY_GAP_MS = 2_000L
+
+/** 重发 `0` 之后再确认几轮（3.2 × 3 ≈ 10 秒）。 */
+private const val STEERING_RETRY_ROUNDS = 3
 
 /** 里程 / 能耗缓存有效期：15 分钟。老服务限频，不必每次进首页都打一次。 */
 private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
@@ -3107,9 +3116,9 @@ class AppRuntime(context: Context) {
         if (commandName == "defrost") {
             return@withContext runDefrost(api, pin, waitForResult = resultWaitMs != 0L)
         }
-        // 方向盘加热也单独一条路：它是**两态开关**（2 开 / 1 关 / 0 关），
-        // 「关」有两个候选值要试，而且必须读 1816 求证 ——
-        // 以前只按网关回执就说「执行成功」，用户摸到的是冷方向盘（2026-11-07 反馈）。
+        // 方向盘加热单独一条路：车端是三档（0 关 / 1 弱 / 2 强），界面只做开关，
+        // 而且必须读 1816 求证 —— 以前只按网关回执就说「执行成功」，
+        // 用户摸到的是冷方向盘（2026-11-07 反馈）。
         SteeringWheelHeat.targetOf(commandName)?.let { on ->
             return@withContext runSteeringWheelHeat(api, pin, on, waitForResult = resultWaitMs != 0L)
         }
@@ -3364,12 +3373,12 @@ class AppRuntime(context: Context) {
             }
         }
 
-        // 关：只有真的读到「还在加热」才补发 1。
-        // 信号不上报的车型补发等于瞎猜 —— 万一那辆车把 1 当弱档，反而会把它打开。
+        // 关：**只重发同一条 0**。绝不能换成 1 —— 1 是弱档（还在加热），
+        // 补发它等于把刚关掉的加热重新打开，这正是 v1.1.5「怎么都关不掉」的真凶。
         if (first == null) return "关闭方向盘加热指令已下发，本车未上报方向盘加热状态"
-        delay(STEERING_FALLBACK_GAP_MS)
-        withNetworkRetry { api.sendControl(SteeringWheelHeat.buildOffAlt(), pin) }
-        return when (pollSteeringHeat(api, wantOn = false)) {
+        delay(STEERING_RETRY_GAP_MS)
+        withNetworkRetry { api.sendControl(SteeringWheelHeat.build(on = false), pin) }
+        return when (pollSteeringHeat(api, wantOn = false, rounds = STEERING_RETRY_ROUNDS)) {
             true -> "方向盘加热已关闭"
             false -> "关闭指令已发出，但车端还显示在加热，请在车上确认"
             null -> "关闭指令已发出，本车未上报方向盘加热状态"
@@ -3382,9 +3391,13 @@ class AppRuntime(context: Context) {
      * @return true = 已经是目标状态；false = 读到了、但与目标不一致；null = 一次都没读到
      *   （1816 与 1624 都不上报的车型）
      */
-    private suspend fun pollSteeringHeat(api: LeapmotorApi, wantOn: Boolean): Boolean? {
+    private suspend fun pollSteeringHeat(
+        api: LeapmotorApi,
+        wantOn: Boolean,
+        rounds: Int = STEERING_CONFIRM_ROUNDS,
+    ): Boolean? {
         var last: Boolean? = null
-        repeat(STEERING_CONFIRM_ROUNDS) {
+        repeat(rounds) {
             delay(STEERING_CONFIRM_GAP_MS)
             val on = readSteeringOn(api) ?: return@repeat
             if (on == wantOn) return true
@@ -3439,13 +3452,14 @@ class AppRuntime(context: Context) {
             onProgress(index + 1, unique.size)
             if (index != unique.lastIndex) Thread.sleep(POWER_DRAIN_GAP_MS)
         }
-        // 方向盘加热是这套「关」里唯一有两个候选值的一项（0 / 1，见 [SteeringWheelHeat]）。
-        // 批量路径不逐条等回执，但值选错就等于没关 —— 统一读一次，还开着就补发 1。
+        // 方向盘加热：批量路径不逐条等回执，但「关」值得再确认一次。
+        // 车端执行慢，这里读到的常常还是旧值，所以**只重发同一个 0** ——
+        // 换成 1（弱档）会把加热重新打开，v1.1.5 的「怎么都关不掉」就是它。
         if (unique.any { SteeringWheelHeat.targetOf(it) == false }) {
-            delay(STEERING_FALLBACK_GAP_MS)
+            delay(STEERING_RETRY_GAP_MS)
             val stillOn = runCatching { readSteeringOn(api) }.getOrNull()
             if (stillOn == true) {
-                runCatching { withNetworkRetry { api.sendControl(SteeringWheelHeat.buildOffAlt(), pin) } }
+                runCatching { withNetworkRetry { api.sendControl(SteeringWheelHeat.build(on = false), pin) } }
             }
         }
         val ok = unique.size - failed.size

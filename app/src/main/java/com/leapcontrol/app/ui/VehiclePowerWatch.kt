@@ -50,7 +50,7 @@ object VehiclePowerWatch {
         addSeat(out, "seatVentLeftRear", "左后通风", vent?.leftRear, "leftRearSeatVentilation_0")
         addSeat(out, "seatVentRightRear", "右后通风", vent?.rightRear, "rightRearSeatVentilation_0")
 
-        // 方向盘加热：车端只有开 / 关两态（2 开，1 / 0 关），没有档位可报
+        // 方向盘加热：车端三档（0 关 / 1 弱 / 2 强），>0 就是在耗电，关闭一律发 0
         val steering = status.steeringWheelHeating ?: 0
         if (SteeringWheelHeat.isOn(steering)) {
             out += PowerDrain(
