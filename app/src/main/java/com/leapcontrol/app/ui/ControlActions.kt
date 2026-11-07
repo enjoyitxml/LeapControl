@@ -84,10 +84,23 @@ object ControlActions {
      * 解析本次点击真正下发的指令。
      * 复合按钮按车况取反；车况未知时取「开」的保守方向，
      * 由车端自身状态决定实际效果，不会误关已关闭的部件。
+     *
+     * **车窗是四档**（见 [WindowControl]）：关 → 微开 → 半开 → 全开 → 关。
+     * 车况只回报「有没有窗开着」，分不出微开还是全开，所以档位由调用方从
+     * [WindowControl.resolve] 算好传进来；不传就退回旧的两档行为（半开 / 关），
+     * 保证体检页这类「只想要一个开/关」的调用点不用被迫理解档位。
      */
-    fun resolveCommand(id: String, status: CarStatus?): String = when (id) {
+    fun resolveCommand(
+        id: String,
+        status: CarStatus?,
+        windowStage: WindowStage? = null,
+    ): String = when (id) {
         "trunk" -> if (status?.trunkOpen == true) "trunkClose" else "trunkOpen"
-        "window" -> if (status?.windowOpen == true) "windowClose" else "windowOpen"
+        "window" -> when {
+            windowStage != null -> WindowControl.nextCommand(windowStage)
+            status?.windowOpen == true -> WindowControl.CMD_CLOSE
+            else -> WindowControl.CMD_HALF
+        }
         "sunshade" -> if (status?.sunshadeOpen == true) "sunshadeClose" else "sunshadeOpen"
         "sunroof" -> if (status?.sunroofOpen == true) "sunroofClose" else "sunroofOpen"
         "frunk" -> if (status?.frunkOpen == true) "frunkClose" else "frunkOpen"
@@ -116,7 +129,11 @@ object ControlActions {
         "horn" -> "鸣笛寻车"
         "trunkOpen" -> "打开后备箱"
         "trunkClose" -> "关闭后备箱"
-        "windowOpen" -> "打开车窗"
+        // 车窗四档各说各的档位：以前统一写「打开车窗」，实际下发的是半开，
+        // 用户点完看到只开了一条缝，自然会觉得「说的和做的不一样」。
+        "windowVent" -> "微开车窗"
+        "windowFull" -> "全开车窗"
+        "windowOpen" -> "半开车窗"
         "windowClose" -> "关闭车窗"
         "sunshadeOpen" -> "打开遮阳帘"
         "sunshadeClose" -> "关闭遮阳帘"

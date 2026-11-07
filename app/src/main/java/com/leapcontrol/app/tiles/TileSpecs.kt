@@ -10,6 +10,8 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.leapcontrol.app.R
 import com.leapcontrol.app.ui.CarStatus
+import com.leapcontrol.app.ui.WindowControl
+import com.leapcontrol.app.ui.WindowStage
 
 /**
  * 磁贴「亮着」到底表达什么 —— 用户 2026-11-07 定稿。
@@ -23,18 +25,22 @@ import com.leapcontrol.app.ui.CarStatus
  *
  * 这套规则取代了 2026-11-05 那版「点下去先亮满 N 秒再复位」：复位计时与真实结果没
  * 任何关系，用户看到的是一次无缘无故的闪烁。
+ *
+ * 第三类是**档位型**（只有车窗）：亮 = 有任何一扇窗没关，点一下按「关 → 微开 → 半开 → 全开 → 关」
+ * 往下走一档。它与开关型分开，是因为车况只能回报「开着 / 关着」，分不出微开还是全开，
+ * 档位必须由 `ui/WindowControl` 本地记。
  */
-enum class TileKind { MOMENTARY, TOGGLE }
+enum class TileKind { MOMENTARY, TOGGLE, CYCLE }
 
 /**
  * 点下去当帧该不该亮（纯函数，可单测）。
  *
  * 瞬时动作一律先亮 —— 这一下就是「正在发」的唯一反馈，不等任何网络；
- * 开关型直接亮成**目标状态**：开 → 立刻亮，关 → 立刻灭。
+ * 开关型 / 档位型直接亮成**目标状态**：开 → 立刻亮，关 → 立刻灭。
  */
 internal fun clickedActive(kind: TileKind, turningOn: Boolean): Boolean = when (kind) {
     TileKind.MOMENTARY -> true
-    TileKind.TOGGLE -> turningOn
+    TileKind.TOGGLE, TileKind.CYCLE -> turningOn
 }
 
 /**
@@ -44,7 +50,7 @@ internal fun clickedActive(kind: TileKind, turningOn: Boolean): Boolean = when (
  * - 开关型：跟着开合态走。
  */
 internal fun tileActive(kind: TileKind, localOn: Boolean): Boolean =
-    kind == TileKind.TOGGLE && localOn
+    kind != TileKind.MOMENTARY && localOn
 
 /**
  * 开关型磁贴「现在算开着吗」：优先本地记住的开合态，本地没记过才用车况兜底。
@@ -60,7 +66,7 @@ internal fun tileActive(kind: TileKind, localOn: Boolean): Boolean =
 internal fun effectiveOn(kind: TileKind, localState: Boolean?, status: Boolean?): Boolean =
     when (kind) {
         TileKind.MOMENTARY -> false
-        TileKind.TOGGLE -> localState ?: status ?: false
+        TileKind.TOGGLE, TileKind.CYCLE -> localState ?: status ?: false
     }
 
 /** 车况里能对应到这块磁贴的信号；读不到（或这块磁贴本来就没有对应信号）返回 null。 */
@@ -175,10 +181,12 @@ object QuickTiles {
         ),
         TileSpec(
             "window", "车窗", R.drawable.ic_tile_window, WindowTileService::class.java,
-            TileKind.TOGGLE, "windowOpen", "windowClose",
-            doing = "车窗调节中…", opening = "车窗调整中…", closing = "车窗关闭中…",
-            done = "车窗已半开", doneOff = "车窗已全关",
-            onHint = "已半开 · 点击全关", offHint = "已全关 · 点击半开",
+            // 档位型：关 → 微开 → 半开 → 全开 → 关（见 ui/WindowControl）。
+            // 车况只回报「有没有窗开着」，分不出开了多大，所以档位由本地记；
+            // openCommand / closeCommand 只是「最保守方向」的兜底，真正下发看档位。
+            TileKind.CYCLE, WindowControl.CMD_VENT, WindowControl.CMD_CLOSE,
+            doing = "车窗调节中…", opening = "车窗调节中…", closing = "车窗关闭中…",
+            done = "车窗已开启", doneOff = "车窗已关闭",
         ),
         TileSpec(
             "batteryPreheat", "电池预热", R.drawable.ic_tile_battery_heat, BatteryHeatTileService::class.java,

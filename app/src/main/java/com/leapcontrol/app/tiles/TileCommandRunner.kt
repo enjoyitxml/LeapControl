@@ -1,9 +1,12 @@
 package com.leapcontrol.app.tiles
 
 import android.content.Context
+import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.ui.AppRuntime
 import com.leapcontrol.app.ui.ControlFailure
 import com.leapcontrol.app.ui.StatusSnapshot
+import com.leapcontrol.app.ui.WindowControl
+import com.leapcontrol.app.ui.WindowStage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -123,7 +126,18 @@ internal object TileCommandRunner {
         val fresh = runCatching { AppRuntime(context).refreshStatus() }.getOrNull() ?: return@withLock
         StatusSnapshot.put(fresh)
         QuickTiles.ALL.forEach { spec ->
-            if (spec.kind != TileKind.TOGGLE) return@forEach
+            if (spec.kind == TileKind.MOMENTARY) return@forEach
+            // 档位型（车窗）：车况只能证明「全关」，就用它把档位归零；
+            // 报「有窗开着」时分不出微开 / 全开，**不能**拿它改档位，保留本地记录。
+            if (spec.kind == TileKind.CYCLE) {
+                val vin = SessionStore(context).load().selectedVin
+                val now = System.currentTimeMillis()
+                if (now - WindowControl.savedAt(context, vin) < ACTION_GRACE_MS) return@forEach
+                if (fresh.windowOpen == false) {
+                    WindowControl.save(context, vin, WindowStage.CLOSED)
+                }
+                return@forEach
+            }
             if (System.currentTimeMillis() - QuickTiles.lastActionAt(context, spec) < ACTION_GRACE_MS) {
                 return@forEach
             }

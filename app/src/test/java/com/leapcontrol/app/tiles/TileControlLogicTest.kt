@@ -28,16 +28,19 @@ class TileControlLogicTest {
     }
 
     @Test
-    fun `只有上锁与鸣笛是瞬时动作，其余六块都是开关`() {
+    fun `只有上锁与鸣笛是瞬时动作，车窗是档位型，其余五块是开关`() {
         // 用户 2026-11-07：解锁 / 预热也有对应的「关」，亮着点就该关，
         // 所以它们从瞬时动作改成开关型，"亮灭"永远等于车上的功能开没开。
         val momentary = QuickTiles.ALL.filter { it.kind == TileKind.MOMENTARY }.map { it.id }
         assertEquals(listOf("lock", "horn"), momentary)
         val toggles = QuickTiles.ALL.filter { it.kind == TileKind.TOGGLE }.map { it.id }
         assertEquals(
-            listOf("unlock", "ac", "trunk", "window", "batteryPreheat", "sunshade"),
+            listOf("unlock", "ac", "trunk", "batteryPreheat", "sunshade"),
             toggles,
         )
+        // 车窗单独一类：车况只报「有没有窗开着」，微开 / 全开靠本地档位
+        val cycles = QuickTiles.ALL.filter { it.kind == TileKind.CYCLE }.map { it.id }
+        assertEquals(listOf("window"), cycles)
     }
 
     @Test
@@ -48,7 +51,7 @@ class TileControlLogicTest {
             assertEquals("$id 点两次不该换指令", s.openCommand, s.commandFor(turningOn = false))
             assertEquals(s.openCommand, s.commandFor(turningOn = true))
         }
-        listOf("unlock", "ac", "trunk", "window", "batteryPreheat", "sunshade").forEach { id ->
+        listOf("unlock", "ac", "trunk", "batteryPreheat", "sunshade").forEach { id ->
             val s = spec(id)
             assertEquals(TileKind.TOGGLE, s.kind)
             assertTrue("$id 缺关闭指令", s.closeCommand.isNotBlank())

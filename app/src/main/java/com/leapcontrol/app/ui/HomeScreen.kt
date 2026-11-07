@@ -254,6 +254,8 @@ fun HomeScreen(
         // 落盘只记「看过没看过」（点开说明 / 点不再提示都算看过），一个安装只出现一次；
         // 本次会话里 20 秒没人理它就自动收起，别一直挡着首页。
         val coachContext = LocalContext.current
+        // 车窗档位存在 prefs（按 VIN），和界面状态无关，读一次内存值即可
+        val appContext = coachContext.applicationContext
         var coachVisible by remember { mutableStateOf(!PlaybookHint.isDone(coachContext)) }
         // 玩法说明图标在 root 里的位置：顶栏图标会随「个性化」开关增减，写死偏移一定对不准
         var playbookAnchor by remember { mutableStateOf(Rect.Zero) }
@@ -716,6 +718,25 @@ fun HomeScreen(
         }
 
         /**
+         * 车窗当前档位：关 → 微开 → 半开 → 全开。
+         *
+         * 车况只回报「有没有窗开着」一位，分不出微开 / 全开，所以档位靠
+         * [WindowControl] 按「本地记录 + 车况校准」算，首页 / 磁贴用的是同一份。
+         */
+        fun windowStageNow(): WindowStage = WindowControl.resolve(
+            saved = WindowControl.load(appContext, vinKey),
+            savedAt = WindowControl.savedAt(appContext, vinKey),
+            statusOpen = status?.windowOpen,
+        )
+
+        /** 按钮 id → 本次真正下发的指令（车窗带档位，其余按车况取反）。 */
+        fun resolveControl(cellId: String): String = ControlActions.resolveCommand(
+            cellId,
+            status,
+            if (cellId == "window") windowStageNow() else null,
+        )
+
+        /**
          * cellId 为按钮 id；复合按钮（后备箱/车窗/遮阳帘）在此解析成开或关指令。
          * [resolved] 由二次确认弹窗传入：点击那一刻已经解析好的指令，确认后原样下发，
          * 保证弹窗里显示的与真正发出去的是同一条（弹窗期间车况可能刷新）。
@@ -723,7 +744,7 @@ fun HomeScreen(
          */
         fun runControl(cellId: String, resolved: String? = null) {
             scope.launch {
-                val command = resolved ?: ControlActions.resolveCommand(cellId, status)
+                val command = resolved ?: resolveControl(cellId)
                 controlling = cellId
                 actionMessage = null
                 // 点下去立刻在右上角说「车辆解锁中…」：车端 T-Box 唤醒 + 执行要 5~15 秒，
@@ -732,6 +753,9 @@ fun HomeScreen(
                 try {
                     val message = runtime.control(command)
                     actionMessage = message
+                    // 车窗四档：发出去就把档位记下来，下一次点击才知道该往哪一档走。
+                    // 异常路径（没发出去 / 要 PIN）不记，否则会「界面以为开着、车其实没动」。
+                    if (cellId == "window") WindowControl.remember(appContext, vinKey, command)
                     // 车端确认了才是「车辆已解锁」，只下发没等到回执就说「解锁已下发」
                     ControlFeedback.done(command, message)
                     // 不管是不是开关型都回拉一次：提示撤掉后右上角要接上真实车况
@@ -1783,10 +1807,19 @@ fun HomeScreen(
                             } else {
                                 val action = ControlActions.find(cellId)
                                 if (action != null) {
-                                    // 亮灭统一交给 isActive：解锁 / 开关型跟车况走，上锁 / 鸣笛恒不亮
-                                    val active = ControlActions.isActive(cellId, status)
+                                    // 亮灭统一交给 isActive：解锁 / 开关型跟车况走，上锁 / 鸣笛恒不亮。
+                                    // 车窗例外：车况只报「有没有窗开着」，读不到时用本地档位兜底，
+                                    // 否则刚点完「全开」、车况还没刷新，按钮会先灭一下。
+                                    // 按钮文字也带上档位（车窗 / 车窗·微开 / 车窗·全开），
+                                    // 点完立刻变，比只看右上角那句提示更直观。
+                                    val windowStage = if (cellId == "window") windowStageNow() else null
+                                    val active = when {
+                                        windowStage != null -> WindowControl.isOpen(windowStage)
+                                        else -> ControlActions.isActive(cellId, status)
+                                    }
                                     QuickButton(
-                                        label = action.label,
+                                        label = windowStage?.let { WindowControl.buttonLabel(it) }
+                                            ?: action.label,
                                         iconRes = action.iconRes,
                                         busy = controlling == cellId,
                                         active = active,
@@ -1794,7 +1827,8 @@ fun HomeScreen(
                                             // 复合按钮在点击这一刻就解析成「打开 / 关闭 X」：
                                             // 弹窗文案和真正下发的指令共用这一份结果，
                                             // 不再只报按钮上的功能名（「遮阳帘」不是指令）。
-                                            val command = ControlActions.resolveCommand(cellId, status)
+                                            // 车窗按当前档位给出「微开 / 全开 / 关闭」里的下一条。
+                                            val command = resolveControl(cellId)
                                             ensureConfirmed(ControlActions.commandLabel(command)) {
                                                 runControl(cellId, command)
                                             }

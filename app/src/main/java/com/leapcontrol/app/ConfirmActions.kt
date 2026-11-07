@@ -22,7 +22,11 @@ enum class ConfirmAction(
     LOCK("lock", "上锁", "车门"),
     TRUNK_OPEN("trunkOpen", "打开后备箱", "后备箱"),
     TRUNK_CLOSE("trunkClose", "关闭后备箱", "后备箱"),
-    WINDOW_OPEN("windowOpen", "打开车窗", "车窗"),
+    // 车窗是四档（微开 / 半开 / 全开 / 关），每条都要能被单独勾选：
+    // 只列「打开 / 关闭」的话，另外三条会绕过「再点一次」。
+    WINDOW_VENT("windowVent", "微开车窗", "车窗"),
+    WINDOW_HALF("windowOpen", "半开车窗", "车窗"),
+    WINDOW_FULL("windowFull", "全开车窗", "车窗"),
     WINDOW_CLOSE("windowClose", "关闭车窗", "车窗"),
     AC_ON("acOn", "开启空调", "空调"),
     AC_OFF("acOff", "关闭空调", "空调"),

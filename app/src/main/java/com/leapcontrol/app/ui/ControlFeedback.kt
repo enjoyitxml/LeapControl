@@ -160,7 +160,7 @@ object ControlFeedback {
         "lock", "unlock" -> TOPIC_LOCK
         "acOn", "acOff" -> TOPIC_AC
         "trunkOpen", "trunkClose" -> TOPIC_TRUNK
-        "windowOpen", "windowVent", "windowClose" -> TOPIC_WINDOW
+        "windowOpen", "windowVent", "windowFull", "windowClose" -> TOPIC_WINDOW
         "sunshadeOpen", "sunshadeClose" -> TOPIC_SUNSHADE
         "sunroofOpen", "sunroofClose" -> TOPIC_SUNROOF
         "frunkOpen", "frunkClose" -> TOPIC_FRUNK
@@ -193,7 +193,10 @@ object ControlFeedback {
         "acOff" -> "空调关闭中…"
         "trunkOpen" -> "后备箱开启中…"
         "trunkClose" -> "后备箱关闭中…"
-        "windowOpen", "windowVent" -> "车窗开启中…"
+        // 车窗四档：说清开到哪一档，别一律「开启中」——用户分不出点了会开多大
+        "windowVent" -> "车窗微开中…"
+        "windowFull" -> "车窗全开中…"
+        "windowOpen" -> "车窗半开中…"
         "windowClose" -> "车窗关闭中…"
         "sunshadeOpen" -> "遮阳帘开启中…"
         "sunshadeClose" -> "遮阳帘关闭中…"
@@ -225,8 +228,9 @@ object ControlFeedback {
         "acOff" -> if (confirmed) "空调已关闭" else "关空调已下发"
         "trunkOpen" -> if (confirmed) "后备箱已开启" else "开后备箱已下发"
         "trunkClose" -> if (confirmed) "后备箱已关闭" else "关后备箱已下发"
-        "windowOpen" -> if (confirmed) "车窗已开启" else "开车窗已下发"
-        "windowVent" -> if (confirmed) "车窗已通风" else "开窗通风已下发"
+        "windowVent" -> if (confirmed) "车窗已微开" else "微开车窗已下发"
+        "windowFull" -> if (confirmed) "车窗已全开" else "全开车窗已下发"
+        "windowOpen" -> if (confirmed) "车窗已半开" else "半开车窗已下发"
         "windowClose" -> if (confirmed) "车窗已关闭" else "关车窗已下发"
         "sunshadeOpen" -> if (confirmed) "遮阳帘已开启" else "开遮阳帘已下发"
         "sunshadeClose" -> if (confirmed) "遮阳帘已关闭" else "关遮阳帘已下发"
@@ -259,7 +263,12 @@ object ControlFeedback {
         TOPIC_LOCK -> if (command == "unlock") "解锁" else "上锁"
         TOPIC_AC -> if (command == "acOn") "开空调" else "关空调"
         TOPIC_TRUNK -> if (command == "trunkOpen") "开后备箱" else "关后备箱"
-        TOPIC_WINDOW -> if (command == "windowClose") "关车窗" else "开车窗"
+        TOPIC_WINDOW -> when (command) {
+            "windowClose" -> "关车窗"
+            "windowVent" -> "微开车窗"
+            "windowFull" -> "全开车窗"
+            else -> "开车窗"
+        }
         TOPIC_SUNSHADE -> if (command == "sunshadeOpen") "开遮阳帘" else "关遮阳帘"
         TOPIC_SUNROOF -> if (command == "sunroofOpen") "开天窗" else "关天窗"
         TOPIC_FRUNK -> if (command == "frunkOpen") "开前备箱" else "关前备箱"
