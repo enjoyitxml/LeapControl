@@ -2,6 +2,7 @@ package com.leapcontrol.app.tiles
 
 import android.annotation.SuppressLint
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Build
@@ -17,6 +18,8 @@ import com.leapcontrol.app.SessionStore
 import com.leapcontrol.app.ui.AppNavRequest
 import com.leapcontrol.app.ui.ControlFailure
 import com.leapcontrol.app.ui.StatusSnapshot
+import com.leapcontrol.app.ui.WindowControl
+import com.leapcontrol.app.ui.WindowStage
 
 /**
  * 系统控制中心磁贴基类。
@@ -45,6 +48,14 @@ abstract class VehicleTileService : TileService() {
 
     /** 兜底：万一回调因为实例被销毁而丢失，到点按真实状态重画一次。 */
     private var watchdog: Runnable? = null
+
+    /**
+     * 档位型磁贴（车窗）点击前的档位。
+     *
+     * 下发失败要退回这一档：乐观写下的「全开」如果留着，磁贴会亮着说窗开着，
+     * 而车上其实一点没动 —— 比不亮更糟。
+     */
+    private var stageBeforeClick: WindowStage? = null
 
     /**
      * 「待确认」状态的作用域：每块磁贴各一条记录（见 [ConfirmGate]）。
@@ -122,9 +133,19 @@ abstract class VehicleTileService : TileService() {
             return
         }
 
-        // 瞬时动作固定一条指令；开关型按当前开合态取反
-        val turningOn = spec.kind == TileKind.MOMENTARY || !isOnNow()
-        val command = spec.commandFor(turningOn)
+        // 瞬时动作固定一条指令；开关型按当前开合态取反；
+        // 档位型（车窗）按「关 → 微开 → 半开 → 全开 → 关」往下走一档
+        val stage = if (spec.kind == TileKind.CYCLE) windowStageNow() else null
+        val turningOn = when {
+            spec.kind == TileKind.MOMENTARY -> true
+            spec.kind == TileKind.CYCLE -> WindowControl.nextStage(stage!!) != WindowStage.CLOSED
+            else -> !isOnNow()
+        }
+        val command = if (spec.kind == TileKind.CYCLE) {
+            WindowControl.nextCommand(stage!!)
+        } else {
+            spec.commandFor(turningOn)
+        }
 
         // ---- 二次确认（可选项，默认全关，见「设置 → 快捷控制再点一次」）----
         // 第一次点只把磁贴改成「再点一次确认」，窗口内再点同一块才真正下发。
@@ -141,10 +162,20 @@ abstract class VehicleTileService : TileService() {
 
         // 开关型「点下去先写目标状态」：不等车端，磁贴当帧就按目标亮/灭
         if (spec.kind == TileKind.TOGGLE) QuickTiles.setOn(ctx, spec, turningOn)
+        // 档位型：把下一档记下来（失败在 onFinished 里回滚）
+        if (spec.kind == TileKind.CYCLE && stage != null) {
+            stageBeforeClick = stage
+            WindowControl.save(ctx, windowVin(ctx), WindowControl.nextStage(stage))
+        }
 
-        // 当帧反馈：瞬时动作先亮（正在发），开关型直接亮成目标态
-        updateTileState(clickedActive(spec.kind, turningOn), spec.doingText(turningOn))
-        TileNotice.running(ctx, spec.doingText(turningOn))
+        // 当帧反馈：瞬时动作先亮（正在发），其余直接亮成目标态
+        val doingText = if (spec.kind == TileKind.CYCLE) {
+            WindowControl.runningText(command)
+        } else {
+            spec.doingText(turningOn)
+        }
+        updateTileState(clickedActive(spec.kind, turningOn), doingText)
+        TileNotice.running(ctx, doingText)
 
         // 发完就走，不等结果；结果回来后由 onFinished 把高亮摆正
         val accepted = TileCommandRunner.execute(ctx, spec, command, turningOn) { ok ->
@@ -172,6 +203,11 @@ abstract class VehicleTileService : TileService() {
         mainHandler.post {
             watchdog?.let { mainHandler.removeCallbacks(it) }
             watchdog = null
+            // 档位型失败：把档位退回点击前那一档，别让磁贴亮着一个车上没有的状态
+            if (!ok && spec.kind == TileKind.CYCLE) {
+                stageBeforeClick?.let { WindowControl.save(applicationContext, windowVin(applicationContext), it) }
+            }
+            stageBeforeClick = null
             updateTileState(initialActive())
             // 上锁成功顺手把「解锁」那块也灭掉：两块磁贴看的是同一个车门状态，
             // 不同步的话锁完车之后「解锁」还亮着「未上锁」，得等车况回来才对齐。
@@ -218,7 +254,7 @@ abstract class VehicleTileService : TileService() {
     private fun initialActive(): Boolean = when (spec.kind) {
         // 瞬时动作只有在「这条指令还在发」的时候才亮，发完就灭
         TileKind.MOMENTARY -> TileCommandRunner.inFlight()?.id == spec.id
-        TileKind.TOGGLE -> isOnNow()
+        TileKind.TOGGLE, TileKind.CYCLE -> isOnNow()
     }
 
     /**
@@ -227,20 +263,35 @@ abstract class VehicleTileService : TileService() {
      * 车况快照给 2 分钟窗口 —— 只是冷启动第一次点击的兜底，长时间不用的旧报文
      * 不能拿来决定下发方向（`StatusSnapshot` 自己也会再过期一次）。
      */
-    private fun isOnNow(): Boolean = effectiveOn(
-        kind = spec.kind,
-        localState = if (QuickTiles.hasState(this, spec)) QuickTiles.isOn(this, spec) else null,
-        status = statusOn(spec.id, StatusSnapshot.get(maxAgeMs = STATUS_SEED_MS)),
-    )
+    private fun isOnNow(): Boolean = when (spec.kind) {
+        // 车窗：车况分不出微开 / 全开，档位靠 WindowControl 的本地记录算
+        TileKind.CYCLE -> WindowControl.isOpen(windowStageNow())
+        else -> effectiveOn(
+            kind = spec.kind,
+            localState = if (QuickTiles.hasState(this, spec)) QuickTiles.isOn(this, spec) else null,
+            status = statusOn(spec.id, StatusSnapshot.get(maxAgeMs = STATUS_SEED_MS)),
+        )
+    }
 
     private fun defaultSubtitle(): String = when (spec.kind) {
         TileKind.MOMENTARY -> "点击执行"
-        else -> if (isOnNow()) {
+        TileKind.CYCLE -> WindowControl.hint(windowStageNow())
+        TileKind.TOGGLE -> if (isOnNow()) {
             spec.onHint.ifBlank { "已开启 · 点击关闭" }
         } else {
             spec.offHint.ifBlank { "已关闭 · 点击开启" }
         }
     }
+
+    /** 车窗档位按 VIN 存：换车不能把上一辆车的行驶档位带过来。 */
+    private fun windowVin(context: Context = this): String =
+        SessionStore(context).load().selectedVin
+
+    private fun windowStageNow(): WindowStage = WindowControl.resolve(
+        saved = WindowControl.load(this, windowVin()),
+        savedAt = WindowControl.savedAt(this, windowVin()),
+        statusOpen = StatusSnapshot.get(maxAgeMs = STATUS_SEED_MS)?.windowOpen,
+    )
 
     @SuppressLint("StartActivityAndCollapseDeprecated")
     private fun openApp(nav: String? = null) {

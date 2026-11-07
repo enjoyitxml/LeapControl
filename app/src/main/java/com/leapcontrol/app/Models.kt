@@ -1115,8 +1115,12 @@ object Commands {
         "trunkClose" -> ControlCommand("130", """{"value":"false"}""", "关后备箱")
         "frunkOpen" -> ControlCommand("131", """{"value":"100"}""", "开前备箱")
         "frunkClose" -> ControlCommand("131", """{"value":"0"}""", "关前备箱")
+        // 车窗：cmd 230 的刻度是 **0~10**，不是百分比。真车复核过的只有四档
+        // 0 / 2 / 5 / 10（其余取值云端回「请求成功」但车不动，比如 100 / 1）。
+        // 四档循环见 ui/WindowControl.kt：微开 2 → 半开 5 → 全开 10 → 关 0。
         "windowOpen" -> ControlCommand("230", """{"value":"5"}""", "车窗半开")
-        "windowVent" -> ControlCommand("230", """{"value":"2"}""", "车窗通风")
+        "windowVent" -> ControlCommand("230", """{"value":"2"}""", "车窗微开")
+        "windowFull" -> ControlCommand("230", """{"value":"10"}""", "车窗全开")
         "windowClose" -> ControlCommand("230", """{"value":"0"}""", "车窗全关")
         "sunshadeOpen" -> ControlCommand("240", """{"value":"10"}""", "遮阳帘打开")
         "sunshadeClose" -> ControlCommand("240", """{"value":"0"}""", "遮阳帘关闭")

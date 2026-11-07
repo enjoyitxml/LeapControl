@@ -34,7 +34,7 @@ class TileHighlightTest {
 
     @Test
     fun `开关型点开启当帧亮、点关闭当帧灭`() {
-        for (id in listOf("unlock", "ac", "trunk", "window", "batteryPreheat", "sunshade")) {
+        for (id in listOf("unlock", "ac", "trunk", "batteryPreheat", "sunshade")) {
             val spec = requireNotNull(QuickTiles.byId(id))
             assertEquals("$id 应该是开关型", TileKind.TOGGLE, spec.kind)
             assertTrue("$id 开启当帧要亮", clickedActive(spec.kind, turningOn = true))
@@ -44,10 +44,22 @@ class TileHighlightTest {
 
     @Test
     fun `开关型常态跟着开合态`() {
-        for (id in listOf("unlock", "ac", "trunk", "window", "batteryPreheat", "sunshade")) {
+        for (id in listOf("unlock", "ac", "trunk", "batteryPreheat", "sunshade")) {
             assertTrue("$id 开着应该亮", tileActive(TileKind.TOGGLE, localOn = true))
             assertFalse("$id 关着应该灭", tileActive(TileKind.TOGGLE, localOn = false))
         }
+    }
+
+    @Test
+    fun `档位型车窗高亮等同于「有没有窗开着」`() {
+        // 车窗是四档（关 → 微开 → 半开 → 全开），磁贴只表达开 / 关：
+        // 只要不是全关就亮，点下去往下一档走。
+        val window = requireNotNull(QuickTiles.byId("window"))
+        assertEquals(TileKind.CYCLE, window.kind)
+        assertTrue("开窗当帧要亮", clickedActive(window.kind, turningOn = true))
+        assertFalse("关窗当帧要灭", clickedActive(window.kind, turningOn = false))
+        assertTrue("窗开着就常亮", tileActive(TileKind.CYCLE, localOn = true))
+        assertFalse("窗全关就不亮", tileActive(TileKind.CYCLE, localOn = false))
     }
 
     @Test

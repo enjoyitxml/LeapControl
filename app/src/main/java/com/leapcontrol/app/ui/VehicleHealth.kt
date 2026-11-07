@@ -342,7 +342,7 @@ object VehicleHealthDiagnostics {
                 title = "车窗未关",
                 detail = "有车窗处于开启状态，遇雨可能进水",
                 level = HealthLevel.WARNING,
-                fixCommand = ControlActions.resolveCommand("window", status),
+                fixCommand = WindowControl.CMD_CLOSE,
                 fixLabel = "关闭车窗",
             ) else HealthCheckItem(
                 title = "车窗",
@@ -435,7 +435,9 @@ object VehicleHealthDiagnostics {
                     title = "车内温度偏高",
                     detail = "车内 ${interior.toInt()}℃，建议远程通风降温后再上车",
                     level = HealthLevel.WARNING,
-                    fixCommand = ControlActions.resolveCommand("window", status),
+                    // 文案是「开窗通风」，就发微开（cmd 230 value 2）——
+                    // 以前借 resolveCommand("window") 发了半开（value 5），说的和做的不是一回事。
+                    fixCommand = WindowControl.CMD_VENT,
                     fixLabel = "开窗通风",
                 )
             } else {

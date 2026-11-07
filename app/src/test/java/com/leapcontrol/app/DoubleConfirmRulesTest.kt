@@ -80,7 +80,8 @@ class DoubleConfirmRulesTest {
             "unlock", "lock", "horn",
             "acOn", "acOff",
             "trunkOpen", "trunkClose",
-            "windowOpen", "windowClose",
+            // 车窗四档：微开 / 半开 / 全开 / 关
+            "windowVent", "windowFull", "windowOpen", "windowClose",
             "sunshadeOpen", "sunshadeClose",
             "batteryPreheat", "batteryPreheatOff",
         )
