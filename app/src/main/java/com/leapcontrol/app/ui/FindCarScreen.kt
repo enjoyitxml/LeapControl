@@ -149,6 +149,8 @@ fun FindCarScreen(
     var refreshing by remember { mutableStateOf(false) }
     // 位置校准：面板放在地图下面、地图全程可见（见 [LocationCalibratePanel]）
     val calibration by runtime.locationCalibration.collectAsState()
+    // 自动判定坐标系的结果（可空）：只在面板里说一句，不参与任何取数逻辑
+    val datumNote by runtime.locationDatumNote.collectAsState()
     var calibrating by remember { mutableStateOf(false) }
     // 「视角回到车上」的计数。**不能拿坐标当 key**：校准时每按一下方向键坐标都会变，
     // 那样每按一下地图就跳回默认缩放 —— 用户永远没法放大着微调
@@ -361,6 +363,7 @@ fun FindCarScreen(
                     calibration = calibration,
                     onChange = { next -> runtime.setLocationCalibration(next) },
                     onDone = { calibrating = false },
+                    autoNote = datumNote,
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 20.dp),

@@ -1,6 +1,7 @@
 package com.leapcontrol.app
 
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -39,6 +40,9 @@ object ChinaCoordinate {
     private const val A = 6378245.0 // Krasovsky 1940 椭球长半轴
     private const val EE = 0.00669342162296594323 // 第一偏心率平方
 
+    /** 百度坐标（BD-09）那套偏移用的圆周常数。 */
+    private const val X_PI = Math.PI * 3000.0 / 180.0
+
     /** 中国境外不做偏移（含港澳台以外的地区；这里按官方实现的粗略矩形判断）。 */
     fun isOutOfChina(latitude: Double, longitude: Double): Boolean {
         if (longitude < 72.004 || longitude > 137.8347) return true
@@ -74,6 +78,55 @@ object ChinaCoordinate {
         toLatitude: Double,
         toLongitude: Double,
     ): Double = VehicleLocationRules.distanceKm(fromLatitude, fromLongitude, toLatitude, toLongitude) * 1000.0
+
+    /**
+     * GCJ-02 → WGS-84（反算）。
+     *
+     * 官方的正向算法没有闭式逆解，通用做法是「猜一个 WGS，算回去，把误差补上」迭代几次。
+     * 两次就能收敛到厘米级（正向偏移量在几十米到几百米，每次迭代误差平方级下降），
+     * 这里做三次纯粹是为了留余量 —— 计算量可以忽略。
+     */
+    fun gcj02ToWgs84(latitude: Double, longitude: Double): Pair<Double, Double> {
+        if (!latitude.isFinite() || !longitude.isFinite()) return latitude to longitude
+        if (isOutOfChina(latitude, longitude)) return latitude to longitude
+
+        var guessLat = latitude
+        var guessLng = longitude
+        repeat(3) {
+            val (convertedLat, convertedLng) = wgs84ToGcj02(guessLat, guessLng)
+            guessLat += latitude - convertedLat
+            guessLng += longitude - convertedLng
+        }
+        return guessLat to guessLng
+    }
+
+    /**
+     * BD-09（百度坐标）→ GCJ-02。
+     *
+     * 百度 SDK 返回的坐标在 GCJ-02 之上又叠了一次它自己的偏移（约 500 米量级）。
+     * 车机如果走的是百度定位、车厂后台又原样转发，我们就会看到一个「比 GCJ 还歪」的点 ——
+     * 这种点上打开 WGS-84 换算只会换个方向歪，必须按百度这套公式单独转。
+     */
+    fun bd09ToGcj02(latitude: Double, longitude: Double): Pair<Double, Double> {
+        if (!latitude.isFinite() || !longitude.isFinite()) return latitude to longitude
+        if (isOutOfChina(latitude, longitude)) return latitude to longitude
+
+        val x = longitude - 0.0065
+        val y = latitude - 0.006
+        val z = sqrt(x * x + y * y) - 0.00002 * sin(y * X_PI)
+        val theta = atan2(y, x) - 0.000003 * cos(x * X_PI)
+        return (z * sin(theta)) to (z * cos(theta))
+    }
+
+    /** GCJ-02 → BD-09，只在单测里做往返验算用。 */
+    fun gcj02ToBd09(latitude: Double, longitude: Double): Pair<Double, Double> {
+        if (!latitude.isFinite() || !longitude.isFinite()) return latitude to longitude
+        if (isOutOfChina(latitude, longitude)) return latitude to longitude
+
+        val z = sqrt(longitude * longitude + latitude * latitude) + 0.00002 * sin(latitude * X_PI)
+        val theta = atan2(latitude, longitude) + 0.000003 * cos(longitude * X_PI)
+        return (z * sin(theta) + 0.006) to (z * cos(theta) + 0.0065)
+    }
 
     private fun transformLatitude(x: Double, y: Double): Double {
         var result = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * sqrt(abs(x))

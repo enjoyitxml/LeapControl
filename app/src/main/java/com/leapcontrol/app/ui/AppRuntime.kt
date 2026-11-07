@@ -17,6 +17,7 @@ import com.leapcontrol.app.ApkUpdater
 import com.leapcontrol.app.AppUpdateInfo
 import com.leapcontrol.app.BuildConfig
 import com.leapcontrol.app.ChargingControlRules
+import com.leapcontrol.app.CarModel3DManager
 import com.leapcontrol.app.ChassisPhotoQuery
 import com.leapcontrol.app.GitHubUpdate
 import com.leapcontrol.app.HomeCardId
@@ -55,6 +56,7 @@ import com.leapcontrol.app.ScheduledAcPlan
 import com.leapcontrol.app.ScheduledAcState
 import com.leapcontrol.app.ScheduledPreheatState
 import com.leapcontrol.app.SentryModeControlPolicy
+import com.leapcontrol.app.SteeringWheelHeat
 import com.leapcontrol.app.ObfuscatedSecrets
 import com.leapcontrol.app.QuickSwitchMode
 import com.leapcontrol.app.QuickSwitchPrefs
@@ -77,6 +79,8 @@ import com.leapcontrol.app.WeeklyEnergyParser
 import com.leapcontrol.app.VehicleLocationDiagnostics
 import com.leapcontrol.app.VehicleLocationDomain
 import com.leapcontrol.app.VehicleLocationStore
+import com.leapcontrol.app.VehicleDatumDetector
+import com.leapcontrol.app.CoordinateDatum
 import com.leapcontrol.app.LocationAnchor
 import com.leapcontrol.app.LocationAnchorRule
 import com.leapcontrol.app.LocationCalibration
@@ -164,6 +168,18 @@ private const val DEFROST_CONFIRM_ROUNDS = 4
 
 /** 换下一组除霜参数前的间隔：同 cmdid 连发太快会被网关当「系统繁忙」丢掉后一条。 */
 private const val DEFROST_VARIANT_GAP_MS = 1_200L
+
+/**
+ * 方向盘加热下发后回读 1816 / 1624 的轮询间隔与次数（4 × 2.2 秒 ≈ 9 秒）。
+ *
+ * 车端从受理到把方向盘加热的状态报上来要几秒，比座椅更慢 —— 3 秒回读等于没读。
+ */
+private const val STEERING_CONFIRM_GAP_MS = 2_200L
+private const val STEERING_CONFIRM_ROUNDS = 4
+
+/** 「关」第一次发 0 没关掉、补发 1 之前的间隔：同 cmdid 连发太快会被网关当「系统繁忙」。 */
+private const val STEERING_FALLBACK_GAP_MS = 1_200L
+
 /** 里程 / 能耗缓存有效期：15 分钟。老服务限频，不必每次进首页都打一次。 */
 private const val MILEAGE_ENERGY_TTL_MS = 15 * 60 * 1000L
 
@@ -1149,6 +1165,19 @@ class AppRuntime(context: Context) {
     val locationCalibration: StateFlow<LocationCalibration> = _locationCalibration.asStateFlow()
 
     /**
+     * 「这一帧的坐标是怎么来的」—— 给校准面板显示一句话，让用户知道自动判定做了什么。
+     *
+     * 只在校验结果变化时写：车况每秒都在刷，同样的句子反复塞进 StateFlow 会让
+     * 整个面板重组一遍。
+     */
+    private val _locationDatumNote = MutableStateFlow<String?>(null)
+    val locationDatumNote: StateFlow<String?> = _locationDatumNote.asStateFlow()
+
+    private fun publishDatumNote(note: String?) {
+        if (_locationDatumNote.value != note) _locationDatumNote.value = note
+    }
+
+    /**
      * 改校准值。**不联网重拉车况** —— 校准只是坐标的显示换算，车况报文里
      * 那些数字一个都没变，为此叫醒一次车机不值得。
      */
@@ -1849,7 +1878,12 @@ class AppRuntime(context: Context) {
                 leftRear = seatLevel(st, "leftRearSeatVentilation", "3727"),
                 rightRear = seatLevel(st, "rightRearSeatVentilation", "3728"),
             ),
-            steeringWheelHeating = seatLevel(st, "steeringWheelHeating", "1816")?.coerceIn(0, 2),
+            // 方向盘加热：1816（0 关）为主，1624（剩余加热分钟）兜底 ——
+            // 只报分钟数的车型如果只看 1816，按钮会永远停「关」。
+            steeringWheelHeating = SteeringWheelHeat.levelOf(
+                level = seatLevel(st, "steeringWheelHeating", "1816"),
+                minutes = seatLevel(st, "steeringWheelHeaterMinutes", "1624"),
+            ),
             // 不兜底 rearWindowHeating（后风挡加热）：那几乎全系都有，会让「有没有后视镜加热」永远为真
             rearviewMirrorHeating = parseOnOff(pick(st, "rearviewMirrorHeating", "49", "50")),
             fridge = parseFridge(st),
@@ -2163,14 +2197,33 @@ class AppRuntime(context: Context) {
             values[k] = st.opt(k)
         }
         val selected = VehicleLocationDomain.selectUsable(values)
-        val rawLatitude = selected.pair.latitude?.toString()?.toDoubleOrNull()
-        val rawLongitude = selected.pair.longitude?.toString()?.toDoubleOrNull()
+        // 自动判定（见 [VehicleDatumDetector]）：车机同时报了两对坐标、且能用
+        // WGS-84 → GCJ-02 的公式互证时，直接挑出本来就是 GCJ-02 的那一对。
+        // 这是「B10 / C01 定位不准」最可能的真凶 —— 这两款车的命名键 / 3724+3725
+        // 报的可能是 GPS 原始值，而 C11 报的本来就是火星坐标，所以只有部分用户需要换算。
+        val detected = VehicleDatumDetector.detect(values)
+        publishDatumNote(
+            when {
+                detected != null -> "已自动纠正：车机同时报了两套坐标，用的是高德那套"
+                VehicleDatumDetector.usablePairCount(values) >= 2 ->
+                    "车机报了两套坐标且对不上，坐标系可以在下面手动选一项"
+                else -> null
+            },
+        )
+        val rawLatitude = (detected?.latitude ?: selected.pair.latitude?.toString()?.toDoubleOrNull())
+        val rawLongitude = (detected?.longitude ?: selected.pair.longitude?.toString()?.toDoubleOrNull())
         val valid = VehicleLocationRules.isValid(rawLatitude, rawLongitude)
         // 校准（坐标系换算 + 手调偏移，见 [LocationCalibration]）只作用在**输出**上：
         // 车况里 rawLatitude 那一对仍然是车端原话，后面判「位置有没有变过」也用它 ——
         // 否则用户调一次校准，就会被当成「车挪了」，时间的锚点直接归零
         val shown = if (valid) {
-            LocationCalibrator.apply(rawLatitude!!, rawLongitude!!, _locationCalibration.value)
+            LocationCalibrator.apply(
+                rawLatitude!!,
+                rawLongitude!!,
+                _locationCalibration.value,
+                // 检测出的那一对已经是 GCJ-02，交给 apply 的语义是「原样用，别再换算」
+                autoDatum = if (detected != null) CoordinateDatum.RAW else null,
+            )
         } else {
             null
         }
@@ -2183,7 +2236,11 @@ class AppRuntime(context: Context) {
             } else {
                 0L
             },
-            source = if (valid) VehicleLocationDiagnostics.describeSource(values) else null,
+            source = if (valid) {
+                detected?.let { "自动判定 · ${it.note}" } ?: VehicleLocationDiagnostics.describeSource(values)
+            } else {
+                null
+            },
         )
     }
 
@@ -2666,6 +2723,135 @@ class AppRuntime(context: Context) {
         runCatching { com.leapcontrol.app.widget.VehicleWidget.refreshCarImage(appContext, this) }
     }
 
+    // ---------------- 官方 3D 车模 ----------------
+    //
+    // 2D 定妆照是服务端按车辆档案**预先渲染**的一张图：接口只收 VIN，车型配色、
+    // 轮毂、车顶全在上传那一次就定死了，所以「颜色和配置跟实车不一样」根本改不了。
+    // 3D 是拿官方下发的 modelParam 在设备上实时渲染，才对得上实车。
+    //
+    // 代价是第一次要下约 12MB 的两个包（H5 运行时 + 车型资产），之后永久缓存。
+    // 所以这里只负责「拿包、判就绪」，渲染在 ui/CarModel3DView.kt。
+
+    /**
+     * 3D 车模当前走到哪一步。
+     *
+     * 首页**只在 [READY] 时**把 2D 图换成 3D；其余状态一律还是那张 2D 图 ——
+     * 「下载中 / 失败」对用户就等于「没变」，不会出现空镜头或半成品。
+     */
+    enum class Car3DState {
+        /** 还没开始（未登录、开关关着、或已经清过缓存）。 */
+        IDLE,
+        /** 正在下载 / 解压模型包。 */
+        DOWNLOADING,
+        /** 包就绪，可以渲染。 */
+        READY,
+        /** 有 h5Key 但下载失败，下次进首页会重试。 */
+        FAILED,
+        /** 官方没给这台车下发 3D 包，只能看 2D。 */
+        UNAVAILABLE,
+    }
+
+    private val _car3DState = MutableStateFlow(Car3DState.IDLE)
+    val car3DState: StateFlow<Car3DState> = _car3DState.asStateFlow()
+
+    private val _car3DMeta = MutableStateFlow(
+        CarModel3DManager.loadMeta(appContext, session.selectedVin),
+    )
+    val car3DMeta: StateFlow<CarModel3DManager.Meta?> = _car3DMeta.asStateFlow()
+
+    private val _car3DEnabled = MutableStateFlow(
+        CarModel3DManager.isEnabled(appContext, session.selectedVin),
+    )
+    val car3DEnabled: StateFlow<Boolean> = _car3DEnabled.asStateFlow()
+
+    /** 正在同步哪台车：中途切车时旧任务的结果要丢掉，不能写到新车上。 */
+    @Volatile
+    private var car3DSyncVin: String = ""
+
+    fun setCar3DEnabled(enabled: Boolean) {
+        CarModel3DManager.setEnabled(appContext, session.selectedVin, enabled)
+        _car3DEnabled.value = enabled
+        if (!enabled) _car3DState.value = Car3DState.IDLE
+    }
+
+    /**
+     * 准备 3D 车模（首页进来就调一次）。
+     *
+     * 顺序：本地元数据 → 命中就绪直接 READY → 否则联网要 h5Key/srcKey 再下载。
+     * 全程不阻塞首帧：首页先显示 2D 图，3D 就绪后靠 StateFlow 自己换上去。
+     */
+    suspend fun prepareCarModel3D(force: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+        val vin = session.selectedVin
+        if (vin.isBlank()) {
+            _car3DState.value = Car3DState.IDLE
+            return@withContext false
+        }
+        // 开关按车存，换车后要重新读一次
+        _car3DEnabled.value = CarModel3DManager.isEnabled(appContext, vin)
+        if (!_car3DEnabled.value) {
+            _car3DState.value = Car3DState.IDLE
+            return@withContext false
+        }
+
+        var meta = if (force) null else CarModel3DManager.loadMeta(appContext, vin)
+        _car3DMeta.value = meta
+        if (meta != null && CarModel3DManager.isReady(appContext, meta.h5Key, meta.srcKey)) {
+            _car3DState.value = Car3DState.READY
+            return@withContext true
+        }
+
+        if (meta == null) {
+            // 24 小时内已经问过、结论是「这台车没有 3D 包」就不再浪费一次完整探测
+            if (!force && CarModel3DManager.shouldSkipUnavailable(appContext, vin)) {
+                _car3DState.value = Car3DState.UNAVAILABLE
+                return@withContext false
+            }
+            val fetched = runCatching {
+                withNetworkRetry { LeapmotorApi(session).getVehiclePictureMeta(vin) }
+            }.getOrNull()
+            val h5Key = fetched?.h5Key
+            if (h5Key.isNullOrBlank()) {
+                // 网络失败不记结论（下次还得试）；服务端明确回了数据但没 h5Key 才记
+                if (fetched != null) CarModel3DManager.markUnavailable(appContext, vin)
+                _car3DState.value = Car3DState.UNAVAILABLE
+                return@withContext false
+            }
+            CarModel3DManager.clearUnavailable(appContext, vin)
+            meta = CarModel3DManager.Meta(
+                h5Key = h5Key,
+                srcKey = fetched.srcKey,
+                modelParam = fetched.modelParam,
+                pictureKey = fetched.pictureKey,
+            )
+            CarModel3DManager.saveMeta(appContext, vin, meta)
+            _car3DMeta.value = meta
+        }
+
+        car3DSyncVin = vin
+        _car3DState.value = Car3DState.DOWNLOADING
+        val ok = runCatching {
+            CarModel3DManager.syncPackage(appContext, meta.h5Key, meta.srcKey) { key, dir ->
+                LeapmotorApi(session).downloadCarModelPackage(key, dir)
+            }
+        }.getOrDefault(false)
+
+        if (car3DSyncVin != vin) return@withContext false
+        _car3DState.value = if (ok) Car3DState.READY else Car3DState.FAILED
+        ok
+    }
+
+    /** 清掉 3D 资源（换车型 / 用户主动清理），下次进首页按需重下。 */
+    fun clearCarModel3D() {
+        CarModel3DManager.clearAll(appContext)
+        CarModel3DManager.clearMeta(appContext, session.selectedVin)
+        CarModel3DManager.clearUnavailable(appContext, session.selectedVin)
+        _car3DMeta.value = null
+        _car3DState.value = Car3DState.IDLE
+    }
+
+    /** 3D 包占用的磁盘（设置页显示）。 */
+    fun carModel3DSize(): Long = CarModel3DManager.sizeOnDisk(appContext)
+
     // ---------------- 自定义车模（内置换色 / 相册导入） ----------------
     //
     // 官方接口只收 VIN，图是按车辆档案渲染好的定妆照，客户端没有任何「选颜色」的入参，
@@ -2921,6 +3107,12 @@ class AppRuntime(context: Context) {
         if (commandName == "defrost") {
             return@withContext runDefrost(api, pin, waitForResult = resultWaitMs != 0L)
         }
+        // 方向盘加热也单独一条路：它是**两态开关**（2 开 / 1 关 / 0 关），
+        // 「关」有两个候选值要试，而且必须读 1816 求证 ——
+        // 以前只按网关回执就说「执行成功」，用户摸到的是冷方向盘（2026-11-07 反馈）。
+        SteeringWheelHeat.targetOf(commandName)?.let { on ->
+            return@withContext runSteeringWheelHeat(api, pin, on, waitForResult = resultWaitMs != 0L)
+        }
         val command = if (presetAcTemperature != null) {
             Commands.buildAc(presetAcTemperature)
         } else {
@@ -3139,6 +3331,83 @@ class AppRuntime(context: Context) {
     }
 
     /**
+     * 方向盘加热：发指令 → 读 1816 / 1624 求证 → 「关」没关掉再补一条 `level=1`。
+     *
+     * ## 为什么不能只看网关回执
+     * 云端 `code=0` 只代表**网关收下**这条指令。方向盘加热是车端舒适件，车型之间对
+     * `{"level":"0"}`、`{"level":"1"}` 的取舍不一样：文档写 `0`=关，C10 实测 `1`=关。
+     * 只按网关说话，用户会收到一个「已开启」而方向盘一点不热（这正是这次反馈的情形）。
+     *
+     * ## 为什么「开」不重试
+     * 开只有 `2` 这一个有效值，再发一遍还是同一个值，只会撞网关限流。读不到信号就如实
+     * 说「已下发」，不编成功。
+     */
+    private suspend fun runSteeringWheelHeat(
+        api: LeapmotorApi,
+        pin: String,
+        on: Boolean,
+        waitForResult: Boolean = true,
+    ): String {
+        withNetworkRetry { api.sendControl(SteeringWheelHeat.build(on), pin) }
+        // 不等回执的调用方（桌面小组件，广播预算只有 10 秒）：送出去就返回
+        if (!waitForResult) return if (on) "方向盘加热指令已下发" else "关闭方向盘加热指令已下发"
+
+        val first = pollSteeringHeat(api, wantOn = on)
+        if (first == true) return if (on) "方向盘加热已开启" else "方向盘加热已关闭"
+
+        if (on) {
+            // first == false：读得到、但还没进入加热（车端可能只是慢）；null：本车不报这个信号
+            return if (first == false) {
+                "方向盘加热指令已发出，但车端还没进入加热状态，请稍后刷新看看"
+            } else {
+                "方向盘加热指令已下发，本车未上报方向盘加热状态，请在车上确认"
+            }
+        }
+
+        // 关：只有真的读到「还在加热」才补发 1。
+        // 信号不上报的车型补发等于瞎猜 —— 万一那辆车把 1 当弱档，反而会把它打开。
+        if (first == null) return "关闭方向盘加热指令已下发，本车未上报方向盘加热状态"
+        delay(STEERING_FALLBACK_GAP_MS)
+        withNetworkRetry { api.sendControl(SteeringWheelHeat.buildOffAlt(), pin) }
+        return when (pollSteeringHeat(api, wantOn = false)) {
+            true -> "方向盘加热已关闭"
+            false -> "关闭指令已发出，但车端还显示在加热，请在车上确认"
+            null -> "关闭指令已发出，本车未上报方向盘加热状态"
+        }
+    }
+
+    /**
+     * 轮询方向盘加热状态。
+     *
+     * @return true = 已经是目标状态；false = 读到了、但与目标不一致；null = 一次都没读到
+     *   （1816 与 1624 都不上报的车型）
+     */
+    private suspend fun pollSteeringHeat(api: LeapmotorApi, wantOn: Boolean): Boolean? {
+        var last: Boolean? = null
+        repeat(STEERING_CONFIRM_ROUNDS) {
+            delay(STEERING_CONFIRM_GAP_MS)
+            val on = readSteeringOn(api) ?: return@repeat
+            if (on == wantOn) return true
+            last = on
+        }
+        return last
+    }
+
+    /**
+     * 读一次方向盘加热是否开着。
+     *
+     * @return null = 1816 与 1624 都没上报，这台车读不出这个状态（不能当成「关」）
+     */
+    private suspend fun readSteeringOn(api: LeapmotorApi): Boolean? {
+        val st = runCatching { api.getVehicleState() }.getOrNull() ?: return null
+        val level = SteeringWheelHeat.levelOf(
+            level = seatLevel(st, "steeringWheelHeating", "1816"),
+            minutes = seatLevel(st, "steeringWheelHeaterMinutes", "1624"),
+        ) ?: return null
+        return SteeringWheelHeat.isOn(level)
+    }
+
+    /**
      * 一键关闭多项后台耗电功能（空调 / 座椅加热通风 / 方向盘加热 / 后视镜加热 / 冰箱）。
      *
      * 与 [control] 的关键区别：**不逐条等车端执行结果**。control 每条都要轮询 1~24 秒，
@@ -3169,6 +3438,15 @@ class AppRuntime(context: Context) {
             }
             onProgress(index + 1, unique.size)
             if (index != unique.lastIndex) Thread.sleep(POWER_DRAIN_GAP_MS)
+        }
+        // 方向盘加热是这套「关」里唯一有两个候选值的一项（0 / 1，见 [SteeringWheelHeat]）。
+        // 批量路径不逐条等回执，但值选错就等于没关 —— 统一读一次，还开着就补发 1。
+        if (unique.any { SteeringWheelHeat.targetOf(it) == false }) {
+            delay(STEERING_FALLBACK_GAP_MS)
+            val stillOn = runCatching { readSteeringOn(api) }.getOrNull()
+            if (stillOn == true) {
+                runCatching { withNetworkRetry { api.sendControl(SteeringWheelHeat.buildOffAlt(), pin) } }
+            }
         }
         val ok = unique.size - failed.size
         when {

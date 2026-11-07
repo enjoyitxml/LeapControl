@@ -103,13 +103,17 @@ class VehiclePowerWatchTest {
     }
 
     @Test
-    fun `方向盘加热按档位给文案`() {
-        val low = VehiclePowerWatch.drains(status(steeringWheelHeating = 1)).single()
-        assertEquals("低档", low.detail)
-        assertEquals("steeringWheelHeating_0", low.offCommand)
+    fun `方向盘加热是两态开关，用专门的关闭指令`() {
+        // 车端只有开 / 关，不再按「低档 / 高档」说 —— 1 是关，不是弱档
+        val on = VehiclePowerWatch.drains(status(steeringWheelHeating = 2)).single()
+        assertEquals("电加热中", on.detail)
+        assertEquals("steeringWheelHeating_off", on.offCommand)
 
-        val high = VehiclePowerWatch.drains(status(steeringWheelHeating = 2)).single()
-        assertEquals("高档", high.detail)
+        // 老报文里万一报 1，也当「开着」列出来，但文案不用改
+        val legacy = VehiclePowerWatch.drains(status(steeringWheelHeating = 1)).single()
+        assertEquals("电加热中", legacy.detail)
+
+        assertTrue(VehiclePowerWatch.drains(status(steeringWheelHeating = 0)).isEmpty())
     }
 
     @Test

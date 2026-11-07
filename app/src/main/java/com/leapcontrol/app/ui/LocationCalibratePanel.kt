@@ -1,6 +1,7 @@
 package com.leapcontrol.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,6 +38,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leapcontrol.app.CoordinateDatum
 import com.leapcontrol.app.LocationCalibration
 import com.leapcontrol.app.LocationCalibrator
 
@@ -66,6 +69,8 @@ internal fun LocationCalibratePanel(
     onChange: (LocationCalibration) -> Unit,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 自动判定的结论（可空）：让用户知道「已经替你纠过一次」，否则准了他也以为是运气。 */
+    autoNote: String? = null,
 ) {
     val C = LocalAppColors.current
     // 步长是面板内的临时状态，不落盘：下次进来重新从 50 米起手更符合直觉
@@ -145,13 +150,25 @@ internal fun LocationCalibratePanel(
                     } else {
                         append("还没挪过，车标就是车机上报的位置")
                     }
-                    if (calibration.convert) append(" · 已按 WGS-84 → GCJ-02 换算")
+                    append(" · ${LocationCalibrator.datumSummary(calibration)}")
                 },
                 color = C.textSecondary,
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
             )
         }
+
+        Spacer(Modifier.height(12.dp))
+
+        // ---- 坐标系：整张图偏几百米时唯一有效的那一项 ----
+        // 以前它是页面最底部一行小勾选，滚下去才看得到，勾没勾也只是一枚 22dp 的小方块 ——
+        // 而「定位偏 500 米」恰恰是最常见、最需要被找到的问题。现在放在偏移卡正下方，
+        // 四选一的实心按钮，选中的那块整个填主题色。
+        DatumCard(
+            current = calibration.datum,
+            note = autoNote,
+            onSelect = { onChange(calibration.copy(datum = it)) },
+        )
 
         Spacer(Modifier.height(12.dp))
 
@@ -190,7 +207,7 @@ internal fun LocationCalibratePanel(
                         .size(44.dp)
                         .clip(CircleShape)
                         .background(C.panelBg.copy(alpha = 0.9f))
-                        .clickable { onChange(LocationCalibration(convert = calibration.convert)) },
+                        .clickable { onChange(calibration.copy(east = 0, north = 0)) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -210,12 +227,6 @@ internal fun LocationCalibratePanel(
         }
 
         Spacer(Modifier.height(12.dp))
-
-        // ---- 坐标系换算（老版本唯一的能力，保留成一行开关） ----
-        ConvertRow(
-            checked = calibration.convert,
-            onToggle = { onChange(calibration.copy(convert = !calibration.convert)) },
-        )
     }
 }
 
@@ -267,54 +278,132 @@ private fun DirKey(icon: ImageVector, description: String, onClick: () -> Unit) 
 }
 
 /**
- * 坐标系换算开关。
+ * 坐标系选择卡片：**四选一的实心按钮**，不是一行小勾选。
  *
- * 文案不写「WGS-84 / GCJ-02」两个术语就完事 —— 用户不需要懂这两个词，
- * 需要的是「什么症状下该打开它」。所以副标题写的是症状：整张图整体偏几百米、方向固定。
+ * 老版本这里是个 22dp 的方框 + 一行 11sp 灰字，压在页面最底部 —— 用户滚动都不一定看到，
+ * 看到也认不出那是个能点的东西。而「整张图偏几百米」是定位问题里最常见的一类，
+ * 换算一次就能全好，所以它必须一眼可辨、一点就变。
+ *
+ * 四档而不是开 / 关：车端到底报的是哪一套坐标，不同车型给出三种不同答案
+ * （C11 原样、B10/C01 要 WGS-84、还有一批是百度），只给一个开关必然剩下一批人怎么点都不对。
+ * 「自动」放在第一位：两套坐标能互证时它会自己挑对的那套，用户什么都不用懂。
  */
 @Composable
-private fun ConvertRow(checked: Boolean, onToggle: () -> Unit) {
+private fun DatumCard(current: CoordinateDatum, note: String?, onSelect: (CoordinateDatum) -> Unit) {
     val C = LocalAppColors.current
-    Row(
+    val shape = RoundedCornerShape(14.dp)
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(C.chipBg)
-            .clickable(onClick = onToggle)
-            .padding(horizontal = 13.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clip(shape)
+            .background(C.panelBg)
+            .border(1.dp, C.accent.copy(alpha = 0.32f), shape)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "按 WGS-84 → GCJ-02 换算",
-                color = C.textPrimary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.Public,
+                contentDescription = null,
+                tint = C.accent,
+                modifier = Modifier.size(15.dp),
             )
-            Spacer(Modifier.height(3.dp))
+            Spacer(Modifier.size(6.dp))
             Text(
-                text = "整张图整体偏几百米、而且每次都偏同一个方向时，打开它试试",
+                text = "定位整体偏几百米？改这里",
+                color = C.textPrimary,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "选对后地图立刻纠正",
                 color = C.textSecondary,
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
+                fontSize = 10.sp,
             )
         }
-        Spacer(Modifier.size(10.dp))
-        Box(
-            modifier = Modifier
-                .size(22.dp)
-                .clip(RoundedCornerShape(7.dp))
-                .background(if (checked) C.accent.copy(alpha = 0.20f) else C.panelBg.copy(alpha = 0.7f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (checked) {
-                Icon(
-                    Icons.Filled.Check,
-                    contentDescription = null,
-                    tint = C.accent,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
+
+        Spacer(Modifier.height(9.dp))
+
+        // 2×2：左列是「常用」（自动 / WGS-84），右列是「特殊」（不换算 / 百度）
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DatumChip(CoordinateDatum.AUTO, current, Modifier.weight(1f), onSelect)
+            DatumChip(CoordinateDatum.RAW, current, Modifier.weight(1f), onSelect)
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DatumChip(CoordinateDatum.WGS84, current, Modifier.weight(1f), onSelect)
+            DatumChip(CoordinateDatum.BD09, current, Modifier.weight(1f), onSelect)
+        }
+
+        // 自动判定 / 无法确定的结论：默认不说，说了就说明这一帧确实有值得知道的东西
+        if (!note.isNullOrBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = note,
+                color = C.accent,
+                fontSize = 10.5.sp,
+                lineHeight = 14.sp,
+            )
         }
     }
+}
+
+/** 坐标系选项：选中时整块填主题色、字反色，并给一枚对勾。 */
+@Composable
+private fun DatumChip(
+    datum: CoordinateDatum,
+    current: CoordinateDatum,
+    modifier: Modifier = Modifier,
+    onSelect: (CoordinateDatum) -> Unit,
+) {
+    val C = LocalAppColors.current
+    val selected = datum == current
+    // 选中态用 accent 实底，字取 panelBg（浅色主题=近白、深色主题=深灰）——
+    // 比写死白色更稳：深色主题的主题色通常是提亮过的浅绿，白字会糊成一片
+    val ink = if (selected) C.panelBg else C.textPrimary
+    val subInk = if (selected) C.panelBg.copy(alpha = 0.82f) else C.textSecondary
+    Box(
+        modifier = modifier
+            .height(52.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(if (selected) C.accent else C.chipBg)
+            .clickable { onSelect(datum) }
+            .padding(horizontal = 9.dp, vertical = 7.dp),
+    ) {
+        Column {
+            Text(
+                text = datum.label,
+                color = ink,
+                fontSize = 12.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 1,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = datumHint(datum),
+                color = subInk,
+                fontSize = 9.5.sp,
+                lineHeight = 12.sp,
+                maxLines = 2,
+            )
+        }
+        if (selected) {
+            Icon(
+                Icons.Filled.Check,
+                contentDescription = null,
+                tint = ink,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(13.dp),
+            )
+        }
+    }
+}
+
+/** 每个选项一句「什么情况下选它」——比术语管用。 */
+private fun datumHint(datum: CoordinateDatum): String = when (datum) {
+    CoordinateDatum.AUTO -> "两套坐标自动比对"
+    CoordinateDatum.RAW -> "本来就是高德坐标"
+    CoordinateDatum.WGS84 -> "偏的方向每次都一样"
+    CoordinateDatum.BD09 -> "上面那条试过还偏"
 }

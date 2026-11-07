@@ -336,14 +336,36 @@ fun HomeScreen(
         // 首帧直接复用 runtime 已解码好的车模，避免重进页面时车模先消失再回来
         // 「显示哪张」由 runtime 决定：改过色就用自定义那张，否则用官方图
         var carBitmap by remember { mutableStateOf(runtime.cachedDisplayCarBitmap()) }
+        var vinKey by remember { mutableStateOf(runtime.session.selectedVin) }
+
+        // ---- 官方 3D 车模 ----
+        // 只有「包已就绪」才把 2D 图换掉；下载中 / 失败 / 这台车没有 3D 包时，
+        // 用户看到的还是原来那张图 —— 不会出现空镜头。
+        val car3DEnabled by runtime.car3DEnabled.collectAsState()
+        val car3DMeta by runtime.car3DMeta.collectAsState()
+        val car3DState by runtime.car3DState.collectAsState()
+        // 渲染失败（WebGL 起不来 / H5 报初始化异常）：本次进程内不再重试，
+        // 否则每次重组都会重开一个 WebView，越试越卡。
+        var car3DFailed by remember(vinKey) { mutableStateOf(false) }
+        // 「首帧已经画出来了」——和「包准备好了」是两件事：
+        // 包刚到就切过去会看到一两秒空白（WebView 还在建场景），
+        // 所以 2D 图和 3D 做一次交叉淡入，谁都不用先消失。
+        var car3DReady by remember(vinKey) { mutableStateOf(false) }
+        val show3D = car3DEnabled && !car3DFailed &&
+            car3DState == AppRuntime.Car3DState.READY && car3DMeta != null
+        val car3DAlpha by animateFloatAsState(
+            targetValue = if (show3D && car3DReady) 1f else 0f,
+            animationSpec = tween(durationMillis = 260),
+            label = "car3DAlpha",
+        )
+
         // 车模淡入：图是异步解码的（冷启动尤其如此），直接出现是"啪"一下；
         // 220ms 淡入让它浮上来。配合下面那块固定高度的占位框，下面的内容不会被挤动。
         val carAlpha by animateFloatAsState(
-            targetValue = if (carBitmap != null) 1f else 0f,
+            targetValue = if (carBitmap != null || show3D) 1f else 0f,
             animationSpec = tween(durationMillis = 220),
             label = "carAlpha",
         )
-        var vinKey by remember { mutableStateOf(runtime.session.selectedVin) }
         var vehicles by remember { mutableStateOf<List<com.leapcontrol.app.Vehicle>>(emptyList()) }
         var showVehicleMenu by remember { mutableStateOf(false) }
         // ---- 充电中心（二级页 + 两个三级页）----
@@ -590,6 +612,12 @@ fun HomeScreen(
         val carModelRevision by runtime.carModelRevision
         LaunchedEffect(vinKey, carModelRevision) {
             carBitmap = runCatching { runtime.displayCarBitmap() }.getOrNull()
+        }
+
+        // 3D 车模：本地没有包就在后台下（约 12MB，一次下完永久用），
+        // 就绪后靠上面的 show3D 自己换上去，不打扰当前这张 2D 图。
+        LaunchedEffect(vinKey, car3DEnabled) {
+            if (car3DEnabled) runCatching { runtime.prepareCarModel3D() }
         }
 
         /**
@@ -1734,7 +1762,7 @@ fun HomeScreen(
             val hasCarFile = remember(vinKey) {
                 runtime.hasCustomCarModel() || runtime.hasOfficialCarImage()
             }
-            if (carBitmap != null || hasCarFile) {
+            if (show3D || carBitmap != null || hasCarFile) {
                 Spacer(Modifier.height(4.dp))
                 Box(
                     modifier = Modifier
@@ -1744,11 +1772,16 @@ fun HomeScreen(
                         .height(if (heroLayout == HeroLayout.SEPARATE) 186.dp else 200.dp),
                     contentAlignment = Alignment.Center,
                 ) {
+                    val meta3d = car3DMeta
                     val bitmap = carBitmap
+                    val carTarget = quickSwitch.effectiveTarget(QuickPart.CAR, themeCustomLocked)
+
+                    // 2D 垫在下面：3D 首帧画出来之前，用户看到的就是这张图；
+                    // 3D 就绪后它淡出，不会出现「先黑一下再出车」。
                     if (bitmap != null) {
                         CarModelBox(
                             bitmap = bitmap,
-                            quickTarget = quickSwitch.effectiveTarget(QuickPart.CAR, themeCustomLocked),
+                            quickTarget = carTarget,
                             interaction = carTapInteraction,
                             onTap = onRandomTheme,
                             shouldSkipMeasure = { carModelBottomY > 0f && homeScrollState.value != 0 },
@@ -1760,8 +1793,45 @@ fun HomeScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 // 只动图层透明度：不触发重组，也不影响点击区域
-                                .graphicsLayer { alpha = carAlpha },
+                                .graphicsLayer { alpha = carAlpha * (1f - car3DAlpha) },
                         )
+                    }
+
+                    if (show3D && meta3d != null) {
+                        // 3D：官方包 + 官方参数（车型 / 年款 / 车漆色号 / 车顶色 / 座椅）实时渲染，
+                        // 横向拖动转车身，纵向拖动交给外层滚动（见 ui/CarModel3DView.kt）
+                        CarModel3D(
+                            meta = meta3d,
+                            fallbackCarType = runtime.session.selectedCarType,
+                            isDark = LocalAppColors.current.isDark,
+                            paused = scrollingState,
+                            onTap = if (carTarget == QuickTarget.TAP) onRandomTheme else null,
+                            interactive = car3DReady,
+                            // 行驶动效交给官方引擎（转车轮 + 地面标线后退）；
+                            // 挂着 D 挡但车没动时给 0，别让停着的车在原地转轮子
+                            speedKmh = if (currentStatus?.isDriving == true) {
+                                parseSpeedKmh(currentStatus?.speed) ?: 0f
+                            } else {
+                                0f
+                            },
+                            onReady = { car3DReady = true },
+                            onError = {
+                                car3DFailed = true
+                                car3DReady = false
+                            },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = car3DAlpha },
+                        )
+                        // 换成 3D 之后「右上角小白点」这个入口不能丢（2D 那层已经在淡出）
+                        if (carTarget == QuickTarget.DOT && car3DReady) {
+                            QuickThemeButton(
+                                onClick = onRandomTheme,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(top = 4.dp, end = 2.dp),
+                            )
+                        }
                     }
                 }
             }
