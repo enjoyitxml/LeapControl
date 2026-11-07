@@ -27,6 +27,8 @@ fun LeapControlApp() {
                     // 登出必须显式收掉蓝牙钥匙会话：把已绑定的钥匙挂起、断开后台服务，
                     // 否则换账号后仍会带着上一个人的绑定去连车
                     runCatching { bleHost.ble.endSession() }
+                    // 车模预热图跟着会话一起作废，别让下一位车主在首帧看到上一个人的车
+                    CarImagePreload.clear()
                     runtimeKey += 1
                 },
             )
@@ -38,6 +40,9 @@ fun LeapControlApp() {
                 // 登录成功：从桌面带进来的 RELOGIN / OP_PASSWORD 请求已经过期了。
                 // 不清的话，下一次进主界面会突然弹一句「登录已失效」，而人刚刚才登录过。
                 AppNavRequest.consume()
+                // 首次登录时 Application 那次预热读不到 VIN（还没登录），这里补一次；
+                // 冷启动本来就有登录态的话，上面那次已经解好了，warm 内部会直接返回
+                CarImagePreload.warm(context)
                 loggedIn = true
             },
         )

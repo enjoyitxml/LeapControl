@@ -334,6 +334,13 @@ fun HomeScreen(
         // 首帧直接复用 runtime 已解码好的车模，避免重进页面时车模先消失再回来
         // 「显示哪张」由 runtime 决定：改过色就用自定义那张，否则用官方图
         var carBitmap by remember { mutableStateOf(runtime.cachedDisplayCarBitmap()) }
+        // 车模淡入：图是异步解码的（冷启动尤其如此），直接出现是"啪"一下；
+        // 220ms 淡入让它浮上来。配合下面那块固定高度的占位框，下面的内容不会被挤动。
+        val carAlpha by animateFloatAsState(
+            targetValue = if (carBitmap != null) 1f else 0f,
+            animationSpec = tween(durationMillis = 220),
+            label = "carAlpha",
+        )
         var vinKey by remember { mutableStateOf(runtime.session.selectedVin) }
         var vehicles by remember { mutableStateOf<List<com.leapcontrol.app.Vehicle>>(emptyList()) }
         var showVehicleMenu by remember { mutableStateOf(false) }
@@ -1696,25 +1703,43 @@ fun HomeScreen(
             )
 
             // ---- 车模：显示官方接口图（默认常开，不再提供关闭开关）----
-            if (carBitmap != null) {
+            // 容器**恒定占位**：冷启动时图还在异步解码，如果等图到了再插入这 200dp，
+            // 下面的行驶状态 / 快捷控车会整体往下跳一下 —— 那一下就是用户看到的"闪"。
+            // 留不留位用「磁盘上到底有没有车模文件」同步判断（两次 stat，很便宜），
+            // 真没有车模资源（全新安装、还没拉到过）时才不占位。
+            val hasCarFile = remember(vinKey) {
+                runtime.hasCustomCarModel() || runtime.hasOfficialCarImage()
+            }
+            if (carBitmap != null || hasCarFile) {
                 Spacer(Modifier.height(4.dp))
-                CarModelBox(
-                    bitmap = carBitmap!!,
-                    quickTarget = quickSwitch.effectiveTarget(QuickPart.CAR, themeCustomLocked),
-                    interaction = carTapInteraction,
-                    onTap = onRandomTheme,
-                    shouldSkipMeasure = { carModelBottomY > 0f && homeScrollState.value != 0 },
-                    onBottom = { carModelBottomY = it },
-                    driving = currentStatus?.isDriving == true,
-                    speed = currentStatus?.speed,
-                    motion = carMotion,
-                    motionPaused = scrollingState,
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         // 分置版下面要坐一条 30dp 的状态胶囊，车模让出 14dp
                         // （不是 30dp）：整体只下移约 22dp，首屏节奏基本不变
                         .height(if (heroLayout == HeroLayout.SEPARATE) 186.dp else 200.dp),
-                )
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val bitmap = carBitmap
+                    if (bitmap != null) {
+                        CarModelBox(
+                            bitmap = bitmap,
+                            quickTarget = quickSwitch.effectiveTarget(QuickPart.CAR, themeCustomLocked),
+                            interaction = carTapInteraction,
+                            onTap = onRandomTheme,
+                            shouldSkipMeasure = { carModelBottomY > 0f && homeScrollState.value != 0 },
+                            onBottom = { carModelBottomY = it },
+                            driving = currentStatus?.isDriving == true,
+                            speed = currentStatus?.speed,
+                            motion = carMotion,
+                            motionPaused = scrollingState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                // 只动图层透明度：不触发重组，也不影响点击区域
+                                .graphicsLayer { alpha = carAlpha },
+                        )
+                    }
+                }
             }
 
             // ---- 行驶状态：只有分置版放在车模正下方居中 ----
@@ -1723,8 +1748,9 @@ fun HomeScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        // 车模被关掉（carBitmap 为空）时补一点上间距，不然会贴着胶囊入口行
-                        .padding(top = if (carBitmap != null) 6.dp else 12.dp),
+                        // 车模还占着位（缓存有文件、图在路上）时留 6dp；确实没有车模才多留一点，
+                        // 不然胶囊行会贴着状态那一行
+                        .padding(top = if (carBitmap != null || hasCarFile) 6.dp else 12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     DrivingStatusBadge(status = currentStatus)

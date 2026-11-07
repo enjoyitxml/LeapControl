@@ -599,8 +599,15 @@ internal fun rememberVehiclePlace(
     // 所有 remember 都归零 —— 若从 Loading 起手，卡片会先亮一帧「加载中」占位，等磁盘缓存
     // 读完才换成地图，用户看到的就是「每次切回首页闪一下」。这里取进程内上一次的结果当首帧；
     // 车真挪了窝才退回 Loading（[fitsCoords]），不拿旧图假装新位置。
+    //
+    // 进程内也没有（**冷启动**）时，同步读一次磁盘：那张图与坐标本来就是上一次留在
+    // 本机的，直接拿来当首帧，随后 produceState 照常按最新车况刷新。
+    // 没有这一步，冷启动的第一帧永远是「加载中」，这就是用户报的「小地图闪一下」。
     val seeded = remember {
-        VehiclePlaceMemory.get(full, dark)?.takeIf { it.fitsCoords(hasCoords, latitude, longitude) }
+        val memory = VehiclePlaceMemory.get(full, dark)
+            ?.takeIf { it.fitsCoords(hasCoords, latitude, longitude) }
+        memory ?: VehiclePlaceMemory.seedFromDisk(context, full, dark)
+            ?.takeIf { it.fitsCoords(hasCoords, latitude, longitude) }
     }
 
     val ui by produceState<VehiclePlaceUi>(

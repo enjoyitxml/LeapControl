@@ -2763,6 +2763,9 @@ class AppRuntime(context: Context) {
 
     /** 首页首帧用的同步版本（避免车模区先塌一下再回来）。 */
     fun cachedDisplayCarBitmap(): Bitmap? = cachedCustomCarBitmap() ?: cachedCarBitmap()
+        // 冷启动兜底：内存两层都是空的，但启动预热（见 CarImagePreload）多半已经
+        // 把磁盘那张解码好了。没有这一步，首页第一帧的车模位就是空的 —— 也就是"闪一下"。
+        ?: CarImagePreload.peek(session.selectedVin)
 
     /** 把一张已经改好色的图存成当前车辆的自定义车模。 */
     suspend fun adoptCarModel(bitmap: Bitmap): Boolean = withContext(Dispatchers.IO) {

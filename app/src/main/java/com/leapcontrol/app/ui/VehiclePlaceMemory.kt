@@ -1,7 +1,9 @@
 package com.leapcontrol.app.ui
 
+import android.content.Context
 import android.graphics.Bitmap
 import com.leapcontrol.app.VehicleLocationRules
+import com.leapcontrol.app.VehicleLocationStore
 
 /**
  * 车辆位置卡的**进程内**结果缓存，只为一件事服务：**切回首页时不要闪**。
@@ -31,6 +33,9 @@ internal object VehiclePlaceMemory {
     /** 4 个槽：full(2) × dark(1)。 */
     private val slots = arrayOfNulls<VehiclePlaceUi>(4)
 
+    /** 哪些槽已经从磁盘读过一次了：同一槽只读一次，之后由 [get] 命中。 */
+    private val seededFromDisk = BooleanArray(4)
+
     private fun slot(full: Boolean, dark: Boolean): Int = (if (full) 2 else 0) + (if (dark) 1 else 0)
 
     fun get(full: Boolean, dark: Boolean): VehiclePlaceUi? = slots[slot(full, dark)]
@@ -41,8 +46,48 @@ internal object VehiclePlaceMemory {
         slots[slot(full, dark)] = ui
     }
 
+    /**
+     * **冷启动**的首帧兜底：内存里什么都没有时，同步把磁盘上那份读出来。
+     *
+     * 为什么可以同步：一次 `last.json`（几百字节）+ 一张 288px 的 PNG，实测个位数毫秒；
+     * 而它换来的是「卡片第一帧就有图」，而不是先亮一帧「加载中」再换成地图 ——
+     * 后者正是用户反馈的「第一次冷启动小地图闪一下」。每个槽只读一次，读完就进内存，
+     * 之后切页都走 [get]，不会再碰磁盘。
+     *
+     * 图必须确实是画这个点的（[VehicleLocationRules.mapMatches]）：只比坐标不够，
+     * 拉图失败时元数据照样会更新，磁盘上那张图可能还是上一处的。宁可不给图，
+     * 也不能把别处的地图钉在当前地址上。
+     */
+    fun seedFromDisk(context: Context, full: Boolean, dark: Boolean): VehiclePlaceUi? {
+        val index = slot(full, dark)
+        slots[index]?.let { return it }
+        if (seededFromDisk[index]) return null
+        seededFromDisk[index] = true
+
+        val place = runCatching { VehicleLocationStore.load(context) }.getOrNull() ?: return null
+        val map = if (VehicleLocationRules.mapMatches(place, place.latitude, place.longitude)) {
+            runCatching {
+                VehicleLocationStore.loadMap(context, full = full, dark = dark)
+            }.getOrNull()
+        } else {
+            null
+        }
+        val restored = VehiclePlaceUi.Ready(
+            map = map,
+            address = place.address,
+            latitude = place.latitude,
+            longitude = place.longitude,
+            // 这是「上次记下的」，不是刚刚的：把时刻一并带出来，卡片上会显示成「更新于」，
+            // 与「车况这一帧没有坐标」那条分支的语义保持一致
+            cachedAt = place.seenAt.takeIf { it > 0L } ?: place.reportedAt.takeIf { it > 0L },
+        )
+        slots[index] = restored
+        return restored
+    }
+
     fun clear() {
         slots.fill(null)
+        seededFromDisk.fill(false)
     }
 }
 

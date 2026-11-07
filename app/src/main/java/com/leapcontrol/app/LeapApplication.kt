@@ -15,5 +15,8 @@ class LeapApplication : Application() {
         runCatching {
             LauncherIcon.ensureApplied(this, SessionStore(this).loadLauncherIconStyle())
         }
+        // 车模图预热：把磁盘上那张解码进内存。首页第一帧因此能直接画出来，
+        // 不用先空一块车模区等异步解码（冷启动"闪一下"的来源）。
+        runCatching { com.leapcontrol.app.ui.CarImagePreload.warm(this) }
     }
 }
