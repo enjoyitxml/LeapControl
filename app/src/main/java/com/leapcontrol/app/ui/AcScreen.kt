@@ -579,9 +579,9 @@ fun AcScreen(
                     if (hasDriver || hasPassenger) Spacer(Modifier.height(10.dp))
                     AcRowGroup {
                         if (caps.steeringWheelHeating) {
-                            // 方向盘加热只有开 / 关两态（车端 2 开、1 关）。
-                            // 以前按「关 / 弱 / 强」三档循环，第一次点击发的是 1 ——
-                            // 那正是「关」，所以点了没反应（2026-11-07 反馈）。
+                            // 界面只给开 / 关两态（车端是三档：0 关 / 1 弱 / 2 强）。
+                            // 开一律发 2：弱档在部分车型上不上热，用户点了没感觉
+                            // 就是 2026-11-07 那次「打不开」。关只发 0。
                             val steeringOn = SteeringWheelHeat.isOn(steeringLevel)
                             AcLevelRow(
                                 glyph = AcGlyph.Steering,

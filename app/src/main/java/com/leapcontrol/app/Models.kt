@@ -1181,8 +1181,8 @@ object Commands {
                     val lvl = name.removePrefix("rightRearSeatVentilation_").toIntOrNull() ?: 0
                     buildSeatVentilation("right_rear", lvl)
                 }
-                // 方向盘加热是两态开关（2 开 / 1 关 / 0 关），见 [SteeringWheelHeat]。
-                // 老的 `_0/_1/_2` 也走这里：`_1` 以前被当成「弱档」，实际是关闭值。
+                // 方向盘加热只做开关（0 关 / 2 开），见 [SteeringWheelHeat]。
+                // 老的 `_0/_1/_2` 也走这里：`_1`（弱档）与 `_2` 都按「开」发送。
                 SteeringWheelHeat.targetOf(name) != null -> {
                     SteeringWheelHeat.build(SteeringWheelHeat.targetOf(name) == true)
                 }
@@ -1234,9 +1234,10 @@ object Commands {
     /**
      * 方向盘加热（cmdid=320）。
      *
-     * 只保留「开 / 关」两态：`level` > 0 发 [SteeringWheelHeat.LEVEL_ON]（真正的加热值），
-     * 否则发 [SteeringWheelHeat.LEVEL_OFF]。以前那个 `coerceIn(0, 2)` 的「三档」已被证伪
-     * （车端 1 是关，不是弱档），别再按档位写回来。
+     * 界面上只给「开 / 关」两态：入参 `level` > 0 一律发 [SteeringWheelHeat.LEVEL_ON]（强档），
+     * 否则发 [SteeringWheelHeat.LEVEL_OFF]。车端本身是三档（0 关 / 1 弱 / 2 强），
+     * 但弱档在部分车型上不上热，所以「开」只发强档 —— 需要弱档就直接用车端或 `Commands`
+     * 拼 `{"level":"1"}`，别让开关多出一个用户看不懂的档位。
      */
     fun buildSteeringWheelHeating(level: Int): ControlCommand =
         SteeringWheelHeat.build(on = level > 0)
