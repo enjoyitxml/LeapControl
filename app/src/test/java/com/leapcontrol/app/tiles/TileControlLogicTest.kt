@@ -28,14 +28,27 @@ class TileControlLogicTest {
     }
 
     @Test
+    fun `只有上锁与鸣笛是瞬时动作，其余六块都是开关`() {
+        // 用户 2026-11-07：解锁 / 预热也有对应的「关」，亮着点就该关，
+        // 所以它们从瞬时动作改成开关型，"亮灭"永远等于车上的功能开没开。
+        val momentary = QuickTiles.ALL.filter { it.kind == TileKind.MOMENTARY }.map { it.id }
+        assertEquals(listOf("lock", "horn"), momentary)
+        val toggles = QuickTiles.ALL.filter { it.kind == TileKind.TOGGLE }.map { it.id }
+        assertEquals(
+            listOf("unlock", "ac", "trunk", "window", "batteryPreheat", "sunshade"),
+            toggles,
+        )
+    }
+
+    @Test
     fun `动作型固定一条指令，开关型按开合方向取反`() {
-        listOf("lock", "unlock", "horn", "batteryPreheat").forEach { id ->
+        listOf("lock", "horn").forEach { id ->
             val s = spec(id)
             assertEquals(TileKind.MOMENTARY, s.kind)
             assertEquals("$id 点两次不该换指令", s.openCommand, s.commandFor(turningOn = false))
             assertEquals(s.openCommand, s.commandFor(turningOn = true))
         }
-        listOf("ac", "trunk", "window", "sunshade").forEach { id ->
+        listOf("unlock", "ac", "trunk", "window", "batteryPreheat", "sunshade").forEach { id ->
             val s = spec(id)
             assertEquals(TileKind.TOGGLE, s.kind)
             assertTrue("$id 缺关闭指令", s.closeCommand.isNotBlank())
@@ -44,16 +57,38 @@ class TileControlLogicTest {
         }
     }
 
+    /**
+     * 高亮**不许**再靠计时器复位。
+     *
+     * 2026-11-07 之前是「点下去先亮，2.2 / 2.5 / 10 秒后按本地状态复位」，高亮时长与
+     * 真实结果无关：点关闭要亮 2.5 秒，上锁要亮 10 秒。现在必须由**结果回调**摆正 ——
+     * 这条守住接线，防止哪天又退回计时复位（用户对「点了看不出成没成」反馈过两次）。
+     */
     @Test
-    fun `复位时长按上游分档且都不为 0`() {
-        // 上游：车锁 10 秒（车端门锁信号慢）、寻车 2.2 秒、其余 2.5 秒
-        assertEquals(10_000L, spec("lock").resetMs)
-        assertEquals(10_000L, spec("unlock").resetMs)
-        assertEquals(2_200L, spec("horn").resetMs)
-        QuickTiles.ALL.forEach { s ->
-            assertTrue("${s.id} 没有复位计时", s.resetMs > 0L)
-            assertTrue("${s.id} 复位太慢，又是「点了卡住」", s.resetMs <= 10_000L)
-        }
+    fun `高亮由结果决定，不再按固定时长复位`() {
+        val projectDir = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) {
+            it.parentFile
+        }.first { File(it, "app").isDirectory }
+        val service = File(
+            projectDir,
+            "app/src/main/java/com/leapcontrol/app/tiles/VehicleTileService.kt",
+        ).readText()
+        val runner = File(
+            projectDir,
+            "app/src/main/java/com/leapcontrol/app/tiles/TileCommandRunner.kt",
+        ).readText()
+
+        assertTrue("点击当帧没走高亮规则 clickedActive", service.contains("clickedActive("))
+        assertTrue("结果回来后没有重画磁贴", service.contains("onFinished(ok)"))
+        assertTrue("复位计时又回来了", !service.contains("scheduleReset"))
+        assertTrue("磁贴定义里不该再有 resetMs", !service.contains("resetMs"))
+
+        // 执行层必须把结果回调出去，而且要先撤在途标记再回调
+        assertTrue("执行层没接结果回调", runner.contains("onFinished: (Boolean) -> Unit"))
+        val clear = runner.indexOf("inFlight.set(null)")
+        val callback = runner.indexOf("onFinished(result.isSuccess)")
+        assertTrue("执行层没有回调结果", callback > 0)
+        assertTrue("回调早于在途标记撤销，瞬时动作会被判成还在执行", clear in 0 until callback)
     }
 
     @Test

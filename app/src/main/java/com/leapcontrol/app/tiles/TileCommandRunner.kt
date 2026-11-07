@@ -10,7 +10,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 磁贴控车的执行层，对应上游 `ControlService` 的「全局在途标记 + 后台跑指令」。
@@ -22,14 +23,20 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 所以执行载体换成**进程级** CoroutineScope：一样是「点完立刻返回、指令在后台跑、
  * 全局只允许一条在途」，而且不会随控制中心收起被取消（项目里的既有纪律也是如此）。
  *
- * ## 与上游一致的行为
- * - [isCommandInFlight] 全局去重，磁贴点击时据此拦第二次；
- * - [execute] 发完就返回，**不等车端结果**，磁贴按自己的计时器复位；
- * - 指令结束后重新问一次磁贴，按最新车况把亮灭摆正（上游 `requestTilesUpdate`）。
+ * ## 高亮怎么收
+ * 点下去当帧的那一下由 [VehicleTileService] 自己负责（见 `clickedActive`）。
+ * 这里只负责**在指令有了结果之后回调一次** `onFinished`：
+ * 瞬时动作据此立刻熄灭（用户 2026-11-07：上锁 / 鸣笛受理后不该继续亮 10 秒），
+ * 开关型据此按目标状态重画（成功保持亮、失败回滚灭）。
+ *
+ * 回调**不阻塞**指令链路，也不在这个线程里碰 UI：内部切主线程再调，磁贴随叫随到。
  */
 internal object TileCommandRunner {
 
-    private val inFlight = AtomicBoolean(false)
+    /** 在途记录：哪块磁贴、往哪个方向。副标题靠它说「空调开启中…」。 */
+    data class InFlight(val id: String, val turningOn: Boolean)
+
+    private val inFlight = AtomicReference<InFlight?>(null)
 
     /** 进程级：不挂在 TileService 实例上，控制中心收起 / 面板销毁都带不走它。 */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -46,19 +53,27 @@ internal object TileCommandRunner {
      */
     private const val ACTION_GRACE_MS = 8_000L
 
-    fun isCommandInFlight(): Boolean = inFlight.get()
+    fun inFlight(): InFlight? = inFlight.get()
+
+    fun isCommandInFlight(): Boolean = inFlight.get() != null
 
     /**
      * 下发一条指令并立刻返回。
      *
+     * @param onFinished 指令有了结果之后回调（主线程）。true = 网关受理了；false = 没发出去。
      * @return false 表示已有指令在途（调用方负责提示用户稍候），没有重复下发。
      */
-    fun execute(context: Context, spec: TileSpec, command: String, turningOn: Boolean): Boolean {
-        if (!inFlight.compareAndSet(false, true)) return false
+    fun execute(
+        context: Context,
+        spec: TileSpec,
+        command: String,
+        turningOn: Boolean,
+        onFinished: (Boolean) -> Unit,
+    ): Boolean {
+        if (!inFlight.compareAndSet(null, InFlight(spec.id, turningOn))) return false
         val app = context.applicationContext
         scope.launch {
             val result = runCatching { AppRuntime(app).controlForWidget(command) }
-            inFlight.set(false)
             result.fold(
                 onSuccess = {
                     // 这次通了，撤掉「上次因登录失效失败」的标记
@@ -78,6 +93,12 @@ internal object TileCommandRunner {
                     }
                 },
             )
+            // 先撤在途标记再回调：磁贴那边据此决定「还要不要亮」，
+            // 顺序反了会让瞬时动作在回调之后又被判成「还在执行」。
+            inFlight.set(null)
+            runCatching {
+                withContext(Dispatchers.Main) { onFinished(result.isSuccess) }
+            }
             // 结果回来后再拉一次车况 + 让系统重新问磁贴（上游 requestTilesUpdate 的位置）
             refreshStatus(app)
             QuickTiles.refreshAll(app)
@@ -106,13 +127,7 @@ internal object TileCommandRunner {
             if (System.currentTimeMillis() - QuickTiles.lastActionAt(context, spec) < ACTION_GRACE_MS) {
                 return@forEach
             }
-            val open = when (spec.id) {
-                "ac" -> fresh.acOn
-                "trunk" -> fresh.trunkOpen
-                "window" -> fresh.windowOpen
-                "sunshade" -> fresh.sunshadeOpen
-                else -> null
-            } ?: return@forEach
+            val open = statusOn(spec.id, fresh) ?: return@forEach
             QuickTiles.setOn(context, spec, open, fromUser = false)
         }
     }

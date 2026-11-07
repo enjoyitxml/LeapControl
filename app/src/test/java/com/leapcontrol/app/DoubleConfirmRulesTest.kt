@@ -82,7 +82,7 @@ class DoubleConfirmRulesTest {
             "trunkOpen", "trunkClose",
             "windowOpen", "windowClose",
             "sunshadeOpen", "sunshadeClose",
-            "batteryPreheat",
+            "batteryPreheat", "batteryPreheatOff",
         )
         usedByEntries.forEach { command ->
             assertNotNull("指令 $command 没有对应的确认动作", ConfirmAction.of(command))

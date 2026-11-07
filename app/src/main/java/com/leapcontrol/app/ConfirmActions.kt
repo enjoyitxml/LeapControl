@@ -30,6 +30,7 @@ enum class ConfirmAction(
     SUNSHADE_CLOSE("sunshadeClose", "关闭遮阳帘", "遮阳帘"),
     HORN("horn", "鸣笛寻车", "其他"),
     BATTERY_PREHEAT("batteryPreheat", "电池预热", "其他"),
+    BATTERY_PREHEAT_OFF("batteryPreheatOff", "关闭电池预热", "其他"),
     ;
 
     companion object {
