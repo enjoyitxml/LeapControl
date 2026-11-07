@@ -70,7 +70,7 @@ class LocationCalibrationTest {
 
     @Test
     fun `先换算再叠加手动偏移`() {
-        val calibration = LocationCalibration(convert = true, east = 500, north = 0)
+        val calibration = LocationCalibration(datum = CoordinateDatum.WGS84, east = 500, north = 0)
         val (convertedLat, convertedLng) = ChinaCoordinate.wgs84ToGcj02(lat, lng)
         val expected = LocationCalibrator.shift(convertedLat, convertedLng, east = 500, north = 0)
         val actual = LocationCalibrator.apply(lat, lng, calibration)
@@ -80,7 +80,7 @@ class LocationCalibrationTest {
 
     @Test
     fun `换算单独打开也算改过`() {
-        val calibration = LocationCalibration(convert = true)
+        val calibration = LocationCalibration(datum = CoordinateDatum.WGS84)
         assertTrue(calibration.isIdentity.not())
         assertFalse(calibration.hasOffset)
         assertEquals(0, calibration.distanceMeters)
@@ -106,7 +106,7 @@ class LocationCalibrationTest {
             "位置不准？点这里校准",
             LocationCalibrator.shortLabel(LocationCalibration.NONE),
         )
-        assertEquals("已换算坐标系", LocationCalibrator.shortLabel(LocationCalibration(convert = true)))
+        assertEquals("已换算坐标系", LocationCalibrator.shortLabel(LocationCalibration(datum = CoordinateDatum.WGS84)))
         assertEquals(
             "已校准 50m",
             LocationCalibrator.shortLabel(LocationCalibration(east = 30, north = 40)),
@@ -115,7 +115,7 @@ class LocationCalibrationTest {
 
     @Test
     fun `落盘格式能来回`() {
-        val calibration = LocationCalibration(convert = true, east = -1200, north = 340)
+        val calibration = LocationCalibration(datum = CoordinateDatum.WGS84, east = -1200, north = 340)
         assertEquals(calibration, LocationCalibrator.parse(LocationCalibrator.serialize(calibration)))
     }
 

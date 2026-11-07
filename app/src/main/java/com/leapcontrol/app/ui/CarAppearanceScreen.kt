@@ -37,6 +37,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,6 +90,8 @@ fun CarAppearanceScreen(
     var strength by remember { mutableStateOf(CarTint.DEFAULT_STRENGTH) }
     var loading by remember { mutableStateOf(true) }
     var busy by remember { mutableStateOf(false) }
+    val car3DEnabled by runtime.car3DEnabled.collectAsState()
+    val car3DState by runtime.car3DState.collectAsState()
 
     LaunchedEffect(Unit) {
         official = runCatching { runtime.officialCarModel() }.getOrNull()
@@ -219,12 +222,73 @@ fun CarAppearanceScreen(
                 when {
                     previewLabel != null -> "正在预览「$previewLabel」，确认后点下面的按钮应用"
                     custom != null -> "首页正在用你自己的这张车模，官方图仍然留着"
-                    else -> "首页现在用的是官方按车辆档案渲染的图，所以颜色不一定跟实车一致"
+                    car3DEnabled && car3DState == AppRuntime.Car3DState.READY ->
+                        "首页现在用的是 3D 车模。下面这些改色 / 导入只在关掉 3D 之后才看得到"
+                    else -> "官方 2D 图是按车辆档案预先渲染的，颜色可能跟实车不一致；" +
+                        "想要颜色和配置都对，把下面的「3D 车模」打开"
                 },
                 color = C.textSecondary,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 3D 车模 ----
+        // 2D 图改不了「车型配色」，3D 能 —— 它拿的是官方下发的 modelParam
+        // （车型 / 年款 / 车漆色号 / 车顶色 / 座椅），在设备上实时渲染。
+        SettingsSection(title = "3D 车模", desc = "官方模型 · 拖动可以转") {
+            SettingsCard {
+                SwitchRow(
+                    label = "用 3D 车模显示我的车",
+                    desc = "按官方下发的车漆色号和配置渲染，跟官方 App 看到的是同一套模型",
+                    checked = car3DEnabled,
+                    onCheckedChange = { on ->
+                        runtime.setCar3DEnabled(on)
+                        if (on) scope.launch { runCatching { runtime.prepareCarModel3D() } }
+                    },
+                )
+                Spacer(Modifier.height(9.dp))
+                Text(
+                    car3DStatusText(car3DState, car3DEnabled),
+                    color = when (car3DState) {
+                        AppRuntime.Car3DState.READY -> C.accent
+                        else -> C.textSecondary
+                    },
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+                if (car3DEnabled && custom != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "3D 开着的时候，下面「自定义图片」里的车模不会显示 —— 想用自己那张就先关掉 3D。",
+                        color = C.textSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+                if (car3DState == AppRuntime.Car3DState.READY ||
+                    car3DState == AppRuntime.Car3DState.FAILED
+                ) {
+                    HairLine()
+                    Spacer(Modifier.height(10.dp))
+                    ClickRow(
+                        title = if (car3DState == AppRuntime.Car3DState.READY) "清除 3D 模型缓存" else "重新下载模型",
+                        desc = if (car3DState == AppRuntime.Car3DState.READY) {
+                            "${formatMb(runtime.carModel3DSize())} · 清掉后下次进首页会重新下载"
+                        } else {
+                            "下载失败通常是网络问题，重试一次"
+                        },
+                        icon = Icons.Filled.RestartAlt,
+                        onClick = {
+                            if (busy) return@ClickRow
+                            runtime.clearCarModel3D()
+                            scope.launch { runCatching { runtime.prepareCarModel3D(force = true) } }
+                        },
+                    )
+                }
+            }
         }
 
         Spacer(Modifier.height(18.dp))
@@ -303,7 +367,12 @@ fun CarAppearanceScreen(
                             busy = false
                             Toast.makeText(
                                 context,
-                                if (ok) "已应用，回首页就能看到" else "生成失败，先刷新一次车模再试",
+                                when {
+                                    !ok -> "生成失败，先刷新一次车模再试"
+                                    // 3D 开着时首页根本不看这张图，不说明白用户会以为没保存上
+                                    car3DEnabled -> "已保存；3D 车模开着，首页仍然显示 3D"
+                                    else -> "已应用，回首页就能看到"
+                                },
                                 Toast.LENGTH_SHORT,
                             ).show()
                         }
@@ -482,4 +551,26 @@ private fun HairLine() {
             .height(0.6.dp)
             .background(C.border.copy(alpha = 0.45f)),
     )
+}
+
+/**
+ * 3D 车模那一行的状态说明。
+ *
+ * 只说「现在怎样、下一步会怎样」，不写 H5 / WebGL / 模型包这类词 ——
+ * 用户要知道的是「还要等多久」「会不会自己好」。
+ */
+private fun car3DStatusText(state: AppRuntime.Car3DState, enabled: Boolean): String = when {
+    !enabled -> "打开后会在后台下载一次官方模型包（约 12MB），下完首页自动换成 3D"
+    state == AppRuntime.Car3DState.READY -> "已就绪 · 回首页左右拖动车模可以转起来"
+    state == AppRuntime.Car3DState.DOWNLOADING -> "正在下载官方模型包（约 12MB），下完首页会自动换成 3D"
+    state == AppRuntime.Car3DState.FAILED -> "模型包没下下来，多半是网络问题；下次进首页会自动重试"
+    state == AppRuntime.Car3DState.UNAVAILABLE -> "官方没有给这台车下发 3D 模型，只能用 2D 定妆照"
+    else -> "等待下载…"
+}
+
+/** 字节数 → 「12.3 MB」，给「清除缓存」那行显示占用。 */
+private fun formatMb(bytes: Long): String = when {
+    bytes <= 0L -> "0 MB"
+    bytes < 1024L * 1024L -> "${bytes / 1024} KB"
+    else -> String.format(java.util.Locale.US, "%.1f MB", bytes / 1024f / 1024f)
 }

@@ -65,6 +65,7 @@ import com.leapcontrol.app.Commands
 import com.leapcontrol.app.FridgeControlCommand
 import com.leapcontrol.app.FridgeMode
 import com.leapcontrol.app.FridgeStyle
+import com.leapcontrol.app.SteeringWheelHeat
 import com.leapcontrol.app.VehicleCapabilities
 
 /** 二级页面顶栏：返回 + 标题。 */
@@ -164,6 +165,57 @@ private fun LevelRow(
 // 座椅舒适：座椅加热 / 通风、方向盘加热、后视镜加热
 // ---------------------------------------------------------------------------
 
+/**
+ * 一行两态开关：方向盘加热用它，**不要**套 [LevelRow]。
+ *
+ * 车端这条指令只有开 / 关两态（`2` 开，`1` / `0` 关）。以前按「关 / 弱 / 强」三格显示，
+ * 第一格点下去发的正是「关」，用户点半天方向盘还是凉的（2026-11-07 反馈）。
+ */
+@Composable
+private fun SwitchRow(
+    label: String,
+    on: Boolean,
+    busy: Boolean,
+    onCommand: (Boolean) -> Unit,
+) {
+    val C = LocalAppColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = C.textPrimary,
+            fontSize = 14.sp,
+            modifier = Modifier.width(76.dp),
+        )
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf(false to "关", true to "开").forEach { (value, text) ->
+                val selected = on == value
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (selected) C.chipBgActive else C.chipBg)
+                        .clickable(enabled = !busy) { onCommand(value) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = text,
+                        color = if (selected) C.accent else C.textSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun SeatComfortScreen(
     onBack: () -> Unit,
@@ -236,13 +288,13 @@ fun SeatComfortScreen(
 
         if (caps.steeringWheelHeating) {
             SectionCard("方向盘加热") {
-                LevelRow(
-                    "方向盘",
-                    status?.steeringWheelHeating,
-                    listOf("关", "弱", "强"),
-                    busy,
-                    "steeringWheelHeating_",
-                    onCommand,
+                SwitchRow(
+                    label = "方向盘",
+                    on = SteeringWheelHeat.isOn(status?.steeringWheelHeating),
+                    busy = busy,
+                    onCommand = { on ->
+                        onCommand(if (on) SteeringWheelHeat.ON else SteeringWheelHeat.OFF)
+                    },
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -757,18 +809,22 @@ private fun CabinSeatPanel(
     ) {
         CabinInteriorCanvas(fill = C.cardBg, stroke = C.textSecondary)
 
-        // 方向盘加热（0 关 / 1 弱 / 2 强，点击循环）
+        // 方向盘加热：两态开关（车端 2 开 / 1 关），点一下开、再点一下关
         if (caps.steeringWheelHeating) {
+            val steeringOn = SteeringWheelHeat.isOn(steering)
             SeatChip(
-                active = (steering ?: 0) > 0,
-                level = steering,
+                active = steeringOn,
+                // 不挂档位角标：方向盘加热没有「几档」，亮起（底色 + 主色图标）就是开着
+                level = null,
                 enabled = !busy,
                 modifier = Modifier.offset(
                     x = maxWidth * STEERING_ANCHOR.first - 23.dp,
                     y = maxHeight * STEERING_ANCHOR.second - 23.dp,
                 ),
                 icon = { tint -> SteeringWheelIcon(tint, Modifier.size(24.dp)) },
-            ) { onCommand("steeringWheelHeating_${((steering ?: 0) + 1) % 3}") }
+            ) {
+                onCommand(if (steeringOn) SteeringWheelHeat.OFF else SteeringWheelHeat.ON)
+            }
         }
 
         // 主驾 / 副驾：加热 + 通风两个按钮并排

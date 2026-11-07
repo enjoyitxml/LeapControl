@@ -43,21 +43,23 @@ class ComfortOptimisticTest {
     // ---------------- 指令名解析 ----------------
 
     @Test
-    fun steeringTargetKeepsWeakLevelInsteadOfCollapsingToStrong() {
+    fun steeringTargetIsOnOffNotLevels() {
         assertEquals(
             ComfortOptimistic.Pending(ComfortOptimistic.STEERING, 0, t0),
             ComfortOptimistic.targetOf("steeringWheelHeating_0", t0),
         )
         assertEquals(
-            ComfortOptimistic.Pending(ComfortOptimistic.STEERING, 1, t0),
-            ComfortOptimistic.targetOf("steeringWheelHeating_1", t0),
+            ComfortOptimistic.Pending(ComfortOptimistic.STEERING, 0, t0),
+            ComfortOptimistic.targetOf(SteeringWheelHeat.OFF, t0),
         )
         assertEquals(
             ComfortOptimistic.Pending(ComfortOptimistic.STEERING, 2, t0),
-            ComfortOptimistic.targetOf("steeringWheelHeating_2", t0),
+            ComfortOptimistic.targetOf(SteeringWheelHeat.ON, t0),
         )
-        // 上游把弱档当成「开」显示 2 档，别照抄
-        assertEquals(1, ComfortOptimistic.targetOf("steeringWheelHeating_1", t0)?.level)
+        // 老命令名的 `_1` 以前被当成「弱档」，车端理解的却是「关」——
+        // 现在一律按「开」处理，别再让它变成一次无声的关闭
+        assertEquals(2, ComfortOptimistic.targetOf("steeringWheelHeating_1", t0)?.level)
+        assertEquals(2, ComfortOptimistic.targetOf("steeringWheelHeating_2", t0)?.level)
     }
 
     @Test

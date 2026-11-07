@@ -57,12 +57,16 @@ class FirstFrameCacheTest {
             home.contains("runtime.hasCustomCarModel() || runtime.hasOfficialCarImage()"),
         )
         assertTrue(
-            "占位判断必须同时认「图已在」和「文件在」两种情况",
-            home.contains("if (carBitmap != null || hasCarFile)"),
+            "占位判断必须同时认「图已在」「文件在」「3D 已就绪」三种情况",
+            home.contains("if (show3D || carBitmap != null || hasCarFile)"),
         )
         assertTrue(
-            "车模淡入丢了，图后到时又是「啪」一下",
-            home.contains("graphicsLayer { alpha = carAlpha }"),
+            "2D 车模淡入丢了，图后到时又是「啪」一下",
+            home.contains("alpha = carAlpha * (1f - car3DAlpha)"),
+        )
+        assertTrue(
+            "3D 车模要自己的淡入，否则包就绪那一下是从空场景硬切",
+            home.contains("alpha = car3DAlpha"),
         )
     }
 

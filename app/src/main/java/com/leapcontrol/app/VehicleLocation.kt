@@ -395,6 +395,133 @@ data class SelectedCoordinatePair(
 )
 
 /**
+ * 「车端这两对坐标，哪一对是 WGS-84、哪一对是 GCJ-02」—— 用互证代替猜。
+ *
+ * ## 为什么值得单独做一层
+ * 用户反馈里 C11 原样就准、B10 / C01 要勾换算、还有一批勾了仍偏。三种结果说明
+ * **车型之间上报的坐标系不一样**，而我们手上没有一份可信的车型对照表
+ * （信号表那一栏本来就没抓包证据）。
+ *
+ * 但报文自身会露馅：不少车型**同时**下发两对坐标
+ * （命名键 / `3724`+`3725` / `2`+`3`，见 [VehicleLocationDomain.candidatePairs]）。
+ * 如果两对相距二三百米以上，拿 WGS-84 → GCJ-02 的公式去套其中一对，
+ * 结果正好落在另一对上（误差小于 25 米），那这一对必然是 WGS-84、另一对是 GCJ-02。
+ * 这是**数学上的硬证据**，比任何车型名单都可靠，而且不需要用户做任何选择。
+ *
+ * ## 什么时候不说话
+ *  - 只有一对坐标：没法自证，返回 null，交回用户的选择（[CoordinateDatum.AUTO] 退化为原样）；
+ *  - 两对相距很近（< 80 米）：同一坐标系的副本，谁都能用，不必插手；
+ *  - 两对相差很远（> 1200 米）：更像「一对是上次熄火的位置」，换算公式套不上，
+ *    此时沉默比选错强（错的那一对会把车标画到几十公里外）。
+ */
+object VehicleDatumDetector {
+    /** 低于这个距离的两对更像同一份数据的副本，不当作「两种坐标系」。 */
+    private const val MIN_GAP_METERS = 80.0
+
+    /** 超过这个距离，换算公式无论如何对不上（GCJ 偏移最大约 800 米）。 */
+    private const val MAX_GAP_METERS = 1200.0
+
+    /** 换算结果与另一对的允许误差：GCJ 算法的近似、车端取整都会带来几米误差。 */
+    private const val MATCH_TOLERANCE_METERS = 25.0
+
+    /**
+     * 已经确认是 GCJ-02 的那一对；没有硬证据时返回 null。
+     *
+     * 返回的是**坐标本身**而不是「该做哪种换算」：既然另一对就是现成的 GCJ-02，
+     * 直接用它比换算过去更准（少一次算法误差）。
+     */
+    data class Detection(
+        val latitude: Double,
+        val longitude: Double,
+        val source: VehicleLocationSource,
+        /** 一句话说明判据（debug 展示 / 日志用）。 */
+        val note: String,
+    )
+
+    fun detect(values: Map<String, Any?>): Detection? {
+        val pairs = usablePairs(values)
+        if (pairs.size < 2) return null
+        for (i in pairs.indices) {
+            for (j in pairs.indices) {
+                if (i == j) continue
+                val a = pairs[i]
+                val b = pairs[j]
+                val gap = ChinaCoordinate.offsetMeters(a.latitude, a.longitude, b.latitude, b.longitude)
+                if (gap !in MIN_GAP_METERS..MAX_GAP_METERS) continue
+
+                // a 是 WGS-84、b 是 GCJ-02
+                val (convertedLat, convertedLng) = ChinaCoordinate.wgs84ToGcj02(a.latitude, a.longitude)
+                if (ChinaCoordinate.offsetMeters(convertedLat, convertedLng, b.latitude, b.longitude) <= MATCH_TOLERANCE_METERS) {
+                    return Detection(
+                        latitude = b.latitude,
+                        longitude = b.longitude,
+                        source = b.source,
+                        note = "${a.key} 换算后与 ${b.key} 重合，判定后者为 GCJ-02",
+                    )
+                }
+                // b 是 WGS-84、a 是 GCJ-02
+                val (reversedLat, reversedLng) = ChinaCoordinate.wgs84ToGcj02(b.latitude, b.longitude)
+                if (ChinaCoordinate.offsetMeters(reversedLat, reversedLng, a.latitude, a.longitude) <= MATCH_TOLERANCE_METERS) {
+                    return Detection(
+                        latitude = a.latitude,
+                        longitude = a.longitude,
+                        source = a.source,
+                        note = "${b.key} 换算后与 ${a.key} 重合，判定后者为 GCJ-02",
+                    )
+                }
+            }
+        }
+        return null
+    }
+
+    /** 报文里到底有几对可用坐标（0~3）。判定失败时用它区分「只有一对」和「两对但不一样」。 */
+    fun usablePairCount(values: Map<String, Any?>): Int = usablePairs(values).size
+
+    /** 报文里所有解得出数字、且不是 0,0 的候选对（同一坐标只留一条）。 */
+    private fun usablePairs(values: Map<String, Any?>): List<Candidate> {
+        val raw = listOf(
+            Triple("命名键", values[VehicleLocationDomain.PRIMARY_LATITUDE_KEY], values[VehicleLocationDomain.PRIMARY_LONGITUDE_KEY]),
+            Triple(
+                "3725/3724",
+                values[VehicleLocationDomain.PRIMARY_LATITUDE_SIGNAL],
+                values[VehicleLocationDomain.PRIMARY_LONGITUDE_SIGNAL],
+            ),
+            Triple(
+                "3/2",
+                values[VehicleLocationDomain.VERIFIED_LATITUDE_SIGNAL],
+                values[VehicleLocationDomain.VERIFIED_LONGITUDE_SIGNAL],
+            ),
+        )
+        val out = ArrayList<Candidate>(3)
+        for ((key, latRaw, lngRaw) in raw) {
+            val latitude = latRaw?.toString()?.trim()?.toDoubleOrNull()
+            val longitude = lngRaw?.toString()?.trim()?.toDoubleOrNull()
+            if (latitude == null || longitude == null) continue
+            if (!latitude.isFinite() || !longitude.isFinite()) continue
+            if (latitude == 0.0 && longitude == 0.0) continue
+            if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) continue
+            val duplicate = out.any {
+                ChinaCoordinate.offsetMeters(it.latitude, it.longitude, latitude, longitude) < 1.0
+            }
+            if (duplicate) continue
+            val source = when (key) {
+                "3/2" -> VehicleLocationSource.VERIFIED_SIGNAL_MAP
+                else -> VehicleLocationSource.PRIMARY
+            }
+            out.add(Candidate(key, latitude, longitude, source))
+        }
+        return out
+    }
+
+    private data class Candidate(
+        val key: String,
+        val latitude: Double,
+        val longitude: Double,
+        val source: VehicleLocationSource,
+    )
+}
+
+/**
  * 「位置取不到」的一句话原因 —— **只用于诊断，不参与任何业务判断**。
  *
  * 同一个「没有位置」背后至少有四种情况：报文里根本没有位置信号、键名是没收录的那一对、

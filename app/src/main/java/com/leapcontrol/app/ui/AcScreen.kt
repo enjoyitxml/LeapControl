@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leapcontrol.app.AcSwitchIntent
 import com.leapcontrol.app.Commands
+import com.leapcontrol.app.SteeringWheelHeat
 import com.leapcontrol.app.VehicleCapabilities
 
 /**
@@ -174,8 +175,9 @@ fun AcScreen(
         if (caps.seatVentilation.driver && seatVentDriver > 0) add("主驾座椅通风 $seatVentDriver 档")
         if (caps.seatHeating.passenger && seatHeatPassenger > 0) add("副驾座椅加热 $seatHeatPassenger 档")
         if (caps.seatVentilation.passenger && seatVentPassenger > 0) add("副驾座椅通风 $seatVentPassenger 档")
-        if (caps.steeringWheelHeating && steeringLevel > 0) {
-            add("方向盘加热 ${if (steeringLevel >= 2) "强档" else "弱档"}")
+        if (caps.steeringWheelHeating && SteeringWheelHeat.isOn(steeringLevel)) {
+            // 没有「弱/强」档：这条指令在车端就是个开关
+            add("方向盘加热")
         }
         if (caps.mirrorHeating && mirrorLevel > 0) add("后视镜加热")
     }
@@ -577,18 +579,23 @@ fun AcScreen(
                     if (hasDriver || hasPassenger) Spacer(Modifier.height(10.dp))
                     AcRowGroup {
                         if (caps.steeringWheelHeating) {
+                            // 方向盘加热只有开 / 关两态（车端 2 开、1 关）。
+                            // 以前按「关 / 弱 / 强」三档循环，第一次点击发的是 1 ——
+                            // 那正是「关」，所以点了没反应（2026-11-07 反馈）。
+                            val steeringOn = SteeringWheelHeat.isOn(steeringLevel)
                             AcLevelRow(
                                 glyph = AcGlyph.Steering,
                                 label = "方向盘加热",
-                                level = steeringLevel,
-                                maxLevel = 2,
+                                level = if (steeringOn) 1 else 0,
+                                maxLevel = 1,
+                                stateText = if (steeringOn) "开" else "关",
                                 enabled = !busy,
-                                // 0 关 → 1 弱 → 2 强 → 0 关
                                 onClick = {
-                                    val next = (steeringLevel + 1) % 3
                                     val previous = steeringLevel
-                                    steeringLevel = next
-                                    onCommand("steeringWheelHeating_$next") { steeringLevel = previous }
+                                    steeringLevel = if (steeringOn) 0 else 2
+                                    onCommand(
+                                        if (steeringOn) SteeringWheelHeat.OFF else SteeringWheelHeat.ON,
+                                    ) { steeringLevel = previous }
                                 },
                             )
                         }
@@ -958,6 +965,8 @@ private fun AcLevelRow(
     enabled: Boolean,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    /** 非空时右侧显示这两个字（开 / 关）而不是档位点阵 —— 两态开关没有「档」可数。 */
+    stateText: String? = null,
     onClick: () -> Unit,
 ) {
     val C = LocalAppColors.current
@@ -991,26 +1000,36 @@ private fun AcLevelRow(
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(if (compact) 8.dp else 10.dp))
-        // 档位点阵：亮几颗就是几档（1 档 1 颗绿点、2 档 2 颗…）。
-        // 之前那版是「关 / 1 / 2 / 3」四个文字格，摆在座位卡里跟图标、文字挤成一条，
-        // 几乎连在一起 —— 点阵只占三十几 dp，而且「亮了几颗」一眼就能数出来。
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            for (i in 1..maxLevel) {
-                val lit = i <= level
-                Box(
-                    modifier = Modifier
-                        .size(if (compact) 6.dp else 7.dp)
-                        .clip(CircleShape)
-                        .background(
-                            when {
-                                lit -> content
-                                else -> C.textPrimary.copy(alpha = if (enabled) 0.14f else 0.07f)
-                            },
-                        ),
-                )
+        if (stateText != null) {
+            // 两态开关：右侧直接写「开 / 关」，比一颗点更容易一眼读懂
+            Text(
+                text = stateText,
+                color = content,
+                fontSize = if (compact) 11.5.sp else 12.5.sp,
+                fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+            )
+        } else {
+            // 档位点阵：亮几颗就是几档（1 档 1 颗绿点、2 档 2 颗…）。
+            // 之前那版是「关 / 1 / 2 / 3」四个文字格，摆在座位卡里跟图标、文字挤成一条，
+            // 几乎连在一起 —— 点阵只占三十几 dp，而且「亮了几颗」一眼就能数出来。
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                for (i in 1..maxLevel) {
+                    val lit = i <= level
+                    Box(
+                        modifier = Modifier
+                            .size(if (compact) 6.dp else 7.dp)
+                            .clip(CircleShape)
+                            .background(
+                                when {
+                                    lit -> content
+                                    else -> C.textPrimary.copy(alpha = if (enabled) 0.14f else 0.07f)
+                                },
+                            ),
+                    )
+                }
             }
         }
     }

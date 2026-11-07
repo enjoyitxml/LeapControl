@@ -554,7 +554,8 @@ object ControlFeedbackFormatter {
             key.startsWith("rightRearSeatVentilation") || lbl.contains("二排右通风") -> "正在开启二排右座椅通风..."
             key == "rightRearSeatHeating_0" || lbl == "二排右加热关闭" -> "正在关闭二排右座椅加热..."
             key.startsWith("rightRearSeatHeating") || lbl.contains("二排右加热") -> "正在开启二排右座椅加热..."
-            key == "steeringWheelHeating_0" || lbl == "方向盘加热关闭" -> "正在关闭方向盘加热..."
+            key == "steeringWheelHeating_0" || key == SteeringWheelHeat.OFF ||
+                lbl == "方向盘加热关闭" -> "正在关闭方向盘加热..."
             key.startsWith("steeringWheelHeating") || lbl.contains("方向盘加热") -> "正在开启方向盘加热..."
             key == "rearviewMirrorHeating_0" || lbl == "关闭后视镜加热" -> "正在关闭后视镜加热..."
             key.startsWith("rearviewMirrorHeating") || lbl.contains("后视镜加热") -> "正在开启后视镜加热..."
@@ -635,7 +636,8 @@ object ControlFeedbackFormatter {
             key.startsWith("rightRearSeatVentilation") || lbl.contains("二排右通风") -> "二排右座椅通风已打开"
             key == "rightRearSeatHeating_0" || lbl == "二排右加热关闭" -> "二排右座椅加热已关闭"
             key.startsWith("rightRearSeatHeating") || lbl.contains("二排右加热") -> "二排右座椅加热已打开"
-            key == "steeringWheelHeating_0" || lbl == "方向盘加热关闭" -> "方向盘加热已关闭"
+            key == "steeringWheelHeating_0" || key == SteeringWheelHeat.OFF ||
+                lbl == "方向盘加热关闭" -> "方向盘加热已关闭"
             key.startsWith("steeringWheelHeating") || lbl.contains("方向盘加热") -> "方向盘加热已打开"
             key == "rearviewMirrorHeating_0" || lbl == "关闭后视镜加热" -> "后视镜加热已关闭"
             key.startsWith("rearviewMirrorHeating") || lbl.contains("后视镜加热") -> "后视镜加热已打开"
@@ -1179,9 +1181,10 @@ object Commands {
                     val lvl = name.removePrefix("rightRearSeatVentilation_").toIntOrNull() ?: 0
                     buildSeatVentilation("right_rear", lvl)
                 }
-                name.startsWith("steeringWheelHeating_") -> {
-                    val lvl = name.removePrefix("steeringWheelHeating_").toIntOrNull() ?: 0
-                    buildSteeringWheelHeating(lvl)
+                // 方向盘加热是两态开关（2 开 / 1 关 / 0 关），见 [SteeringWheelHeat]。
+                // 老的 `_0/_1/_2` 也走这里：`_1` 以前被当成「弱档」，实际是关闭值。
+                SteeringWheelHeat.targetOf(name) != null -> {
+                    SteeringWheelHeat.build(SteeringWheelHeat.targetOf(name) == true)
                 }
                 name == "rearviewMirrorHeating_on" -> buildRearviewMirrorHeating(true)
                 name == "rearviewMirrorHeating_off" -> buildRearviewMirrorHeating(false)
@@ -1228,20 +1231,15 @@ object Commands {
         )
     }
 
-    /** 方向盘加热（cmdid=320）：level: 0(关), 1(弱), 2(强) */
-    fun buildSteeringWheelHeating(level: Int): ControlCommand {
-        val cleanLevel = level.coerceIn(0, 2)
-        val stateLabel = when (cleanLevel) {
-            0 -> "关闭"
-            1 -> "弱档"
-            else -> "强档"
-        }
-        return ControlCommand(
-            "320",
-            """{"level":"$cleanLevel"}""",
-            "方向盘加热$stateLabel"
-        )
-    }
+    /**
+     * 方向盘加热（cmdid=320）。
+     *
+     * 只保留「开 / 关」两态：`level` > 0 发 [SteeringWheelHeat.LEVEL_ON]（真正的加热值），
+     * 否则发 [SteeringWheelHeat.LEVEL_OFF]。以前那个 `coerceIn(0, 2)` 的「三档」已被证伪
+     * （车端 1 是关，不是弱档），别再按档位写回来。
+     */
+    fun buildSteeringWheelHeating(level: Int): ControlCommand =
+        SteeringWheelHeat.build(on = level > 0)
 
     /** 后视镜加热（cmdid=440）：enabled=true -> "2"(开), enabled=false -> "1"(关) */
     fun buildRearviewMirrorHeating(enabled: Boolean): ControlCommand {
